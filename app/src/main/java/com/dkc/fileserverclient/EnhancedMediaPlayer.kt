@@ -4,8 +4,6 @@ package com.dkc.fileserverclient
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.net.Uri
-import android.view.View
-import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -25,6 +23,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -52,16 +51,15 @@ fun EnhancedVideoPlayer(
     onFullscreenChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
+    val viewModel: FileViewModel = viewModel()
     var isFullscreen by remember { mutableStateOf(false) }
     var showCustomControls by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(true) }
     var playbackSpeed by remember { mutableStateOf(1.0f) }
     var isLongPressing by remember { mutableStateOf(false) }
+    var isPlayerReady by remember { mutableStateOf(false) }
 
-    // 保存播放状态
-    val savedPosition = remember { mutableStateOf(0L) }
-    val savedIsPlaying = remember { mutableStateOf(true) }
-
+    // 使用 remember 保存播放器实例，避免方向改变时重建
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
             repeatMode = Player.REPEAT_MODE_OFF
@@ -71,7 +69,25 @@ fun EnhancedVideoPlayer(
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     when (playbackState) {
-                        Player.STATE_READY -> isPlaying = this@apply.isPlaying
+                        Player.STATE_READY -> {
+                            isPlaying = this@apply.isPlaying
+                            isPlayerReady = true
+
+                            // 恢复播放位置（如果是同一个视频）
+                            if (viewModel.shouldRestoreState(videoUrl)) {
+                                val savedState = viewModel.videoPlayerState
+                                if (savedState.currentPosition > 0 && currentPosition == 0L) {
+                                    seekTo(savedState.currentPosition)
+                                    if (savedState.isPlaying) {
+                                        play()
+                                    } else {
+                                        pause()
+                                    }
+                                    playbackSpeed = savedState.playbackSpeed
+                                    playbackParameters = playbackParameters.withSpeed(playbackSpeed)
+                                }
+                            }
+                        }
                         Player.STATE_BUFFERING -> isPlaying = false
                         Player.STATE_ENDED -> isPlaying = false
                     }
@@ -79,6 +95,17 @@ fun EnhancedVideoPlayer(
 
                 override fun onIsPlayingChanged(playing: Boolean) {
                     isPlaying = playing
+                    // 保存状态到ViewModel
+                    if (isPlayerReady) {
+                        viewModel.updateVideoState(
+                            VideoPlayerState(
+                                currentPosition = this@apply.currentPosition,
+                                isPlaying = playing,
+                                playbackSpeed = playbackSpeed,
+                                videoUrl = videoUrl
+                            )
+                        )
+                    }
                 }
             })
         }
@@ -98,14 +125,35 @@ fun EnhancedVideoPlayer(
             // 长按期间双倍速
             playbackSpeed = 2.0f
             exoPlayer.playbackParameters = exoPlayer.playbackParameters.withSpeed(playbackSpeed)
+            if (isPlayerReady) {
+                viewModel.updateVideoState(
+                    VideoPlayerState(
+                        currentPosition = exoPlayer.currentPosition,
+                        isPlaying = isPlaying,
+                        playbackSpeed = playbackSpeed,
+                        videoUrl = videoUrl
+                    )
+                )
+            }
         } else {
             // 松开恢复原速
             playbackSpeed = 1.0f
             exoPlayer.playbackParameters = exoPlayer.playbackParameters.withSpeed(playbackSpeed)
+            if (isPlayerReady) {
+                viewModel.updateVideoState(
+                    VideoPlayerState(
+                        currentPosition = exoPlayer.currentPosition,
+                        isPlaying = isPlaying,
+                        playbackSpeed = playbackSpeed,
+                        videoUrl = videoUrl
+                    )
+                )
+            }
         }
     }
 
-    DisposableEffect(videoUrl) {
+    // 初始化媒体源
+    LaunchedEffect(videoUrl) {
         try {
             val dataSourceFactory = createMediaOkHttpDataSourceFactory()
             val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
@@ -119,24 +167,43 @@ fun EnhancedVideoPlayer(
             onError("视频加载失败: ${e.message}")
             e.printStackTrace()
         }
+    }
 
-        onDispose {
-            // 保存播放状态
-            savedPosition.value = exoPlayer.currentPosition
-            savedIsPlaying.value = exoPlayer.isPlaying
-
-            exoPlayer.release()
-            println("DEBUG: 增强视频播放器已释放")
+    // 定期保存播放位置
+    LaunchedEffect(isPlayerReady) {
+        if (isPlayerReady) {
+            while (true) {
+                delay(1000) // 每秒保存一次
+                if (isPlayerReady) {
+                    viewModel.updateVideoState(
+                        VideoPlayerState(
+                            currentPosition = exoPlayer.currentPosition,
+                            isPlaying = isPlaying,
+                            playbackSpeed = playbackSpeed,
+                            videoUrl = videoUrl
+                        )
+                    )
+                }
+            }
         }
     }
 
-    // 恢复播放状态
-    LaunchedEffect(Unit) {
-        if (savedPosition.value > 0) {
-            exoPlayer.seekTo(savedPosition.value)
-            if (savedIsPlaying.value) {
-                exoPlayer.play()
+    // 清理播放器
+    DisposableEffect(Unit) {
+        onDispose {
+            // 保存最终状态
+            if (isPlayerReady) {
+                viewModel.updateVideoState(
+                    VideoPlayerState(
+                        currentPosition = exoPlayer.currentPosition,
+                        isPlaying = exoPlayer.isPlaying,
+                        playbackSpeed = playbackSpeed,
+                        videoUrl = videoUrl
+                    )
+                )
             }
+            exoPlayer.release()
+            println("DEBUG: 增强视频播放器已释放")
         }
     }
 
@@ -153,6 +220,16 @@ fun EnhancedVideoPlayer(
                             exoPlayer.play()
                         }
                         showCustomControls = true
+                        if (isPlayerReady) {
+                            viewModel.updateVideoState(
+                                VideoPlayerState(
+                                    currentPosition = exoPlayer.currentPosition,
+                                    isPlaying = exoPlayer.isPlaying,
+                                    playbackSpeed = playbackSpeed,
+                                    videoUrl = videoUrl
+                                )
+                            )
+                        }
                     },
                     onTap = {
                         // 单击显示/隐藏自定义控制栏
@@ -202,29 +279,78 @@ fun EnhancedVideoPlayer(
                     } else {
                         exoPlayer.play()
                     }
+                    if (isPlayerReady) {
+                        viewModel.updateVideoState(
+                            VideoPlayerState(
+                                currentPosition = exoPlayer.currentPosition,
+                                isPlaying = exoPlayer.isPlaying,
+                                playbackSpeed = playbackSpeed,
+                                videoUrl = videoUrl
+                            )
+                        )
+                    }
+                    showCustomControls = true
                 },
                 onSeekForward = {
                     val currentPosition = exoPlayer.currentPosition
                     val duration = exoPlayer.duration
                     val newPosition = (currentPosition + 10000).coerceAtMost(duration)
                     exoPlayer.seekTo(newPosition)
+                    if (isPlayerReady) {
+                        viewModel.updateVideoState(
+                            VideoPlayerState(
+                                currentPosition = newPosition,
+                                isPlaying = isPlaying,
+                                playbackSpeed = playbackSpeed,
+                                videoUrl = videoUrl
+                            )
+                        )
+                    }
                 },
                 onSeekBackward = {
                     val currentPosition = exoPlayer.currentPosition
                     val newPosition = (currentPosition - 10000).coerceAtLeast(0)
                     exoPlayer.seekTo(newPosition)
+                    if (isPlayerReady) {
+                        viewModel.updateVideoState(
+                            VideoPlayerState(
+                                currentPosition = newPosition,
+                                isPlaying = isPlaying,
+                                playbackSpeed = playbackSpeed,
+                                videoUrl = videoUrl
+                            )
+                        )
+                    }
                 },
                 onToggleFullscreen = {
                     isFullscreen = !isFullscreen
                     onFullscreenChange(isFullscreen)
 
                     // 保存当前播放状态
-                    savedPosition.value = exoPlayer.currentPosition
-                    savedIsPlaying.value = exoPlayer.isPlaying
+                    if (isPlayerReady) {
+                        viewModel.updateVideoState(
+                            VideoPlayerState(
+                                currentPosition = exoPlayer.currentPosition,
+                                isPlaying = exoPlayer.isPlaying,
+                                playbackSpeed = playbackSpeed,
+                                videoUrl = videoUrl
+                            )
+                        )
+                    }
                 },
-                onSpeedChange = { speed ->
+                onSpeedChange = { speed: Float ->
                     playbackSpeed = speed
                     exoPlayer.playbackParameters = exoPlayer.playbackParameters.withSpeed(speed)
+                    if (isPlayerReady) {
+                        viewModel.updateVideoState(
+                            VideoPlayerState(
+                                currentPosition = exoPlayer.currentPosition,
+                                isPlaying = isPlaying,
+                                playbackSpeed = speed,
+                                videoUrl = videoUrl
+                            )
+                        )
+                    }
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -480,7 +606,7 @@ fun AudioControlsOverlay(
     }
 }
 
-// 以下工具函数保持不变
+// 工具函数
 fun createMediaOkHttpDataSourceFactory(): OkHttpDataSource.Factory {
     val okHttpClient = createUnsafeOkHttpClient()
     return OkHttpDataSource.Factory(okHttpClient)

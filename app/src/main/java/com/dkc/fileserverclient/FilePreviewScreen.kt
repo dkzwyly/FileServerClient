@@ -42,7 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
-import java.math.BigInteger
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -337,9 +337,20 @@ fun MediaPreview(
     var isLoading by remember { mutableStateOf(true) }
     var hasError by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
+    val viewModel: FileViewModel = viewModel()
 
     val isVideo = mimeType.startsWith("video")
     val isAudio = mimeType.startsWith("audio")
+
+    // 当切换到新视频时重置状态
+    LaunchedEffect(mediaUrl) {
+        if (isVideo) {
+            // 检查是否需要重置状态（如果是不同的视频）
+            if (!viewModel.shouldRestoreState(mediaUrl)) {
+                viewModel.resetVideoState()
+            }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -395,6 +406,16 @@ fun MediaPreview(
                 } else {
                     Text(
                         text = "状态: 加载成功",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                // 显示恢复状态信息（如果是恢复播放）
+                if (isVideo && viewModel.shouldRestoreState(mediaUrl)) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "🔄 已恢复播放位置",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -469,7 +490,7 @@ fun MediaPreview(
                     EnhancedVideoPlayer(
                         videoUrl = mediaUrl,
                         modifier = Modifier.fillMaxSize(),
-                        onError = { error ->
+                        onError = { error: String ->
                             hasError = true
                             errorMessage = error
                             println("DEBUG: 视频播放错误: $error")
@@ -504,7 +525,7 @@ fun MediaPreview(
                             modifier = Modifier
                                 .fillMaxWidth(0.9f)
                                 .height(80.dp),
-                            onError = { error ->
+                            onError = { error: String ->
                                 hasError = true
                                 errorMessage = error
                                 println("DEBUG: 音频播放错误: $error")
@@ -618,7 +639,7 @@ fun MediaPreview(
 }
 
 /**
- * 全屏视频播放器 - 修复版
+ * 全屏视频播放器 - 修复版，支持状态保持
  */
 @Composable
 fun FullscreenVideoPlayer(

@@ -1,12 +1,25 @@
 package com.dkc.fileserverclient
 
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+/**
+ * 视频播放器状态，用于保存和恢复播放状态
+ */
+data class VideoPlayerState(
+    val currentPosition: Long = 0L,
+    val isPlaying: Boolean = true,
+    val playbackSpeed: Float = 1.0f,
+    val videoUrl: String = ""
+)
 
 class FileViewModel(private val repository: FileRepository) : ViewModel() {
 
@@ -22,6 +35,10 @@ class FileViewModel(private val repository: FileRepository) : ViewModel() {
     // 预览状态
     private val _previewState = MutableStateFlow<PreviewState>(PreviewState.Idle)
     val previewState: StateFlow<PreviewState> = _previewState.asStateFlow()
+
+    // 视频播放器状态
+    var videoPlayerState by mutableStateOf(VideoPlayerState())
+        private set
 
     private var currentPath = ""
 
@@ -223,6 +240,29 @@ class FileViewModel(private val repository: FileRepository) : ViewModel() {
      */
     fun clearPreviewCache() {
         repository.clearPreviewCache()
+    }
+
+    // ========== 视频播放器状态管理 ==========
+
+    /**
+     * 更新视频状态
+     */
+    fun updateVideoState(newState: VideoPlayerState) {
+        videoPlayerState = newState
+    }
+
+    /**
+     * 重置视频状态（当切换到新视频时调用）
+     */
+    fun resetVideoState() {
+        videoPlayerState = VideoPlayerState()
+    }
+
+    /**
+     * 检查是否应该恢复状态（相同视频URL）
+     */
+    fun shouldRestoreState(videoUrl: String): Boolean {
+        return videoPlayerState.videoUrl == videoUrl && videoPlayerState.currentPosition > 0
     }
 }
 
