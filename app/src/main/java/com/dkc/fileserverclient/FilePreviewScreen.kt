@@ -1,13 +1,17 @@
 // FilePreviewScreen.kt
 package com.dkc.fileserverclient
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -18,6 +22,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -130,7 +136,7 @@ fun ImagePreview(
                     Spacer(modifier = Modifier.height(16.dp))
                     Text("加载图片中...")
                     Text(
-                        text = "URL: $imageUrl", // 修复这里：明确使用 text 参数
+                        text = "URL: $imageUrl",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp)
@@ -152,24 +158,34 @@ fun ImagePreview(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(16.dp)
                 ) {
-                    Text(text = "❌", style = MaterialTheme.typography.headlineMedium) // 修复这里
+                    Text(text = "❌", style = MaterialTheme.typography.headlineMedium)
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "图片加载失败", // 修复这里
+                        text = "图片加载失败",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.error
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = errorMessage, // 修复这里
+                        text = errorMessage,
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "URL: $imageUrl", // 修复这里
+                        text = "URL: $imageUrl",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            isLoading = true
+                            hasError = false
+                            errorMessage = ""
+                        }
+                    ) {
+                        Text("重试")
+                    }
                 }
             } else {
                 // 使用我们自定义的安全 AsyncImage 加载图片
@@ -209,12 +225,12 @@ fun ImagePreview(
             ) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     Text(
-                        text = "✅ 图片加载成功", // 修复这里
+                        text = "✅ 图片加载成功",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "URL: $imageUrl", // 修复这里
+                        text = "URL: $imageUrl",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -233,7 +249,7 @@ fun TextPreview(
         modifier = modifier.padding(16.dp)
     ) {
         Text(
-            text = "文本预览 - ${textContent.fileName}", // 修复这里
+            text = "文本预览 - ${textContent.fileName}",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 8.dp)
@@ -241,7 +257,7 @@ fun TextPreview(
 
         if (textContent.truncated) {
             Text(
-                text = "⚠️ 文件过大，只显示部分内容", // 修复这里
+                text = "⚠️ 文件过大，只显示部分内容",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(bottom = 8.dp)
@@ -249,7 +265,7 @@ fun TextPreview(
         }
 
         Text(
-            text = "大小: ${textContent.size} 字节 | 编码: ${textContent.encoding}", // 修复这里
+            text = "大小: ${textContent.size} 字节 | 编码: ${textContent.encoding}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -261,7 +277,7 @@ fun TextPreview(
                 .weight(1f)
         ) {
             Text(
-                text = textContent.content, // 修复这里
+                text = textContent.content,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(16.dp)
             )
@@ -275,33 +291,299 @@ fun MediaPreview(
     mimeType: String,
     modifier: Modifier = Modifier
 ) {
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center
+    var isLoading by remember { mutableStateOf(true) }
+    var hasError by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("") }
+
+    val isVideo = mimeType.startsWith("video")
+    val isAudio = mimeType.startsWith("audio")
+
+    Column(
+        modifier = modifier
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
+        // 文件信息头
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            tonalElevation = 4.dp
         ) {
-            Text(
-                text = "🎵 媒体文件预览", // 修复这里
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            Text(
-                text = "URL: $mediaUrl", // 修复这里
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-            Text(
-                text = "类型: $mimeType", // 修复这里
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-            Text(
-                text = "请在外部播放器中打开此链接", // 修复这里
-                style = MaterialTheme.typography.bodyMedium
-            )
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = if (isVideo) "🎬 视频播放" else "🎵 音频播放",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "格式: $mimeType",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "URL: $mediaUrl",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // 添加播放状态信息
+                if (isLoading) {
+                    Text(
+                        text = "状态: 加载中...",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else if (hasError) {
+                    Text(
+                        text = "状态: 加载失败",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else {
+                    Text(
+                        text = "状态: 加载成功",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+
+        // 播放器区域
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            if (hasError) {
+                // 错误状态
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = "❌",
+                        style = MaterialTheme.typography.headlineMedium
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = if (isVideo) "视频播放失败" else "音频播放失败",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "请检查媒体文件格式和网络连接",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            // 重试加载
+                            isLoading = true
+                            hasError = false
+                            errorMessage = ""
+                        }
+                    ) {
+                        Text("重试")
+                    }
+                }
+            } else if (isLoading) {
+                // 加载状态
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(text = if (isVideo) "加载视频中..." else "加载音频中...")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "正在处理 HTTPS 安全连接...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                // 播放器区域
+                if (isVideo) {
+                    VideoPlayerWithOkHttp(
+                        videoUrl = mediaUrl,
+                        modifier = Modifier.fillMaxSize(),
+                        onError = { error ->
+                            hasError = true
+                            errorMessage = error
+                            println("DEBUG: 视频播放错误: $error")
+                        }
+                    )
+                } else if (isAudio) {
+                    // 音频播放器布局
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        // 音频图标和标题
+                        Text(
+                            text = "🎵",
+                            style = MaterialTheme.typography.displayLarge,
+                            modifier = Modifier.padding(bottom = 24.dp)
+                        )
+                        Text(
+                            text = "音频播放",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+
+                        // 音频播放器控件
+                        AudioPlayerWithOkHttp(
+                            audioUrl = mediaUrl,
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .height(80.dp),
+                            onError = { error ->
+                                hasError = true
+                                errorMessage = error
+                                println("DEBUG: 音频播放错误: $error")
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        // 音频播放提示
+                        Text(
+                            text = "使用上方的控件播放音频",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        // 音频格式信息
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth(0.8f)
+                                .padding(top = 16.dp),
+                            tonalElevation = 2.dp,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "音频信息",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "格式: ${mimeType.uppercase()}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    text = "支持: 播放/暂停/进度控制",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // 未知媒体类型
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "❓",
+                            style = MaterialTheme.typography.headlineMedium
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "未知媒体类型",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "MIME类型: $mimeType",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "请在外部应用中打开此文件",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+        }
+
+        // 控制按钮区域
+        if (!isLoading && !hasError) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                tonalElevation = 2.dp,
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 媒体控制信息
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "✅ 媒体加载成功",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = if (isVideo) "使用播放器控件操作视频" else "使用播放器控件操作音频",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    // 下载按钮
+                    Button(
+                        onClick = {
+                            // TODO: 实现下载功能
+                            println("DEBUG: 下载媒体文件: $mediaUrl")
+                        }
+                    ) {
+                        Text("下载文件")
+                    }
+                }
+            }
+        }
+    }
+
+    // 自动开始加载媒体
+    LaunchedEffect(mediaUrl) {
+        // 模拟加载过程，让用户看到加载状态
+        delay(500)
+        isLoading = false
+        println("DEBUG: 媒体预览初始化完成: $mediaUrl")
+    }
+
+    // 处理媒体URL变化
+    LaunchedEffect(mediaUrl) {
+        if (hasError) {
+            // 如果URL变化且有错误状态，重置状态
+            isLoading = true
+            hasError = false
+            errorMessage = ""
         }
     }
 }
@@ -318,18 +600,26 @@ fun ErrorPreview(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(text = "❌", style = MaterialTheme.typography.headlineMedium) // 修复这里
+            Text(text = "❌", style = MaterialTheme.typography.headlineMedium)
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "预览失败", // 修复这里
+                text = "预览失败",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.error
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = message, // 修复这里
+                text = message,
                 style = MaterialTheme.typography.bodyMedium
             )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = {
+                    // 这里可以添加重试逻辑
+                }
+            ) {
+                Text("返回")
+            }
         }
     }
 }

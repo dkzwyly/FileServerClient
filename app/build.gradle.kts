@@ -79,6 +79,15 @@ dependencies {
     implementation("io.coil-kt:coil:2.5.0")
     implementation("io.coil-kt:coil-base:2.5.0")
 
+    // Media3 ExoPlayer 用于视频和音频播放
+    implementation("androidx.media3:media3-exoplayer:1.2.1")
+    implementation("androidx.media3:media3-ui:1.2.1")
+    implementation("androidx.media3:media3-session:1.2.1")
+    implementation("androidx.media3:media3-common:1.2.1")
+
+    // OkHttp DataSource 用于更好的网络支持（包括 SSL）
+    implementation("androidx.media3:media3-datasource-okhttp:1.2.1")
+
     // 测试依赖
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
