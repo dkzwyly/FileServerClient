@@ -18,11 +18,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -106,15 +109,118 @@ fun ImagePreview(
     imageUrl: String,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    var isLoading by remember { mutableStateOf(true) }
+    var hasError by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("") }
+
+    Column(
         modifier = modifier,
-        contentAlignment = Alignment.Center
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        AsyncImage(
-            model = imageUrl,
-            contentDescription = "预览图片",
-            modifier = Modifier.fillMaxSize()
-        )
+        // 图片加载状态指示
+        if (isLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("加载图片中...")
+                    Text(
+                        text = "URL: $imageUrl", // 修复这里：明确使用 text 参数
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+            }
+        }
+
+        // 图片显示区域
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            if (hasError) {
+                // 加载失败显示错误信息
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(text = "❌", style = MaterialTheme.typography.headlineMedium) // 修复这里
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "图片加载失败", // 修复这里
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = errorMessage, // 修复这里
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "URL: $imageUrl", // 修复这里
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                // 使用我们自定义的安全 AsyncImage 加载图片
+                SafeAsyncImage(
+                    model = imageUrl,
+                    contentDescription = "预览图片",
+                    modifier = Modifier.fillMaxSize(),
+                    onLoading = {
+                        isLoading = true
+                        hasError = false
+                        println("DEBUG: 图片加载中: $imageUrl")
+                    },
+                    onSuccess = {
+                        isLoading = false
+                        hasError = false
+                        println("DEBUG: 图片加载成功: $imageUrl")
+                    },
+                    onError = { state ->
+                        isLoading = false
+                        hasError = true
+                        errorMessage = state.result.throwable.message ?: "未知错误"
+                        println("DEBUG: 图片加载失败: $imageUrl, 错误: $errorMessage")
+                        state.result.throwable.printStackTrace()
+                    }
+                )
+            }
+        }
+
+        // 调试信息显示
+        if (!isLoading && !hasError) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                tonalElevation = 2.dp,
+                shape = MaterialTheme.shapes.small
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Text(
+                        text = "✅ 图片加载成功", // 修复这里
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "URL: $imageUrl", // 修复这里
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -127,7 +233,7 @@ fun TextPreview(
         modifier = modifier.padding(16.dp)
     ) {
         Text(
-            "文本预览 - ${textContent.fileName}",
+            text = "文本预览 - ${textContent.fileName}", // 修复这里
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 8.dp)
@@ -135,7 +241,7 @@ fun TextPreview(
 
         if (textContent.truncated) {
             Text(
-                "⚠️ 文件过大，只显示部分内容",
+                text = "⚠️ 文件过大，只显示部分内容", // 修复这里
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(bottom = 8.dp)
@@ -143,7 +249,7 @@ fun TextPreview(
         }
 
         Text(
-            "大小: ${textContent.size} 字节 | 编码: ${textContent.encoding}",
+            text = "大小: ${textContent.size} 字节 | 编码: ${textContent.encoding}", // 修复这里
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -155,7 +261,7 @@ fun TextPreview(
                 .weight(1f)
         ) {
             Text(
-                text = textContent.content,
+                text = textContent.content, // 修复这里
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(16.dp)
             )
@@ -177,23 +283,23 @@ fun MediaPreview(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                "🎵 媒体文件预览",
+                text = "🎵 媒体文件预览", // 修复这里
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
             Text(
-                "URL: $mediaUrl",
+                text = "URL: $mediaUrl", // 修复这里
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(bottom = 4.dp)
             )
             Text(
-                "类型: $mimeType",
+                text = "类型: $mimeType", // 修复这里
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
             Text(
-                "请在外部播放器中打开此链接",
+                text = "请在外部播放器中打开此链接", // 修复这里
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -212,18 +318,17 @@ fun ErrorPreview(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("❌", style = MaterialTheme.typography.headlineMedium)
+            Text(text = "❌", style = MaterialTheme.typography.headlineMedium) // 修复这里
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                "预览失败",
+                text = "预览失败", // 修复这里
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.error
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                message,
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                text = message, // 修复这里
+                style = MaterialTheme.typography.bodyMedium
             )
         }
     }

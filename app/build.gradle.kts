@@ -74,8 +74,10 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // 图片加载
+    // Coil 图片加载
     implementation("io.coil-kt:coil-compose:2.5.0")
+    implementation("io.coil-kt:coil:2.5.0")
+    implementation("io.coil-kt:coil-base:2.5.0")
 
     // 测试依赖
     testImplementation("junit:junit:4.13.2")

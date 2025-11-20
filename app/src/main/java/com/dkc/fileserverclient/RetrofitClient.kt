@@ -21,7 +21,7 @@ object RetrofitClient {
     }
 
     // 创建信任所有证书的 OkHttpClient（用于自签名证书）
-    private fun createUnsafeOkHttpClient(): OkHttpClient {
+    public fun createUnsafeOkHttpClient(): OkHttpClient {
         try {
             // 创建信任所有证书的 TrustManager
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
