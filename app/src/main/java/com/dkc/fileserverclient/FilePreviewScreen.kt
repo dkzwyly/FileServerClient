@@ -1,6 +1,12 @@
 // FilePreviewScreen.kt
 package com.dkc.fileserverclient
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
+import android.view.View
+import android.view.WindowManager
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,15 +29,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import java.math.BigInteger
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,21 +51,47 @@ fun FilePreviewScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var isFullscreen by remember { mutableStateOf(false) }
+
+    // 处理全屏状态下的返回按钮
+    val handleBack = {
+        if (isFullscreen) {
+            isFullscreen = false
+        } else {
+            onBack()
+        }
+    }
+
+    // 全屏模式下隐藏所有UI，只显示视频
+    if (isFullscreen && previewState is PreviewState.MediaSuccess && previewState.mimeType.startsWith("video")) {
+        FullscreenVideoPlayer(
+            videoUrl = previewState.mediaUrl,
+            onExitFullscreen = { isFullscreen = false },
+            onError = { error ->
+                // 处理错误
+                println("DEBUG: 全屏视频播放错误: $error")
+            }
+        )
+        return
+    }
+
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        "文件预览",
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Text("←")
+            if (!isFullscreen) {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Text(
+                            "文件预览",
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = handleBack) {
+                            Text("←")
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     ) { paddingValues ->
         Column(
@@ -87,6 +124,10 @@ fun FilePreviewScreen(
                     MediaPreview(
                         mediaUrl = previewState.mediaUrl,
                         mimeType = previewState.mimeType,
+                        isFullscreen = isFullscreen,
+                        onFullscreenChange = { fullscreen ->
+                            isFullscreen = fullscreen
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -289,6 +330,8 @@ fun TextPreview(
 fun MediaPreview(
     mediaUrl: String,
     mimeType: String,
+    isFullscreen: Boolean,
+    onFullscreenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var isLoading by remember { mutableStateOf(true) }
@@ -325,6 +368,16 @@ fun MediaPreview(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                // 添加操作提示
+                if (isVideo) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "操作提示: 双击暂停/播放 • 左侧快退 • 右侧快进 • 点击控制栏全屏",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
 
                 // 添加播放状态信息
                 if (isLoading) {
@@ -413,13 +466,16 @@ fun MediaPreview(
             } else {
                 // 播放器区域
                 if (isVideo) {
-                    VideoPlayerWithOkHttp(
+                    EnhancedVideoPlayer(
                         videoUrl = mediaUrl,
                         modifier = Modifier.fillMaxSize(),
                         onError = { error ->
                             hasError = true
                             errorMessage = error
                             println("DEBUG: 视频播放错误: $error")
+                        },
+                        onFullscreenChange = { fullscreen ->
+                            onFullscreenChange(fullscreen)
                         }
                     )
                 } else if (isAudio) {
@@ -443,7 +499,7 @@ fun MediaPreview(
                         )
 
                         // 音频播放器控件
-                        AudioPlayerWithOkHttp(
+                        EnhancedAudioPlayer(
                             audioUrl = mediaUrl,
                             modifier = Modifier
                                 .fillMaxWidth(0.9f)
@@ -463,35 +519,6 @@ fun MediaPreview(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-
-                        // 音频格式信息
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth(0.8f)
-                                .padding(top = 16.dp),
-                            tonalElevation = 2.dp,
-                            shape = MaterialTheme.shapes.small
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = "音频信息",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = "格式: ${mimeType.uppercase()}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Text(
-                                    text = "支持: 播放/暂停/进度控制",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
                     }
                 } else {
                     // 未知媒体类型
@@ -546,11 +573,13 @@ fun MediaPreview(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
-                        Text(
-                            text = if (isVideo) "使用播放器控件操作视频" else "使用播放器控件操作音频",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (isVideo) {
+                            Text(
+                                text = "点击控制栏全屏按钮进入全屏模式",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(16.dp))
@@ -584,6 +613,111 @@ fun MediaPreview(
             isLoading = true
             hasError = false
             errorMessage = ""
+        }
+    }
+}
+
+/**
+ * 全屏视频播放器 - 修复版
+ */
+@Composable
+fun FullscreenVideoPlayer(
+    videoUrl: String,
+    onExitFullscreen: () -> Unit,
+    onError: (String) -> Unit = {}
+) {
+    val context = LocalContext.current
+    var showControls by remember { mutableStateOf(true) }
+
+    // 使用DisposableEffect来管理屏幕方向和全屏模式
+    DisposableEffect(Unit) {
+        val activity = context as? Activity
+
+        // 进入全屏时锁定横屏并隐藏状态栏
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+
+        // 真正的沉浸式全屏 - 隐藏状态栏和导航栏
+        activity?.window?.let { window ->
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            window.decorView.systemUiVisibility = (
+                    View.SYSTEM_UI_FLAG_FULLSCREEN or
+                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    )
+        }
+
+        onDispose {
+            // 退出全屏时恢复竖屏并显示状态栏
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            activity?.window?.decorView?.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+        }
+    }
+
+    // 控制栏自动隐藏
+    LaunchedEffect(showControls) {
+        if (showControls) {
+            delay(3000)
+            showControls = false
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = {
+                        // 单击切换控制栏显示
+                        showControls = !showControls
+                    }
+                )
+            }
+    ) {
+        EnhancedVideoPlayer(
+            videoUrl = videoUrl,
+            modifier = Modifier.fillMaxSize(),
+            onError = onError,
+            onFullscreenChange = { fullscreen ->
+                if (!fullscreen) {
+                    onExitFullscreen()
+                }
+            }
+        )
+
+        // 全屏模式下的退出按钮 - 只在显示控制栏时显示
+        if (showControls) {
+            IconButton(
+                onClick = onExitFullscreen,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = "← 退出全屏",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        }
+
+        // 操作提示 - 只在隐藏控制栏时显示
+        if (!showControls) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 16.dp)
+            ) {
+                Text(
+                    text = "点击屏幕显示控制栏",
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
     }
 }
