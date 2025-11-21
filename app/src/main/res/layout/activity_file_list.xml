@@ -5,23 +5,35 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="#F8F9FA"
-    android:padding="16dp">
+    android:padding="8dp">
 
-    <!-- 路径显示和操作栏 -->
+    <!-- 紧凑的顶部操作栏 -->
     <androidx.cardview.widget.CardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="4dp">
+        android:layout_marginBottom="8dp"
+        app:cardCornerRadius="8dp"
+        app:cardElevation="2dp">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:padding="16dp"
+            android:padding="12dp"
             android:background="#FFFFFF">
 
+            <!-- 返回按钮 -->
+            <Button
+                android:id="@+id/backButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:text="⬅️"
+                android:background="@drawable/icon_button_background"
+                android:textColor="#1976D2"
+                android:padding="0dp"
+                android:textSize="14sp" />
+
+            <!-- 路径显示 -->
             <TextView
                 android:id="@+id/pathLabel"
                 android:layout_width="0dp"
@@ -31,174 +43,197 @@
                 android:textSize="14sp"
                 android:textStyle="bold"
                 android:textColor="#1976D2"
-                android:background="#F5F7FA"
-                android:padding="12dp"
-                android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:ellipsize="start"
                 android:singleLine="true" />
 
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginStart="12dp">
-
-                <Button
-                    android:id="@+id/refreshButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🔄"
-                    android:background="@drawable/icon_button_background"
-                    android:textColor="#1976D2"
-                    android:padding="12dp" />
-
-                <Button
-                    android:id="@+id/backButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🏠"
-                    android:background="@drawable/icon_button_background"
-                    android:textColor="#1976D2"
-                    android:padding="12dp"
-                    android:layout_marginStart="8dp" />
-
-            </LinearLayout>
+            <!-- 刷新按钮 -->
+            <Button
+                android:id="@+id/refreshButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:text="🔄"
+                android:background="@drawable/icon_button_background"
+                android:textColor="#1976D2"
+                android:padding="0dp"
+                android:textSize="14sp" />
 
         </LinearLayout>
 
     </androidx.cardview.widget.CardView>
 
-    <!-- 上传文件区域 -->
-    <androidx.cardview.widget.CardView
+    <!-- 紧凑的搜索和上传区域 -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="4dp">
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp">
 
-        <LinearLayout
-            android:layout_width="match_parent"
+        <!-- 搜索栏 -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:background="#FFFFFF">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="📤 上传文件到当前目录"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="#1976D2"
-                android:layout_marginBottom="12dp" />
+            android:layout_weight="1"
+            android:layout_marginEnd="4dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginBottom="12dp">
+                android:padding="8dp"
+                android:background="#FFFFFF">
 
-                <Button
-                    android:id="@+id/selectFilesButton"
+                <EditText
+                    android:id="@+id/searchEditText"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="📎 选择文件"
-                    android:background="@drawable/secondary_button_background"
-                    android:textColor="#212121" />
+                    android:hint="🔍 搜索"
+                    android:textSize="13sp"
+                    android:textColor="#212121"
+                    android:background="@android:color/transparent"
+                    android:padding="8dp"
+                    android:maxLines="1" />
 
                 <Button
-                    android:id="@+id/uploadButton"
+                    android:id="@+id/searchButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="⬆️ 上传"
+                    android:layout_height="32dp"
+                    android:text="搜索"
+                    android:textSize="12sp"
                     android:background="@drawable/primary_button_background"
                     android:textColor="#FFFFFF"
-                    android:layout_marginStart="12dp"
-                    android:enabled="false" />
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp" />
 
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/selectedFilesLabel"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="未选择文件"
-                android:textSize="13sp"
-                android:textColor="#757575"
-                android:background="#F5F7FA"
-                android:padding="12dp"
-                android:ellipsize="end"
-                android:singleLine="true" />
+        </androidx.cardview.widget.CardView>
 
-        </LinearLayout>
+        <!-- 上传按钮 -->
+        <Button
+            android:id="@+id/selectFilesButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📎 选择"
+            android:textSize="13sp"
+            android:background="@drawable/secondary_button_background"
+            android:textColor="#212121"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp" />
 
-    </androidx.cardview.widget.CardView>
+    </LinearLayout>
 
-    <!-- 搜索栏 -->
+    <!-- 上传状态显示 -->
     <androidx.cardview.widget.CardView
+        android:id="@+id/uploadStatusCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="4dp">
+        android:layout_marginBottom="8dp"
+        app:cardCornerRadius="8dp"
+        app:cardElevation="2dp"
+        android:visibility="gone">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:padding="16dp"
+            android:padding="12dp"
             android:background="#FFFFFF">
 
-            <EditText
-                android:id="@+id/searchEditText"
+            <TextView
+                android:id="@+id/selectedFilesLabel"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:hint="🔍 搜索文件..."
-                android:textColor="#212121"
-                android:background="#F5F7FA"
-                android:padding="12dp" />
+                android:text="未选择文件"
+                android:textSize="13sp"
+                android:textColor="#757575"
+                android:gravity="center_vertical" />
 
             <Button
-                android:id="@+id/searchButton"
+                android:id="@+id/uploadButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="搜索"
+                android:text="⬆️ 上传"
+                android:textSize="13sp"
                 android:background="@drawable/primary_button_background"
                 android:textColor="#FFFFFF"
-                android:layout_marginStart="12dp" />
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:enabled="false" />
 
         </LinearLayout>
 
     </androidx.cardview.widget.CardView>
 
-    <!-- 文件列表 -->
+    <!-- 文件列表 - 占据主要空间 -->
     <androidx.cardview.widget.CardView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="4dp">
+        app:cardCornerRadius="8dp"
+        app:cardElevation="2dp">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/filesRecyclerView"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#FFFFFF" />
+            android:orientation="vertical"
+            android:background="#FFFFFF">
+
+            <!-- 列表标题栏 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="#F5F7FA"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="文件列表"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="#1976D2" />
+
+                <TextView
+                    android:id="@+id/fileCountText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 个项目"
+                    android:textSize="12sp"
+                    android:textColor="#757575" />
+
+            </LinearLayout>
+
+            <!-- 文件列表 -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/filesRecyclerView"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+
+        </LinearLayout>
 
     </androidx.cardview.widget.CardView>
 
-    <!-- 状态栏 -->
+    <!-- 底部状态栏 -->
     <TextView
         android:id="@+id/statusLabel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="就绪"
-        android:textSize="13sp"
+        android:textSize="12sp"
         android:textColor="#757575"
         android:background="#F5F7FA"
-        android:padding="12dp"
+        android:padding="8dp"
         android:gravity="center"
-        android:layout_marginTop="16dp" />
+        android:layout_marginTop="8dp" />
 
 </LinearLayout>

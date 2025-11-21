@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.*
@@ -33,6 +34,8 @@ class FileListActivity : AppCompatActivity() {
     private lateinit var searchButton: Button
     private lateinit var filesRecyclerView: RecyclerView
     private lateinit var statusLabel: TextView
+    private lateinit var uploadStatusCard: CardView
+    private lateinit var fileCountText: TextView
 
     private val fileServerService by lazy { FileServerService(this) }
     private val fileList = mutableListOf<FileSystemItem>()
@@ -73,6 +76,8 @@ class FileListActivity : AppCompatActivity() {
         searchButton = findViewById(R.id.searchButton)
         filesRecyclerView = findViewById(R.id.filesRecyclerView)
         statusLabel = findViewById(R.id.statusLabel)
+        uploadStatusCard = findViewById(R.id.uploadStatusCard)
+        fileCountText = findViewById(R.id.fileCountText)
 
         adapter = FileListAdapter(this, currentServerUrl, fileList) { item ->
             onFileItemClicked(item)
@@ -102,6 +107,7 @@ class FileListActivity : AppCompatActivity() {
 
         uploadButton.isEnabled = false
         selectedFilesLabel.text = "未选择文件"
+        uploadStatusCard.visibility = View.GONE
     }
 
     private fun onFileItemClicked(item: FileSystemItem) {
@@ -112,7 +118,6 @@ class FileListActivity : AppCompatActivity() {
                 navigateBack()
             } else {
                 pathHistory.add(currentPath)
-                // 使用后端返回的完整路径
                 loadCurrentDirectory(item.path)
             }
         } else {
@@ -137,17 +142,16 @@ class FileListActivity : AppCompatActivity() {
                 fileList.addAll(items)
                 adapter.notifyDataSetChanged()
 
+                // 更新文件计数
+                fileCountText.text = "${items.size} 个项目"
+
                 statusLabel.text = if (path.isEmpty()) {
                     "根目录 - ${items.size} 个项目"
                 } else {
                     "当前路径: $path - ${items.size} 个项目"
                 }
 
-                // 调试日志
                 Log.d("FileListActivity", "加载目录完成: path=$path, items=${items.size}")
-                items.forEachIndexed { index, item ->
-                    Log.d("FileListActivity", "项目 $index: ${item.name} (路径: ${item.path}, 类型: ${if (item.isDirectory) "目录" else "文件"})")
-                }
             } catch (e: Exception) {
                 statusLabel.text = "加载失败: ${e.message}"
                 showToast("加载文件列表失败")
@@ -162,7 +166,14 @@ class FileListActivity : AppCompatActivity() {
         pathLabel.text = if (currentPath.isEmpty()) {
             "根目录"
         } else {
-            "当前路径: $currentPath"
+            // 简化路径显示，只显示最后两级目录
+            val pathSegments = currentPath.split("/").filter { it.isNotEmpty() }
+            val displayPath = if (pathSegments.size > 2) {
+                ".../${pathSegments.takeLast(2).joinToString("/")}"
+            } else {
+                currentPath
+            }
+            displayPath
         }
     }
 
@@ -172,7 +183,6 @@ class FileListActivity : AppCompatActivity() {
             Log.d("FileListActivity", "返回导航: 从 $currentPath 到 $previousPath")
             loadCurrentDirectory(previousPath)
         } else {
-            Log.d("FileListActivity", "返回导航: 历史为空，结束Activity")
             finish()
         }
     }
@@ -204,10 +214,10 @@ class FileListActivity : AppCompatActivity() {
                 }
 
                 if (result.success) {
-                    showToast("上传成功: ${result.message}")
-                    // 清空已选文件
+                    showToast("上传成功")
+                    // 清空已选文件并隐藏上传状态栏
                     selectedFiles.clear()
-                    selectedFilesLabel.text = "未选择文件"
+                    uploadStatusCard.visibility = View.GONE
                     uploadButton.isEnabled = false
                     // 刷新文件列表
                     loadCurrentDirectory(currentPath)
@@ -244,13 +254,15 @@ class FileListActivity : AppCompatActivity() {
         fileList.addAll(tempList)
         adapter.notifyDataSetChanged()
 
+        // 更新文件计数
+        fileCountText.text = "${filteredList.size} 个搜索结果"
+
         statusLabel.text = "搜索 '${query}': 找到 ${filteredList.size} 个结果"
     }
 
     private fun previewFile(item: FileSystemItem) {
         try {
             val fileType = getFileType(item)
-            // 构建预览URL - 确保路径正确编码
             val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
             val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
 
@@ -287,14 +299,12 @@ class FileListActivity : AppCompatActivity() {
 
             val uris = mutableListOf<Uri>()
             if (data?.clipData != null) {
-                // 多选
                 val count = data.clipData!!.itemCount
                 for (i in 0 until count) {
                     val uri = data.clipData!!.getItemAt(i).uri
                     uris.add(uri)
                 }
             } else if (data?.data != null) {
-                // 单选
                 uris.add(data.data!!)
             }
 
@@ -307,27 +317,25 @@ class FileListActivity : AppCompatActivity() {
                 }
 
                 selectedFiles.addAll(files)
-                selectedFilesLabel.text = "已选择 ${selectedFiles.size} 个文件"
-                uploadButton.isEnabled = selectedFiles.isNotEmpty()
-                statusLabel.text = "文件选择完成"
-
                 if (selectedFiles.isNotEmpty()) {
+                    selectedFilesLabel.text = "已选择 ${selectedFiles.size} 个文件"
+                    uploadStatusCard.visibility = View.VISIBLE
+                    uploadButton.isEnabled = true
+
                     val fileNames = selectedFiles.joinToString(", ") { it.name }
                     showToast("已选择: $fileNames")
                     Log.d("FileListActivity", "成功转换 ${selectedFiles.size} 个文件: $fileNames")
                 } else {
+                    uploadStatusCard.visibility = View.GONE
                     showToast("没有有效的文件被选择")
                 }
+                statusLabel.text = "文件选择完成"
             }
-        } else if (requestCode == PICK_FILES_REQUEST) {
-            Log.d("FileListActivity", "文件选择取消或失败")
         }
     }
 
     private fun uriToFile(uri: Uri): File? {
         return try {
-            Log.d("FileListActivity", "转换URI: $uri")
-
             val contentResolver = applicationContext.contentResolver
             val inputStream: InputStream? = contentResolver.openInputStream(uri)
             if (inputStream == null) {
@@ -345,7 +353,7 @@ class FileListActivity : AppCompatActivity() {
                 }
             }
 
-            Log.d("FileListActivity", "成功转换URI为文件: ${tempFile.absolutePath}, 大小: ${tempFile.length()} bytes, 文件名: $fileName")
+            Log.d("FileListActivity", "成功转换URI为文件: ${tempFile.absolutePath}, 大小: ${tempFile.length()} bytes")
             tempFile
         } catch (e: Exception) {
             Log.e("FileListActivity", "URI转换失败: ${e.message}", e)
@@ -356,7 +364,6 @@ class FileListActivity : AppCompatActivity() {
     private fun getFileName(uri: Uri): String {
         var result = ""
 
-        // 首先尝试从游标获取文件名
         val cursor: Cursor? = contentResolver.query(uri, null, null, null, null)
         cursor?.use {
             if (it.moveToFirst()) {
@@ -367,7 +374,6 @@ class FileListActivity : AppCompatActivity() {
             }
         }
 
-        // 如果从游标没有获取到，尝试从URI路径获取
         if (result.isEmpty()) {
             val path = uri.path
             if (!path.isNullOrEmpty()) {
@@ -375,40 +381,16 @@ class FileListActivity : AppCompatActivity() {
             }
         }
 
-        // 如果仍然为空，使用默认文件名
         if (result.isEmpty()) {
             result = "unknown_file_${System.currentTimeMillis()}"
         }
 
-        // 确保文件名有扩展名
         if (!result.contains('.')) {
-            // 尝试从MIME类型推断扩展名
             val mimeType = contentResolver.getType(uri)
             val extension = when {
-                mimeType?.startsWith("image/") == true -> {
-                    when (mimeType) {
-                        "image/jpeg" -> ".jpg"
-                        "image/png" -> ".png"
-                        "image/gif" -> ".gif"
-                        "image/webp" -> ".webp"
-                        else -> ".jpg"
-                    }
-                }
-                mimeType?.startsWith("video/") == true -> {
-                    when (mimeType) {
-                        "video/mp4" -> ".mp4"
-                        "video/avi" -> ".avi"
-                        "video/mkv" -> ".mkv"
-                        else -> ".mp4"
-                    }
-                }
-                mimeType?.startsWith("audio/") == true -> {
-                    when (mimeType) {
-                        "audio/mpeg" -> ".mp3"
-                        "audio/wav" -> ".wav"
-                        else -> ".mp3"
-                    }
-                }
+                mimeType?.startsWith("image/") == true -> ".jpg"
+                mimeType?.startsWith("video/") == true -> ".mp4"
+                mimeType?.startsWith("audio/") == true -> ".mp3"
                 mimeType == "text/plain" -> ".txt"
                 mimeType == "application/pdf" -> ".pdf"
                 else -> ".dat"
@@ -416,7 +398,6 @@ class FileListActivity : AppCompatActivity() {
             result += extension
         }
 
-        Log.d("FileListActivity", "获取到文件名: $result (MIME: ${contentResolver.getType(uri)})")
         return result
     }
 
@@ -435,12 +416,10 @@ class FileListActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         coroutineScope.cancel()
-        // 清理临时文件
         selectedFiles.forEach { file ->
             if (file.exists() && file.name.startsWith("upload_")) {
                 try {
                     file.delete()
-                    Log.d("FileListActivity", "清理临时文件: ${file.name}")
                 } catch (e: Exception) {
                     Log.e("FileListActivity", "清理临时文件失败: ${file.name}", e)
                 }
@@ -448,7 +427,7 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
-    // 内嵌的适配器类
+    // 适配器类保持不变
     class FileListAdapter(
         private val context: Context,
         private val serverUrl: String,
@@ -549,7 +528,6 @@ class FileListActivity : AppCompatActivity() {
                 context.startActivity(intent)
             } catch (e: Exception) {
                 Toast.makeText(context, "预览失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                Log.e("FileListAdapter", "预览文件失败", e)
             }
         }
 
@@ -573,10 +551,8 @@ class FileListActivity : AppCompatActivity() {
                 context.startActivity(intent)
 
                 Toast.makeText(context, "开始下载: ${item.name}", Toast.LENGTH_SHORT).show()
-                Log.d("FileListAdapter", "下载文件: ${item.name}, URL: $downloadUrl")
             } catch (e: Exception) {
                 Toast.makeText(context, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                Log.e("FileListAdapter", "下载文件失败", e)
             }
         }
 

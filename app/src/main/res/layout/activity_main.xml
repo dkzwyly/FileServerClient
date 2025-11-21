@@ -3,164 +3,268 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="16dp"
-    android:background="#F8F9FA">
+    android:background="#FAFBFF"
+    android:padding="20dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:gravity="center_horizontal">
+        android:orientation="vertical">
 
-        <!-- 应用标题 -->
-        <TextView
+        <!-- 应用标题和图标 -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="文件服务器客户端"
-            android:textSize="24sp"
-            android:textStyle="bold"
-            android:textColor="#2C3E50"
+            android:orientation="vertical"
             android:gravity="center"
             android:layout_marginBottom="32dp"
-            android:drawablePadding="8dp" />
+            android:padding="24dp">
 
-        <!-- 服务器连接区域 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📁"
+                android:textSize="48sp"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="文件服务器客户端"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:textColor="#1A1A1A"
+                android:gravity="center" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="连接您的文件服务器，随时随地访问文件"
+                android:textSize="14sp"
+                android:textColor="#666666"
+                android:gravity="center"
+                android:layout_marginTop="4dp" />
+
+        </LinearLayout>
+
+        <!-- 服务器连接卡片 -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="4dp">
+            android:layout_marginBottom="24dp"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="8dp"
+            app:cardBackgroundColor="#FFFFFF">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp"
-                android:background="#FFFFFF">
+                android:padding="24dp">
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="服务器连接"
-                    android:textSize="18sp"
-                    android:textStyle="bold"
-                    android:textColor="#2C3E50"
-                    android:layout_marginBottom="12dp" />
-
+                <!-- 卡片标题 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:layout_marginBottom="8dp">
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="20dp">
 
-                    <EditText
-                        android:id="@+id/serverUrlEditText"
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🌐"
+                        android:textSize="20sp"
+                        android:layout_marginEnd="12dp" />
+
+                    <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:hint="输入完整服务器地址 (例如: http://192.168.2.138:8080)"
-                        android:textColor="#212121"
-                        android:background="@drawable/edittext_background"
-                        android:padding="12dp" />
+                        android:text="服务器连接"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="#1A1A1A" />
 
-                    <Button
-                        android:id="@+id/connectButton"
+                    <TextView
+                        android:id="@+id/connectionStatusLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="连接"
-                        android:background="#007CBA"
-                        android:textColor="#FFFFFF"
-                        android:paddingHorizontal="16dp"
-                        android:layout_marginStart="8dp" />
+                        android:text="未连接"
+                        android:textSize="12sp"
+                        android:textColor="#FF6B6B"
+                        android:background="#FFEBEE"
+                        android:paddingHorizontal="12dp"
+                        android:paddingVertical="4dp"
+                        android:gravity="center" />
 
                 </LinearLayout>
 
-                <TextView
-                    android:id="@+id/connectionStatusLabel"
+                <!-- 服务器地址输入 -->
+                <EditText
+                    android:id="@+id/serverUrlEditText"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="未连接"
-                    android:textColor="#FF0000"
-                    android:textStyle="italic" />
+                    android:hint="输入服务器地址 (如: 192.168.2.138:8080)"
+                    android:textColor="#1A1A1A"
+                    android:background="@drawable/edittext_background"
+                    android:padding="16dp"
+                    android:textSize="14sp"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- 连接按钮 -->
+                <Button
+                    android:id="@+id/connectButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:text="连接服务器"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/primary_button_background"
+                    android:textColor="#FFFFFF" />
+
+                <!-- 提示文本 -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="提示: 支持 HTTP/HTTPS 协议，自动检测端口"
+                    android:textSize="12sp"
+                    android:textColor="#999999"
+                    android:gravity="center"
+                    android:layout_marginTop="12dp" />
 
             </LinearLayout>
 
         </androidx.cardview.widget.CardView>
 
-        <!-- 快速操作区域 -->
+        <!-- 快速操作卡片 -->
         <androidx.cardview.widget.CardView
             android:id="@+id/quickActionsCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="24dp"
             android:visibility="gone"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="20dp"
+            app:cardElevation="8dp"
+            app:cardBackgroundColor="#FFFFFF">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp"
-                android:background="#E3F2FD">
+                android:padding="24dp">
 
-                <TextView
+                <!-- 卡片标题 -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="快速操作"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:textColor="#1565C0"
-                    android:layout_marginBottom="12dp" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="20dp">
 
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🚀"
+                        android:textSize="20sp"
+                        android:layout_marginEnd="12dp" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="快速操作"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="#1A1A1A" />
+
+                </LinearLayout>
+
+                <!-- 浏览文件按钮 -->
                 <Button
                     android:id="@+id/browseFilesButton"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="56dp"
                     android:text="📁 浏览文件列表"
-                    android:background="#FF9800"
-                    android:textColor="#FFFFFF"
-                    android:textSize="14sp" />
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/secondary_button_background"
+                    android:textColor="#4A90E2" />
 
             </LinearLayout>
 
         </androidx.cardview.widget.CardView>
 
-        <!-- 连接历史区域 -->
+        <!-- 连接历史卡片 -->
         <androidx.cardview.widget.CardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="20dp"
+            app:cardElevation="8dp"
+            app:cardBackgroundColor="#FFFFFF">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="16dp"
-                android:background="#FFF3E0">
+                android:padding="24dp">
 
-                <TextView
+                <!-- 卡片标题 -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="连接历史"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="#E65100"
-                    android:layout_marginBottom="8dp" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="16dp">
 
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🕒"
+                        android:textSize="20sp"
+                        android:layout_marginEnd="12dp" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="连接历史"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="#1A1A1A" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="最近10条"
+                        android:textSize="12sp"
+                        android:textColor="#999999" />
+
+                </LinearLayout>
+
+                <!-- 历史列表 -->
                 <ListView
                     android:id="@+id/historyListView"
                     android:layout_width="match_parent"
-                    android:layout_height="120dp"
-                    android:background="#FFFFFF"
-                    android:divider="#E0E0E0"
-                    android:dividerHeight="1dp" />
+                    android:layout_height="180dp"
+                    android:background="#F8F9FF"
+                    android:divider="@android:color/transparent"
+                    android:dividerHeight="8dp" />
 
             </LinearLayout>
 
         </androidx.cardview.widget.CardView>
+
+        <!-- 底部信息 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="文件服务器客户端 v1.0"
+            android:textSize="12sp"
+            android:textColor="#CCCCCC"
+            android:gravity="center"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="16dp" />
 
     </LinearLayout>
 
