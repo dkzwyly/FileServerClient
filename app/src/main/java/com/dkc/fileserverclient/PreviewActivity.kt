@@ -103,6 +103,9 @@ class PreviewActivity : AppCompatActivity() {
     private var longPressRunnable: Runnable? = null
     private var isLongPressDetected = false
 
+    // 视频时长相关
+    private var videoDuration: Long = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_preview)
@@ -206,12 +209,16 @@ class PreviewActivity : AppCompatActivity() {
     }
 
     private fun setupSeekBar() {
+        // 设置进度条的最大值为1000，这样可以更精确地控制进度
+        seekBar.max = 1000
+
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
                     exoPlayer?.let { player ->
                         val duration = player.duration
                         if (duration > 0) {
+                            // 将进度条的进度(0-1000)转换为实际的时间位置
                             val newPosition = (duration * progress / 1000).toLong()
                             player.seekTo(newPosition)
                         }
@@ -220,11 +227,13 @@ class PreviewActivity : AppCompatActivity() {
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar) {
-                // 不需要特殊处理
+                // 停止进度更新，避免冲突
+                stopProgressUpdates()
             }
 
             override fun onStopTrackingTouch(seekBar: SeekBar) {
-                // 不需要特殊处理
+                // 重新开始进度更新
+                startProgressUpdates()
             }
         })
     }
@@ -243,13 +252,24 @@ class PreviewActivity : AppCompatActivity() {
             val position = player.currentPosition
 
             if (duration > 0) {
+                // 更新视频时长（如果发生了变化）
+                if (duration != videoDuration) {
+                    videoDuration = duration
+                    updateDuration()
+                }
+
+                // 计算进度百分比 (0-1000)
+                val progress = if (duration > 0) {
+                    (position * 1000 / duration).toInt()
+                } else {
+                    0
+                }
+
                 // 更新进度条
-                val progress = (position * 1000 / duration).toInt()
                 seekBar.progress = progress
 
                 // 更新时间显示
                 currentTimeTextView.text = formatTime(position)
-                durationTextView.text = formatTime(duration)
             }
 
             // 继续更新
@@ -273,6 +293,7 @@ class PreviewActivity : AppCompatActivity() {
         exoPlayer?.let { player ->
             val duration = player.duration
             if (duration > 0) {
+                videoDuration = duration
                 durationTextView.text = formatTime(duration)
             }
         }
