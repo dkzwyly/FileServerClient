@@ -98,4 +98,3 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
-// 移除所有 repositories 配置
