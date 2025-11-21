@@ -87,7 +87,7 @@
 
     </FrameLayout>
 
-    <!-- 视频预览容器 -->
+    <!-- 视频预览容器 - 使用 ExoPlayer -->
     <FrameLayout
         android:id="@+id/videoContainer"
         android:layout_width="match_parent"
@@ -95,10 +95,11 @@
         android:layout_below="@id/titleBar"
         android:visibility="gone">
 
-        <VideoView
-            android:id="@+id/videoPreview"
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/playerView"
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:layout_height="match_parent"
+            android:background="#000000" />
 
         <ProgressBar
             android:id="@+id/videoLoadingProgress"
@@ -107,42 +108,75 @@
             android:layout_gravity="center"
             android:indeterminate="true" />
 
-        <!-- 视频控制栏 -->
+        <!-- 底部控制栏 - 修改为底部位置 -->
         <LinearLayout
             android:id="@+id/videoControls"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_alignParentBottom="true"
+            android:layout_gravity="bottom"
             android:background="#80000000"
             android:orientation="horizontal"
             android:padding="16dp"
+            android:gravity="center_vertical"
             android:visibility="gone">
 
-            <Button
+            <ImageButton
                 android:id="@+id/playPauseButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@android:drawable/ic_media_play"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="播放/暂停" />
+
+            <TextView
+                android:id="@+id/currentTimeTextView"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="播放"
-                android:background="@android:color/transparent"
-                android:textColor="#FFFFFF" />
+                android:text="0:00"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:layout_marginStart="8dp" />
 
             <SeekBar
-                android:id="@+id/videoSeekBar"
+                android:id="@+id/seekBar"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="16dp"
-                android:layout_marginEnd="16dp" />
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp" />
 
             <TextView
-                android:id="@+id/videoTimeTextView"
+                android:id="@+id/durationTextView"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="00:00 / 00:00"
+                android:text="0:00"
                 android:textColor="#FFFFFF"
-                android:textSize="12sp" />
+                android:textSize="14sp" />
+
+            <ImageButton
+                android:id="@+id/fullscreenToggleButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/ic_fullscreen"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="全屏"
+                android:layout_marginStart="8dp" />
 
         </LinearLayout>
+
+        <!-- 加速播放指示器 -->
+        <TextView
+            android:id="@+id/speedIndicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="2.0x"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:background="#80000000"
+            android:padding="16dp"
+            android:visibility="gone"
+            android:elevation="4dp" />
 
     </FrameLayout>
 
@@ -212,19 +246,6 @@
         android:textColor="#FF4444"
         android:textSize="18sp"
         android:gravity="center"
-        android:visibility="gone" />
-
-    <!-- 全屏切换按钮 - 使用 Button 替代 ImageButton -->
-    <Button
-        android:id="@+id/fullscreenButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_alignParentBottom="true"
-        android:layout_alignParentEnd="true"
-        android:layout_margin="16dp"
-        android:text="全屏"
-        android:background="#80000000"
-        android:textColor="#FFFFFF"
         android:visibility="gone" />
 
 </RelativeLayout>

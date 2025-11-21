@@ -31,7 +31,7 @@
         <!-- 预览活动 -->
         <activity
             android:name=".PreviewActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 

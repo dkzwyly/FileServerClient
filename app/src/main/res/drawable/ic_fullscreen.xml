@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- 简单的全屏图标：四个向外箭头 -->
+    <path
+        android:strokeColor="@color/white"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M4,4 L8,4 M4,4 L4,8
+                         M20,4 L16,4 M20,4 L20,8
+                         M4,20 L4,16 M4,20 L8,20
+                         M20,20 L16,20 M20,20 L20,16" />
+</vector>

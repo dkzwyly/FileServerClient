@@ -3,22 +3,42 @@ package com.dkc.fileserverclient
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.ui.PlayerView
+import coil.Coil
+import coil.ImageLoader
+import coil.request.ImageRequest
+import coil.transform.RoundedCornersTransformation
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.security.cert.X509Certificate
+import java.util.*
+import javax.net.ssl.*
 
+@UnstableApi
 class PreviewActivity : AppCompatActivity() {
 
     // UI 组件
@@ -27,7 +47,6 @@ class PreviewActivity : AppCompatActivity() {
     private lateinit var fileNameTextView: TextView
     private lateinit var fileTypeTextView: TextView
     private lateinit var downloadButton: Button
-    private lateinit var fullscreenButton: Button
 
     // 预览容器
     private lateinit var imageContainer: FrameLayout
@@ -40,13 +59,16 @@ class PreviewActivity : AppCompatActivity() {
     private lateinit var imagePreview: ImageView
     private lateinit var imageLoadingProgress: ProgressBar
 
-    // 视频预览组件
-    private lateinit var videoPreview: VideoView
+    // 视频预览组件 - 使用 ExoPlayer
+    private lateinit var playerView: PlayerView
     private lateinit var videoLoadingProgress: ProgressBar
     private lateinit var videoControls: LinearLayout
-    private lateinit var playPauseButton: Button
-    private lateinit var videoSeekBar: SeekBar
-    private lateinit var videoTimeTextView: TextView
+    private lateinit var playPauseButton: ImageButton
+    private lateinit var fullscreenToggleButton: ImageButton
+    private lateinit var seekBar: SeekBar
+    private lateinit var currentTimeTextView: TextView
+    private lateinit var durationTextView: TextView
+    private lateinit var speedIndicator: TextView
 
     // 文本预览组件
     private lateinit var textPreview: TextView
@@ -61,10 +83,25 @@ class PreviewActivity : AppCompatActivity() {
     private var currentFileType = ""
     private var currentFileUrl = ""
     private var currentFileName = ""
+    private var isPlaying = false
+    private var isFastForwarding = false
+
+    // ExoPlayer 实例
+    private var exoPlayer: ExoPlayer? = null
 
     // 网络客户端
-    private val client = OkHttpClient()
+    private val client = createUnsafeOkHttpClient()
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
+    private val handler = Handler(Looper.getMainLooper())
+    private val updateProgressRunnable = Runnable { updateProgress() }
+
+    // 手势检测
+    private var tapCount = 0
+    private val tapTimeoutMillis = 300L
+    private val doubleTapHandler = Handler(Looper.getMainLooper())
+    private var longPressHandler = Handler(Looper.getMainLooper())
+    private var longPressRunnable: Runnable? = null
+    private var isLongPressDetected = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,6 +110,7 @@ class PreviewActivity : AppCompatActivity() {
         initViews()
         setupIntentData()
         setupEventListeners()
+        setupGestureDetectors()
         loadPreview()
     }
 
@@ -83,7 +121,6 @@ class PreviewActivity : AppCompatActivity() {
         fileNameTextView = findViewById(R.id.fileNameTextView)
         fileTypeTextView = findViewById(R.id.fileTypeTextView)
         downloadButton = findViewById(R.id.downloadButton)
-        fullscreenButton = findViewById(R.id.fullscreenButton)
 
         imageContainer = findViewById(R.id.imageContainer)
         videoContainer = findViewById(R.id.videoContainer)
@@ -94,12 +131,16 @@ class PreviewActivity : AppCompatActivity() {
         imagePreview = findViewById(R.id.imagePreview)
         imageLoadingProgress = findViewById(R.id.imageLoadingProgress)
 
-        videoPreview = findViewById(R.id.videoPreview)
+        // 初始化 ExoPlayer 组件
+        playerView = findViewById(R.id.playerView)
         videoLoadingProgress = findViewById(R.id.videoLoadingProgress)
         videoControls = findViewById(R.id.videoControls)
         playPauseButton = findViewById(R.id.playPauseButton)
-        videoSeekBar = findViewById(R.id.videoSeekBar)
-        videoTimeTextView = findViewById(R.id.videoTimeTextView)
+        fullscreenToggleButton = findViewById(R.id.fullscreenToggleButton)
+        seekBar = findViewById(R.id.seekBar)
+        currentTimeTextView = findViewById(R.id.currentTimeTextView)
+        durationTextView = findViewById(R.id.durationTextView)
+        speedIndicator = findViewById(R.id.speedIndicator)
 
         textPreview = findViewById(R.id.textPreview)
         textLoadingProgress = findViewById(R.id.textLoadingProgress)
@@ -109,6 +150,211 @@ class PreviewActivity : AppCompatActivity() {
 
         // 初始化WebView
         setupWebView()
+        // 初始化 ExoPlayer
+        initializePlayer()
+        // 初始化进度条
+        setupSeekBar()
+
+        // 初始状态：非全屏模式下控制栏始终显示
+        updateControlsVisibility()
+    }
+
+    @UnstableApi
+    private fun initializePlayer() {
+        // 创建使用不安全 SSL 的数据源工厂
+        val dataSourceFactory = createUnsafeDataSourceFactory()
+
+        exoPlayer = ExoPlayer.Builder(this)
+            .setSeekBackIncrementMs(5000)
+            .setSeekForwardIncrementMs(5000)
+            .build().apply {
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        when (playbackState) {
+                            Player.STATE_READY -> {
+                                videoLoadingProgress.visibility = View.GONE
+                                this@PreviewActivity.isPlaying = this@apply.isPlaying
+                                updatePlayPauseButton()
+                                updateDuration()
+                                startProgressUpdates()
+                                updateControlsVisibility()
+                            }
+                            Player.STATE_BUFFERING -> {
+                                videoLoadingProgress.visibility = View.VISIBLE
+                            }
+                            Player.STATE_ENDED -> {
+                                playPauseButton.setImageResource(android.R.drawable.ic_media_play)
+                                this@PreviewActivity.isPlaying = false
+                            }
+                        }
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        videoLoadingProgress.visibility = View.GONE
+                        showError("播放错误: ${error.message}")
+                    }
+
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        this@PreviewActivity.isPlaying = isPlaying
+                        updatePlayPauseButton()
+                    }
+                })
+            }
+
+        playerView.player = exoPlayer
+        playerView.useController = false // 使用自定义控制器
+    }
+
+    private fun setupSeekBar() {
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    exoPlayer?.let { player ->
+                        val duration = player.duration
+                        if (duration > 0) {
+                            val newPosition = (duration * progress / 1000).toLong()
+                            player.seekTo(newPosition)
+                        }
+                    }
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar) {
+                // 不需要特殊处理
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar) {
+                // 不需要特殊处理
+            }
+        })
+    }
+
+    private fun startProgressUpdates() {
+        handler.post(updateProgressRunnable)
+    }
+
+    private fun stopProgressUpdates() {
+        handler.removeCallbacks(updateProgressRunnable)
+    }
+
+    private fun updateProgress() {
+        exoPlayer?.let { player ->
+            val duration = player.duration
+            val position = player.currentPosition
+
+            if (duration > 0) {
+                // 更新进度条
+                val progress = (position * 1000 / duration).toInt()
+                seekBar.progress = progress
+
+                // 更新时间显示
+                currentTimeTextView.text = formatTime(position)
+                durationTextView.text = formatTime(duration)
+            }
+
+            // 继续更新
+            handler.postDelayed(updateProgressRunnable, 1000)
+        }
+    }
+
+    private fun formatTime(millis: Long): String {
+        val seconds = millis / 1000
+        val minutes = seconds / 60
+        val hours = minutes / 60
+
+        return if (hours > 0) {
+            String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes % 60, seconds % 60)
+        } else {
+            String.format(Locale.getDefault(), "%d:%02d", minutes, seconds % 60)
+        }
+    }
+
+    private fun updateDuration() {
+        exoPlayer?.let { player ->
+            val duration = player.duration
+            if (duration > 0) {
+                durationTextView.text = formatTime(duration)
+            }
+        }
+    }
+
+    @UnstableApi
+    private fun createUnsafeDataSourceFactory(): DataSource.Factory {
+        val okHttpClient = createUnsafeOkHttpClient()
+        val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+        return DefaultDataSource.Factory(this, okHttpDataSourceFactory)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupGestureDetectors() {
+        playerView.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    // 开始长按检测
+                    isLongPressDetected = false
+                    longPressRunnable = Runnable {
+                        isLongPressDetected = true
+                        enableFastForward(true)
+                    }
+                    longPressHandler.postDelayed(longPressRunnable!!, 800) // 长按800ms后触发加速
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // 取消长按检测
+                    longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
+
+                    if (isLongPressDetected) {
+                        // 如果是长按后的松开，恢复速度
+                        enableFastForward(false)
+                        isLongPressDetected = false
+                    } else {
+                        // 如果不是长按，处理点击事件
+                        handlePlayerTap()
+                    }
+                }
+            }
+            true // 消费事件，防止事件传递
+        }
+    }
+
+    private fun handlePlayerTap() {
+        tapCount++
+
+        if (tapCount == 1) {
+            // 第一次点击
+            doubleTapHandler.postDelayed({
+                if (tapCount == 1) {
+                    // 这是单击，不是双击 - 不执行任何操作
+                    tapCount = 0
+                }
+            }, tapTimeoutMillis)
+        } else if (tapCount == 2) {
+            // 第二次点击 - 双击
+            doubleTapHandler.removeCallbacksAndMessages(null)
+            toggleVideoPlayback()
+            tapCount = 0
+        }
+    }
+
+    private fun enableFastForward(enable: Boolean) {
+        exoPlayer?.let { player ->
+            if (enable) {
+                // 启用加速
+                player.playbackParameters = player.playbackParameters.withSpeed(2.0f)
+                isFastForwarding = true
+                speedIndicator.visibility = View.VISIBLE
+                speedIndicator.text = "2.0x"
+
+                // 3秒后自动隐藏加速指示器
+                handler.postDelayed({
+                    speedIndicator.visibility = View.GONE
+                }, 3000)
+            } else {
+                // 恢复正常速度
+                player.playbackParameters = player.playbackParameters.withSpeed(1.0f)
+                isFastForwarding = false
+                speedIndicator.visibility = View.GONE
+            }
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -152,31 +398,21 @@ class PreviewActivity : AppCompatActivity() {
             downloadFile()
         }
 
-        fullscreenButton.setOnClickListener {
-            toggleFullscreen()
-        }
-
         // 视频控制事件
         playPauseButton.setOnClickListener {
             toggleVideoPlayback()
         }
 
-        videoSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) {
-                    videoPreview.seekTo(progress)
-                }
-            }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
+        fullscreenToggleButton.setOnClickListener {
+            toggleFullscreen()
+        }
     }
 
     private fun loadPreview() {
         when (currentFileType) {
             "image" -> loadImagePreview()
             "video" -> loadVideoPreview()
+            "audio" -> loadAudioPreview()
             "text" -> loadTextPreview()
             else -> loadGeneralPreview()
         }
@@ -185,23 +421,30 @@ class PreviewActivity : AppCompatActivity() {
     private fun loadImagePreview() {
         showContainer(imageContainer)
         fileTypeTextView.visibility = View.VISIBLE
-        fullscreenButton.visibility = View.VISIBLE
-
-        // 使用图片加载库（如Glide、Picasso）来加载图片
-        // 这里简化处理，实际应用中应该使用专门的图片加载库
 
         coroutineScope.launch {
             try {
-                // 模拟图片加载
-                withContext(Dispatchers.IO) {
-                    // 这里应该是实际的图片加载逻辑
-                    Thread.sleep(1000) // 模拟加载延迟
-                }
+                // 使用 Coil 加载图片
+                val imageLoader = Coil.imageLoader(this@PreviewActivity)
+                val request = ImageRequest.Builder(this@PreviewActivity)
+                    .data(currentFileUrl)
+                    .target(imagePreview)
+                    .transformations(RoundedCornersTransformation(8f))
+                    .listener(
+                        onStart = {
+                            imageLoadingProgress.visibility = View.VISIBLE
+                        },
+                        onSuccess = { _, _ ->
+                            imageLoadingProgress.visibility = View.GONE
+                        },
+                        onError = { _, _ ->
+                            imageLoadingProgress.visibility = View.GONE
+                            showError("图片加载失败")
+                        }
+                    )
+                    .build()
 
-                // 图片加载完成
-                imageLoadingProgress.visibility = View.GONE
-                // 实际应用中这里应该设置图片
-                // imagePreview.setImageBitmap(bitmap)
+                imageLoader.enqueue(request)
 
             } catch (e: Exception) {
                 showError("图片加载失败: ${e.message}")
@@ -209,44 +452,50 @@ class PreviewActivity : AppCompatActivity() {
         }
     }
 
+    @UnstableApi
     private fun loadVideoPreview() {
         showContainer(videoContainer)
         fileTypeTextView.visibility = View.VISIBLE
-        fullscreenButton.visibility = View.VISIBLE
-        videoControls.visibility = View.VISIBLE
 
         try {
-            videoPreview.setVideoURI(Uri.parse(currentFileUrl))
+            val mediaSourceFactory = ProgressiveMediaSource.Factory(createUnsafeDataSourceFactory())
+            val mediaItem = MediaItem.fromUri(currentFileUrl)
+            val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
 
-            videoPreview.setOnPreparedListener { mp ->
-                videoLoadingProgress.visibility = View.GONE
-                videoSeekBar.max = mp.duration
-                updateVideoTimeText(0, mp.duration)
+            exoPlayer?.setMediaSource(mediaSource)
+            exoPlayer?.prepare()
+            exoPlayer?.playWhenReady = true
 
-                // 设置视频进度更新监听
-                val handler = Handler(Looper.getMainLooper())
-                handler.post(object : Runnable {
-                    override fun run() {
-                        if (videoPreview.isPlaying) {
-                            val currentPosition = videoPreview.currentPosition
-                            videoSeekBar.progress = currentPosition
-                            updateVideoTimeText(currentPosition, videoPreview.duration)
-                        }
-                        handler.postDelayed(this, 1000)
-                    }
-                })
-            }
-
-            videoPreview.setOnCompletionListener {
-                playPauseButton.text = "播放"
-            }
-
-            // 自动开始播放
-            videoPreview.start()
-            playPauseButton.text = "暂停"
+            isPlaying = true
+            updatePlayPauseButton()
 
         } catch (e: Exception) {
             showError("视频加载失败: ${e.message}")
+        }
+    }
+
+    @UnstableApi
+    private fun loadAudioPreview() {
+        showContainer(videoContainer) // 使用视频容器，但不显示视频视图
+        fileTypeTextView.visibility = View.VISIBLE
+
+        playerView.visibility = View.GONE // 隐藏视频视图
+        videoControls.visibility = View.VISIBLE // 显示控制条
+
+        try {
+            val mediaSourceFactory = ProgressiveMediaSource.Factory(createUnsafeDataSourceFactory())
+            val mediaItem = MediaItem.fromUri(currentFileUrl)
+            val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
+
+            exoPlayer?.setMediaSource(mediaSource)
+            exoPlayer?.prepare()
+            exoPlayer?.playWhenReady = true
+
+            isPlaying = true
+            updatePlayPauseButton()
+
+        } catch (e: Exception) {
+            showError("音频加载失败: ${e.message}")
         }
     }
 
@@ -315,26 +564,24 @@ class PreviewActivity : AppCompatActivity() {
         }
     }
 
+    @SuppressLint("InlinedApi")
     private fun enterFullscreen() {
         isFullscreen = true
 
         // 隐藏状态栏和导航栏
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            window.decorView.systemUiVisibility = (
-                    View.SYSTEM_UI_FLAG_FULLSCREEN or
-                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    )
-        } else {
-            window.decorView.systemUiVisibility = (
-                    View.SYSTEM_UI_FLAG_FULLSCREEN or
-                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    )
-        }
+        window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                        View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                        View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                        View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                )
 
-        // 隐藏标题栏
+        // 设置全屏窗口标志
+        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+
+        // 隐藏标题栏和其他UI元素
         titleBar.visibility = View.GONE
         fileTypeTextView.visibility = View.GONE
 
@@ -344,15 +591,27 @@ class PreviewActivity : AppCompatActivity() {
         // 保持屏幕常亮
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // 更新全屏按钮文本
-        fullscreenButton.text = "退出全屏"
+        // 隐藏系统UI
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.hide(android.view.WindowInsets.Type.systemBars())
+        }
+
+        // 更新全屏按钮图标
+        fullscreenToggleButton.setImageResource(R.drawable.ic_fullscreen_exit)
+
+        // 全屏模式下隐藏控制栏
+        updateControlsVisibility()
     }
 
+    @SuppressLint("InlinedApi")
     private fun exitFullscreen() {
         isFullscreen = false
 
         // 显示状态栏和导航栏
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+
+        // 清除全屏窗口标志
+        window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
 
         // 显示标题栏
         titleBar.visibility = View.VISIBLE
@@ -364,37 +623,53 @@ class PreviewActivity : AppCompatActivity() {
         // 取消屏幕常亮
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // 更新全屏按钮文本
-        fullscreenButton.text = "全屏"
+        // 显示系统UI
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.show(android.view.WindowInsets.Type.systemBars())
+        }
+
+        // 更新全屏按钮图标
+        fullscreenToggleButton.setImageResource(R.drawable.ic_fullscreen)
+
+        // 非全屏模式下显示控制栏
+        updateControlsVisibility()
     }
 
     private fun toggleVideoPlayback() {
-        if (videoPreview.isPlaying) {
-            videoPreview.pause()
-            playPauseButton.text = "播放"
-        } else {
-            videoPreview.start()
-            playPauseButton.text = "暂停"
+        exoPlayer?.let { player ->
+            if (player.isPlaying) {
+                player.pause()
+            } else {
+                player.play()
+            }
+            this@PreviewActivity.isPlaying = player.isPlaying
+            updatePlayPauseButton()
         }
     }
 
-    private fun updateVideoTimeText(current: Int, total: Int) {
-        val currentMinutes = current / 1000 / 60
-        val currentSeconds = current / 1000 % 60
-        val totalMinutes = total / 1000 / 60
-        val totalSeconds = total / 1000 % 60
+    private fun updatePlayPauseButton() {
+        val iconRes = if (isPlaying) {
+            android.R.drawable.ic_media_pause
+        } else {
+            android.R.drawable.ic_media_play
+        }
+        playPauseButton.setImageResource(iconRes)
+    }
 
-        videoTimeTextView.text = String.format(
-            "%02d:%02d / %02d:%02d",
-            currentMinutes, currentSeconds, totalMinutes, totalSeconds
-        )
+    // 更新控制栏可见性
+    private fun updateControlsVisibility() {
+        if (isFullscreen) {
+            // 全屏模式下隐藏控制栏
+            videoControls.visibility = View.GONE
+        } else {
+            // 非全屏模式下显示控制栏
+            videoControls.visibility = View.VISIBLE
+        }
     }
 
     private fun downloadFile() {
-        // 实现文件下载逻辑
         Toast.makeText(this, "开始下载: $currentFileName", Toast.LENGTH_SHORT).show()
 
-        // 这里可以调用系统的下载管理器或自定义下载逻辑
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(currentFileUrl))
         startActivity(intent)
     }
@@ -407,13 +682,58 @@ class PreviewActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        // 当Activity进入后台时暂停播放
+        exoPlayer?.pause()
+        stopProgressUpdates()
+        // 清理长按检测
+        longPressHandler.removeCallbacksAndMessages(null)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (isFullscreen) {
+            enterFullscreen()
+        }
+        // 重新开始进度更新
+        startProgressUpdates()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         coroutineScope.cancel()
+        stopProgressUpdates()
+        doubleTapHandler.removeCallbacksAndMessages(null)
+        longPressHandler.removeCallbacksAndMessages(null)
 
-        // 释放视频资源
-        if (videoPreview.isPlaying) {
-            videoPreview.stopPlayback()
+        // 释放播放器资源
+        exoPlayer?.release()
+        exoPlayer = null
+    }
+
+    private fun createUnsafeOkHttpClient(): OkHttpClient {
+        try {
+            // 创建信任所有证书的 TrustManager
+            val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            })
+
+            // 创建 SSLContext 使用信任所有证书的 TrustManager
+            val sslContext = SSLContext.getInstance("SSL")
+            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+
+            // 创建不验证主机名的 HostnameVerifier
+            val hostnameVerifier = HostnameVerifier { _, _ -> true }
+
+            return OkHttpClient.Builder()
+                .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
+                .hostnameVerifier(hostnameVerifier)
+                .build()
+        } catch (e: Exception) {
+            throw RuntimeException(e)
         }
     }
 }
