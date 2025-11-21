@@ -1,5 +1,6 @@
 package com.dkc.fileserverclient
 
+import androidx.media3.exoplayer.ExoPlayer
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +39,10 @@ class FileViewModel(private val repository: FileRepository) : ViewModel() {
 
     // 视频播放器状态
     var videoPlayerState by mutableStateOf(VideoPlayerState())
+        private set
+
+    // 共享视频播放器实例
+    var sharedVideoPlayer: ExoPlayer? = null
         private set
 
     private var currentPath = ""
@@ -263,6 +268,23 @@ class FileViewModel(private val repository: FileRepository) : ViewModel() {
      */
     fun shouldRestoreState(videoUrl: String): Boolean {
         return videoPlayerState.videoUrl == videoUrl && videoPlayerState.currentPosition > 0
+    }
+
+    // ========== 共享播放器管理 ==========
+
+    /**
+     * 设置共享播放器
+     */
+    fun setSharedVideoPlayer(player: ExoPlayer?) {
+        sharedVideoPlayer = player
+    }
+
+    /**
+     * 清理共享播放器
+     */
+    fun clearSharedVideoPlayer() {
+        sharedVideoPlayer?.release()
+        sharedVideoPlayer = null
     }
 }
 

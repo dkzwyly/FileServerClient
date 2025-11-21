@@ -52,6 +52,7 @@ fun FilePreviewScreen(
     modifier: Modifier = Modifier
 ) {
     var isFullscreen by remember { mutableStateOf(false) }
+    val viewModel: FileViewModel = viewModel()
 
     // 处理全屏状态下的返回按钮
     val handleBack = {
@@ -146,6 +147,17 @@ fun FilePreviewScreen(
                         Text("选择文件进行预览")
                     }
                 }
+            }
+        }
+    }
+
+    // 当离开预览界面时清理共享播放器
+    DisposableEffect(Unit) {
+        onDispose {
+            // 只有在完全离开预览界面时才清理
+            if (!isFullscreen) {
+                viewModel.clearSharedVideoPlayer()
+                println("DEBUG: 清理共享播放器")
             }
         }
     }
@@ -342,13 +354,30 @@ fun MediaPreview(
     val isVideo = mimeType.startsWith("video")
     val isAudio = mimeType.startsWith("audio")
 
+    // 使用共享的播放器实例
+    val sharedPlayer = viewModel.sharedVideoPlayer
+
     // 当切换到新视频时重置状态
     LaunchedEffect(mediaUrl) {
         if (isVideo) {
             // 检查是否需要重置状态（如果是不同的视频）
             if (!viewModel.shouldRestoreState(mediaUrl)) {
                 viewModel.resetVideoState()
+                // 如果是不同的视频，清理共享播放器
+                if (sharedPlayer != null) {
+                    viewModel.clearSharedVideoPlayer()
+                }
             }
+        }
+    }
+
+    // 设置共享播放器（如果是视频且没有共享播放器）
+    LaunchedEffect(isVideo, mediaUrl, sharedPlayer) {
+        if (isVideo && sharedPlayer == null) {
+            // 延迟设置共享播放器，确保播放器已经初始化
+            delay(500)
+            // 这里我们不在 MediaPreview 中创建播放器，而是在 EnhancedVideoPlayer 中创建
+            // 然后在全屏模式中共享同一个实例
         }
     }
 
@@ -497,7 +526,9 @@ fun MediaPreview(
                         },
                         onFullscreenChange = { fullscreen ->
                             onFullscreenChange(fullscreen)
-                        }
+                        },
+                        externalPlayer = sharedPlayer, // 使用共享播放器
+                        isFullscreen = false // 明确指定不是全屏模式
                     )
                 } else if (isAudio) {
                     // 音频播放器布局
@@ -639,7 +670,7 @@ fun MediaPreview(
 }
 
 /**
- * 全屏视频播放器 - 修复版，支持状态保持
+ * 全屏视频播放器 - 使用共享播放器实现无缝切换
  */
 @Composable
 fun FullscreenVideoPlayer(
@@ -649,6 +680,10 @@ fun FullscreenVideoPlayer(
 ) {
     val context = LocalContext.current
     var showControls by remember { mutableStateOf(true) }
+    val viewModel: FileViewModel = viewModel()
+
+    // 使用共享的播放器实例
+    val sharedPlayer = viewModel.sharedVideoPlayer
 
     // 使用DisposableEffect来管理屏幕方向和全屏模式
     DisposableEffect(Unit) {
@@ -707,10 +742,12 @@ fun FullscreenVideoPlayer(
                 if (!fullscreen) {
                     onExitFullscreen()
                 }
-            }
+            },
+            externalPlayer = sharedPlayer, // 关键：使用同一个播放器实例
+            isFullscreen = true // 明确指定是全屏模式
         )
 
-        // 全屏模式下的退出按钮 - 只在显示控制栏时显示
+        // 全屏模式下的退出按钮
         if (showControls) {
             IconButton(
                 onClick = onExitFullscreen,
@@ -726,7 +763,7 @@ fun FullscreenVideoPlayer(
             }
         }
 
-        // 操作提示 - 只在隐藏控制栏时显示
+        // 操作提示
         if (!showControls) {
             Box(
                 modifier = Modifier

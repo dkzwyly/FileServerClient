@@ -1,9 +1,13 @@
 // EnhancedMediaPlayer.kt
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.dkc.fileserverclient
+
+
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.net.Uri
+import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -48,20 +52,22 @@ fun EnhancedVideoPlayer(
     videoUrl: String,
     modifier: Modifier = Modifier,
     onError: (String) -> Unit = {},
-    onFullscreenChange: (Boolean) -> Unit = {}
+    onFullscreenChange: (Boolean) -> Unit = {},
+    externalPlayer: ExoPlayer? = null, // 支持外部传入的播放器实例
+    isFullscreen: Boolean = false // 新增：明确知道当前是否全屏
 ) {
     val context = LocalContext.current
     val viewModel: FileViewModel = viewModel()
-    var isFullscreen by remember { mutableStateOf(false) }
     var showCustomControls by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(true) }
     var playbackSpeed by remember { mutableStateOf(1.0f) }
     var isLongPressing by remember { mutableStateOf(false) }
     var isPlayerReady by remember { mutableStateOf(false) }
+    var hasInitialSeek by remember { mutableStateOf(false) } // 新增：标记是否已经初始定位
 
-    // 使用 remember 保存播放器实例，避免方向改变时重建
-    val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
+    // 使用 remember 保存播放器实例，或者使用外部传入的播放器
+    val exoPlayer = remember(externalPlayer, videoUrl) {
+        externalPlayer ?: ExoPlayer.Builder(context).build().apply {
             repeatMode = Player.REPEAT_MODE_OFF
             playWhenReady = true
 
@@ -73,10 +79,10 @@ fun EnhancedVideoPlayer(
                             isPlaying = this@apply.isPlaying
                             isPlayerReady = true
 
-                            // 恢复播放位置（如果是同一个视频）
-                            if (viewModel.shouldRestoreState(videoUrl)) {
+                            // 只在第一次准备好时恢复播放位置
+                            if (!hasInitialSeek && viewModel.shouldRestoreState(videoUrl)) {
                                 val savedState = viewModel.videoPlayerState
-                                if (savedState.currentPosition > 0 && currentPosition == 0L) {
+                                if (savedState.currentPosition > 0) {
                                     seekTo(savedState.currentPosition)
                                     if (savedState.isPlaying) {
                                         play()
@@ -85,6 +91,8 @@ fun EnhancedVideoPlayer(
                                     }
                                     playbackSpeed = savedState.playbackSpeed
                                     playbackParameters = playbackParameters.withSpeed(playbackSpeed)
+                                    hasInitialSeek = true
+                                    println("DEBUG: 初始定位到位置: ${savedState.currentPosition}")
                                 }
                             }
                         }
@@ -108,6 +116,14 @@ fun EnhancedVideoPlayer(
                     }
                 }
             })
+        }
+    }
+
+    // 如果使用外部播放器，需要设置一些基本属性
+    LaunchedEffect(externalPlayer) {
+        externalPlayer?.let { player ->
+            player.repeatMode = Player.REPEAT_MODE_OFF
+            player.playWhenReady = true
         }
     }
 
@@ -152,8 +168,23 @@ fun EnhancedVideoPlayer(
         }
     }
 
-    // 初始化媒体源
+    // 初始化媒体源（只有在没有使用外部播放器或者视频URL变化时才执行）
     LaunchedEffect(videoUrl) {
+        // 如果使用外部播放器，且播放器已经准备好，则不需要重新设置媒体源
+        if (externalPlayer != null && externalPlayer.playbackState == Player.STATE_READY) {
+            isPlayerReady = true
+            // 确保初始定位只执行一次
+            if (!hasInitialSeek && viewModel.shouldRestoreState(videoUrl)) {
+                val savedState = viewModel.videoPlayerState
+                if (savedState.currentPosition > 0) {
+                    externalPlayer.seekTo(savedState.currentPosition)
+                    hasInitialSeek = true
+                    println("DEBUG: 外部播放器初始定位到位置: ${savedState.currentPosition}")
+                }
+            }
+            return@LaunchedEffect
+        }
+
         try {
             val dataSourceFactory = createMediaOkHttpDataSourceFactory()
             val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
@@ -188,7 +219,7 @@ fun EnhancedVideoPlayer(
         }
     }
 
-    // 清理播放器
+    // 清理播放器（只有在内部创建的播放器才需要释放）
     DisposableEffect(Unit) {
         onDispose {
             // 保存最终状态
@@ -202,8 +233,11 @@ fun EnhancedVideoPlayer(
                     )
                 )
             }
-            exoPlayer.release()
-            println("DEBUG: 增强视频播放器已释放")
+            // 只有内部创建的播放器才释放
+            if (externalPlayer == null) {
+                exoPlayer.release()
+                println("DEBUG: 增强视频播放器已释放")
+            }
         }
     }
 
@@ -261,9 +295,26 @@ fun EnhancedVideoPlayer(
                 PlayerView(context).apply {
                     player = exoPlayer
                     useController = false // 禁用默认控制栏，使用自定义的
+
+                    // 关键优化：防止重新附加时显示第一帧
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+
+                    // 如果是全屏模式，调整布局参数
+                    if (isFullscreen) {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    }
                 }
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            update = { playerView ->
+                // 更新时确保播放器正确设置
+                if (playerView.player != exoPlayer) {
+                    playerView.player = exoPlayer
+                }
+            }
         )
 
         // 自定义控制栏
@@ -323,8 +374,7 @@ fun EnhancedVideoPlayer(
                     }
                 },
                 onToggleFullscreen = {
-                    isFullscreen = !isFullscreen
-                    onFullscreenChange(isFullscreen)
+                    onFullscreenChange(!isFullscreen)
 
                     // 保存当前播放状态
                     if (isPlayerReady) {
@@ -375,6 +425,7 @@ fun EnhancedVideoPlayer(
     }
 }
 
+// ... 其他代码保持不变（CustomControlsOverlay, EnhancedAudioPlayer 等）
 /**
  * 自定义控制栏覆盖层
  */

@@ -106,6 +106,7 @@ class MainActivity : ComponentActivity() {
                     println("DEBUG: 返回文件列表")
                     showPreviewScreen = false
                     viewModel.resetPreviewState()
+                    viewModel.clearSharedVideoPlayer() // 清理共享播放器
                 }
             )
         } else {
@@ -137,6 +138,7 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
+
     override fun onDestroy() {
         super.onDestroy()
         // 清理预览缓存
