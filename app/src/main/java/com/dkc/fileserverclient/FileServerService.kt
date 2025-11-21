@@ -23,18 +23,15 @@ class FileServerService(private val context: Context) {
 
     private fun createUnsafeOkHttpClient(): OkHttpClient {
         try {
-            // 创建信任所有证书的 TrustManager
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
                 override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                 override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                 override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
             })
 
-            // 创建 SSLContext 使用信任所有证书的 TrustManager
             val sslContext = SSLContext.getInstance("SSL")
             sslContext.init(null, trustAllCerts, java.security.SecureRandom())
 
-            // 创建不验证主机名的 HostnameVerifier
             val hostnameVerifier = HostnameVerifier { _, _ -> true }
 
             return OkHttpClient.Builder()
@@ -49,7 +46,6 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    // 其他方法保持不变...
     suspend fun testConnection(serverUrl: String): Boolean {
         return try {
             val formattedUrl = formatServerUrl(serverUrl)
@@ -89,13 +85,11 @@ class FileServerService(private val context: Context) {
     private fun formatServerUrl(url: String): String {
         var formattedUrl = url.trim()
 
-        // 如果没有协议前缀，添加https://（优先使用HTTPS）
         if (!formattedUrl.startsWith("http://") && !formattedUrl.startsWith("https://")) {
             formattedUrl = "https://$formattedUrl"
             Log.d("FileServerService", "自动添加协议前缀: $formattedUrl")
         }
 
-        // 确保有端口号
         if (!formattedUrl.contains(":") || formattedUrl.matches(Regex("https?://[^:]+$"))) {
             formattedUrl += if (formattedUrl.startsWith("https://")) {
                 ":443"
@@ -108,13 +102,22 @@ class FileServerService(private val context: Context) {
         return formattedUrl
     }
 
-    // getFileList 和 uploadFiles 方法保持不变...
     suspend fun getFileList(serverUrl: String, path: String = ""): List<FileSystemItem> {
         return try {
             val formattedUrl = formatServerUrl(serverUrl)
-            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/list/${path.removePrefix("/")}"
 
-            Log.d("FileServerService", "获取文件列表: $url")
+            // 修复：正确处理路径编码，特别是深层目录
+            val url = if (path.isEmpty()) {
+                "${formattedUrl.removeSuffix("/")}/api/fileserver/list"
+            } else {
+                // 对于深层目录，需要正确编码路径
+                val encodedPath = path.split("/").joinToString("/") { segment ->
+                    java.net.URLEncoder.encode(segment, "UTF-8")
+                }
+                "${formattedUrl.removeSuffix("/")}/api/fileserver/list/$encodedPath"
+            }
+
+            Log.d("FileServerService", "获取文件列表: $url (原始路径: $path)")
 
             val request = Request.Builder()
                 .url(url)
@@ -131,9 +134,13 @@ class FileServerService(private val context: Context) {
 
                 val items = mutableListOf<FileSystemItem>()
 
-                // 添加上级目录
+                // 添加上级目录（返回上级）
                 if (path.isNotEmpty() && path != "/") {
-                    val parentPath = File(path).parent ?: ""
+                    val parentPath = if (path.contains("/")) {
+                        path.substringBeforeLast("/")
+                    } else {
+                        ""
+                    }
                     items.add(FileSystemItem(
                         name = "..",
                         path = parentPath,
@@ -143,14 +150,13 @@ class FileServerService(private val context: Context) {
                         lastModified = "",
                         isVideo = false,
                         isAudio = false,
-                        mimeType = "",
+                        mimeType = "inode/directory",
                         encoding = ""
                     ))
                 }
 
                 // 添加目录
                 apiResponse.directories.forEach { dir ->
-                    // 确保目录名不为空
                     val dirName = if (dir.name.isEmpty()) {
                         dir.path.substringAfterLast('/').ifEmpty { "未命名目录" }
                     } else {
@@ -173,7 +179,6 @@ class FileServerService(private val context: Context) {
 
                 // 添加文件
                 apiResponse.files.forEach { file ->
-                    // 确保文件名不为空
                     val fileName = if (file.name.isEmpty()) {
                         file.path.substringAfterLast('/').ifEmpty { "未命名文件" }
                     } else {
@@ -207,20 +212,51 @@ class FileServerService(private val context: Context) {
     }
 
     suspend fun uploadFiles(serverUrl: String, files: List<File>, targetPath: String = ""): UploadResult {
+        // 添加空列表检查
+        if (files.isEmpty()) {
+            Log.e("FileServerService", "文件列表为空")
+            return UploadResult(success = false, message = "没有选择要上传的文件")
+        }
+
+        // 检查文件是否存在
+        val validFiles = files.filter { file ->
+            if (!file.exists()) {
+                Log.w("FileServerService", "文件不存在: ${file.absolutePath}")
+                false
+            } else if (!file.canRead()) {
+                Log.w("FileServerService", "文件不可读: ${file.absolutePath}")
+                false
+            } else {
+                true
+            }
+        }
+
+        if (validFiles.isEmpty()) {
+            Log.e("FileServerService", "没有有效的文件可上传")
+            return UploadResult(success = false, message = "没有有效的文件可上传")
+        }
+
         return try {
             val formattedUrl = formatServerUrl(serverUrl)
-            var uploadUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/upload"
 
-            if (targetPath.isNotEmpty()) {
-                uploadUrl += "?path=${java.net.URLEncoder.encode(targetPath, "UTF-8")}"
+            // 修复：正确处理深层目录的上传路径
+            val uploadUrl = if (targetPath.isEmpty()) {
+                "${formattedUrl.removeSuffix("/")}/api/fileserver/upload"
+            } else {
+                // 对深层目录路径进行分段编码
+                val encodedPath = targetPath.split("/").joinToString("/") { segment ->
+                    java.net.URLEncoder.encode(segment, "UTF-8")
+                }
+                "${formattedUrl.removeSuffix("/")}/api/fileserver/upload/$encodedPath"
             }
 
-            Log.d("FileServerService", "上传文件到: $uploadUrl")
+            Log.d("FileServerService", "上传 ${validFiles.size} 个文件到: $uploadUrl (目标路径: $targetPath)")
 
             val multipartBuilder = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
 
-            files.forEach { file ->
+            validFiles.forEach { file ->
+                Log.d("FileServerService", "添加文件到multipart: ${file.name} (${file.length()} bytes)")
                 multipartBuilder.addFormDataPart(
                     "files",
                     file.name,
@@ -228,9 +264,11 @@ class FileServerService(private val context: Context) {
                 )
             }
 
+            val requestBody = multipartBuilder.build()
+
             val request = Request.Builder()
                 .url(uploadUrl)
-                .post(multipartBuilder.build())
+                .post(requestBody)
                 .build()
 
             val response = client.newCall(request).execute()

@@ -4,11 +4,14 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.PointF
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -28,6 +31,7 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import coil.Coil
 import coil.ImageLoader
+import coil.fetch.Fetcher
 import coil.request.ImageRequest
 import coil.transform.RoundedCornersTransformation
 import kotlinx.coroutines.*
@@ -106,6 +110,23 @@ class PreviewActivity : AppCompatActivity() {
     // 视频时长相关
     private var videoDuration: Long = 0
 
+    // 图片缩放相关变量
+    private val matrix = Matrix()
+    private val savedMatrix = Matrix()
+    private val start = PointF()
+    private val mid = PointF()
+    private var mode = NONE
+    private var minScale = 1.0f
+    private var maxScale = 4.0f
+
+    // 缩放模式常量
+    companion object {
+        private const val NONE = 0
+        private const val DRAG = 1
+        private const val ZOOM = 2
+        private const val CLICK = 3
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_preview)
@@ -114,6 +135,7 @@ class PreviewActivity : AppCompatActivity() {
         setupIntentData()
         setupEventListeners()
         setupGestureDetectors()
+        setupImageZoom()
         loadPreview()
     }
 
@@ -160,6 +182,129 @@ class PreviewActivity : AppCompatActivity() {
 
         // 初始状态：非全屏模式下控制栏始终显示
         updateControlsVisibility()
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupImageZoom() {
+        // 设置图片视图的缩放功能
+        imagePreview.scaleType = ImageView.ScaleType.MATRIX
+        imagePreview.setOnTouchListener { _, event ->
+            handleImageTouch(event)
+        }
+    }
+
+    private fun handleImageTouch(event: MotionEvent): Boolean {
+        when (event.action and MotionEvent.ACTION_MASK) {
+            MotionEvent.ACTION_DOWN -> {
+                // 单点触摸开始
+                savedMatrix.set(matrix)
+                start.set(event.x, event.y)
+                mode = DRAG
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // 多点触摸开始
+                val oldDist = spacing(event)
+                if (oldDist > 10f) {
+                    savedMatrix.set(matrix)
+                    midPoint(mid, event)
+                    mode = ZOOM
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                // 触摸结束
+                mode = NONE
+
+                // 处理双击事件
+                if (event.action == MotionEvent.ACTION_UP) {
+                    tapCount++
+                    if (tapCount == 1) {
+                        doubleTapHandler.postDelayed({
+                            if (tapCount == 1) {
+                                // 单击 - 不执行操作
+                                tapCount = 0
+                            }
+                        }, tapTimeoutMillis)
+                    } else if (tapCount == 2) {
+                        // 双击 - 切换缩放状态
+                        doubleTapHandler.removeCallbacksAndMessages(null)
+                        handleDoubleTap()
+                        tapCount = 0
+                    }
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (mode == DRAG) {
+                    // 拖动图片
+                    matrix.set(savedMatrix)
+                    matrix.postTranslate(event.x - start.x, event.y - start.y)
+                } else if (mode == ZOOM) {
+                    // 缩放图片
+                    val newDist = spacing(event)
+                    if (newDist > 10f) {
+                        matrix.set(savedMatrix)
+                        val scale = newDist / spacing(event, savedMatrix)
+                        val currentScale = getCurrentScale()
+
+                        // 限制缩放范围
+                        val newScale = currentScale * scale
+                        if (newScale in minScale..maxScale) {
+                            matrix.postScale(scale, scale, mid.x, mid.y)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 应用变换矩阵
+        imagePreview.imageMatrix = matrix
+        return true
+    }
+
+    private fun handleDoubleTap() {
+        val currentScale = getCurrentScale()
+
+        if (currentScale > minScale) {
+            // 如果当前已缩放，则重置到最小缩放
+            matrix.setScale(minScale, minScale)
+            matrix.postTranslate(
+                (imagePreview.width - imagePreview.drawable.intrinsicWidth * minScale) / 2,
+                (imagePreview.height - imagePreview.drawable.intrinsicHeight * minScale) / 2
+            )
+        } else {
+            // 如果当前是最小缩放，则缩放到最大缩放
+            val scale = maxScale / minScale
+            matrix.postScale(scale, scale, imagePreview.width / 2f, imagePreview.height / 2f)
+        }
+
+        imagePreview.imageMatrix = matrix
+    }
+
+    private fun getCurrentScale(): Float {
+        val values = FloatArray(9)
+        matrix.getValues(values)
+        return values[Matrix.MSCALE_X]
+    }
+
+    private fun spacing(event: MotionEvent): Float {
+        val x = event.getX(0) - event.getX(1)
+        val y = event.getY(0) - event.getY(1)
+        return Math.sqrt((x * x + y * y).toDouble()).toFloat()
+    }
+
+    private fun spacing(event: MotionEvent, matrix: Matrix): Float {
+        val point1 = floatArrayOf(event.getX(0), event.getY(0))
+        val point2 = floatArrayOf(event.getX(1), event.getY(1))
+        matrix.mapPoints(point1)
+        matrix.mapPoints(point2)
+        val x = point1[0] - point2[0]
+        val y = point1[1] - point2[1]
+        return Math.sqrt((x * x + y * y).toDouble()).toFloat()
+    }
+
+    private fun midPoint(point: PointF, event: MotionEvent) {
+        val x = event.getX(0) + event.getX(1)
+        val y = event.getY(0) + event.getY(1)
+        point.set(x / 2, y / 2)
     }
 
     @UnstableApi
@@ -445,8 +590,14 @@ class PreviewActivity : AppCompatActivity() {
 
         coroutineScope.launch {
             try {
-                // 使用 Coil 加载图片
-                val imageLoader = Coil.imageLoader(this@PreviewActivity)
+                // 创建忽略SSL的ImageLoader
+                val imageLoader = ImageLoader.Builder(this@PreviewActivity)
+                    .okHttpClient(client) // 使用忽略SSL的客户端
+                    .components {
+                        // 如果需要自定义组件可以在这里添加
+                    }
+                    .build()
+
                 val request = ImageRequest.Builder(this@PreviewActivity)
                     .data(currentFileUrl)
                     .target(imagePreview)
@@ -457,10 +608,13 @@ class PreviewActivity : AppCompatActivity() {
                         },
                         onSuccess = { _, _ ->
                             imageLoadingProgress.visibility = View.GONE
+                            // 图片加载成功后，设置初始缩放以显示全图
+                            setupInitialImageScale()
                         },
-                        onError = { _, _ ->
+                        onError = { _, result ->
                             imageLoadingProgress.visibility = View.GONE
-                            showError("图片加载失败")
+                            Log.e("PreviewActivity", "图片加载失败: ${result.throwable.message}")
+                            showError("图片加载失败: ${result.throwable.message}")
                         }
                     )
                     .build()
@@ -468,9 +622,38 @@ class PreviewActivity : AppCompatActivity() {
                 imageLoader.enqueue(request)
 
             } catch (e: Exception) {
+                imageLoadingProgress.visibility = View.GONE
+                Log.e("PreviewActivity", "图片加载异常: ${e.message}")
                 showError("图片加载失败: ${e.message}")
             }
         }
+    }
+
+    private fun setupInitialImageScale() {
+        // 延迟执行以确保图片已完全加载到ImageView中
+        handler.postDelayed({
+            val drawable = imagePreview.drawable
+            if (drawable != null) {
+                val imageWidth = drawable.intrinsicWidth.toFloat()
+                val imageHeight = drawable.intrinsicHeight.toFloat()
+                val viewWidth = imagePreview.width.toFloat()
+                val viewHeight = imagePreview.height.toFloat()
+
+                // 计算适合屏幕的缩放比例
+                val scaleX = viewWidth / imageWidth
+                val scaleY = viewHeight / imageHeight
+                minScale = minOf(scaleX, scaleY).coerceAtMost(1.0f) // 确保不会放大超过原图
+
+                // 设置初始矩阵以显示全图
+                matrix.setScale(minScale, minScale)
+                matrix.postTranslate(
+                    (viewWidth - imageWidth * minScale) / 2,
+                    (viewHeight - imageHeight * minScale) / 2
+                )
+
+                imagePreview.imageMatrix = matrix
+            }
+        }, 100)
     }
 
     @UnstableApi
