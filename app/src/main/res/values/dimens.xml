@@ -1,0 +1,12 @@
+<resources>
+    <!-- 尺寸定义 -->
+    <dimen name="card_corner_radius">12dp</dimen>
+    <dimen name="card_elevation">4dp</dimen>
+    <dimen name="button_corner_radius">8dp</dimen>
+    <dimen name="icon_button_corner_radius">6dp</dimen>
+    <dimen name="default_padding">16dp</dimen>
+    <dimen name="half_padding">8dp</dimen>
+    <dimen name="text_size_large">18sp</dimen>
+    <dimen name="text_size_medium">14sp</dimen>
+    <dimen name="text_size_small">12sp</dimen>
+</resources>

@@ -64,6 +64,10 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("com.google.code.gson:gson:2.10.1")
+    implementation("androidx.recyclerview:recyclerview:1.3.1")
+    implementation("androidx.cardview:cardview:1.0.0")
+    implementation("com.google.android.material:material:1.9.0")
 
     // ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")

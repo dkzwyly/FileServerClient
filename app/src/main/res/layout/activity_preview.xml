@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000"
+    android:orientation="vertical">
+
+    <!-- 顶部标题栏 -->
+    <LinearLayout
+        android:id="@+id/titleBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#80000000"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center_vertical">
+
+        <Button
+            android:id="@+id/backButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="返回"
+            android:background="@android:color/transparent"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/fileNameTextView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="文件名"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:ellipsize="end"
+            android:singleLine="true" />
+
+        <Button
+            android:id="@+id/downloadButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="下载"
+            android:background="@android:color/transparent"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+    </LinearLayout>
+
+    <!-- 文件类型指示 -->
+    <TextView
+        android:id="@+id/fileTypeTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/titleBar"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="8dp"
+        android:text="文件类型"
+        android:textColor="#CCCCCC"
+        android:textSize="14sp"
+        android:background="#40000000"
+        android:padding="8dp"
+        android:visibility="gone" />
+
+    <!-- 图片预览容器 -->
+    <FrameLayout
+        android:id="@+id/imageContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/titleBar"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/imagePreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:contentDescription="图片预览" />
+
+        <ProgressBar
+            android:id="@+id/imageLoadingProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminate="true" />
+
+    </FrameLayout>
+
+    <!-- 视频预览容器 -->
+    <FrameLayout
+        android:id="@+id/videoContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/titleBar"
+        android:visibility="gone">
+
+        <VideoView
+            android:id="@+id/videoPreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <ProgressBar
+            android:id="@+id/videoLoadingProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminate="true" />
+
+        <!-- 视频控制栏 -->
+        <LinearLayout
+            android:id="@+id/videoControls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignParentBottom="true"
+            android:background="#80000000"
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <Button
+                android:id="@+id/playPauseButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="播放"
+                android:background="@android:color/transparent"
+                android:textColor="#FFFFFF" />
+
+            <SeekBar
+                android:id="@+id/videoSeekBar"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="16dp"
+                android:layout_marginEnd="16dp" />
+
+            <TextView
+                android:id="@+id/videoTimeTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="00:00 / 00:00"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
+    <!-- 文本预览容器 -->
+    <FrameLayout
+        android:id="@+id/textContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/titleBar"
+        android:visibility="gone">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <TextView
+                android:id="@+id/textPreview"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="文本内容加载中..."
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:lineSpacingExtra="4dp"
+                android:padding="16dp"
+                android:textIsSelectable="true" />
+
+        </ScrollView>
+
+        <ProgressBar
+            android:id="@+id/textLoadingProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminate="true" />
+
+    </FrameLayout>
+
+    <!-- 通用预览容器（用于其他文件类型） -->
+    <FrameLayout
+        android:id="@+id/generalContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/titleBar"
+        android:visibility="gone">
+
+        <WebView
+            android:id="@+id/webViewPreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <ProgressBar
+            android:id="@+id/generalLoadingProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminate="true" />
+
+    </FrameLayout>
+
+    <!-- 错误提示 -->
+    <TextView
+        android:id="@+id/errorTextView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:text="预览加载失败"
+        android:textColor="#FF4444"
+        android:textSize="18sp"
+        android:gravity="center"
+        android:visibility="gone" />
+
+    <!-- 全屏切换按钮 - 使用 Button 替代 ImageButton -->
+    <Button
+        android:id="@+id/fullscreenButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentEnd="true"
+        android:layout_margin="16dp"
+        android:text="全屏"
+        android:background="#80000000"
+        android:textColor="#FFFFFF"
+        android:visibility="gone" />
+
+</RelativeLayout>

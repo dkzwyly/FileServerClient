@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="4dp"
+    app:cardCornerRadius="8dp"
+    app:cardElevation="2dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:background="#FFFFFF">
+
+        <!-- 文件图标 -->
+        <TextView
+            android:id="@+id/fileIcon"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:textSize="18sp"
+            android:layout_marginEnd="12dp" />
+
+        <!-- 文件信息区域 -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/fileName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="文件名"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="#212121"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:maxLines="1" />
+
+            <TextView
+                android:id="@+id/fileInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="文件信息"
+                android:textSize="11sp"
+                android:textColor="#757575"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:maxLines="1" />
+
+        </LinearLayout>
+
+        <!-- 文件大小 -->
+        <TextView
+            android:id="@+id/fileSize"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="大小"
+            android:textSize="12sp"
+            android:textColor="#757575"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:gravity="end"
+            android:visibility="gone" />
+
+        <!-- 操作按钮组 -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <!-- 预览按钮 -->
+            <Button
+                android:id="@+id/previewButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:text="👁️"
+                android:textSize="12sp"
+                android:background="@drawable/icon_button_background"
+                android:textColor="#1976D2"
+                android:padding="0dp"
+                android:visibility="gone" />
+
+            <!-- 下载按钮 -->
+            <Button
+                android:id="@+id/downloadButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:text="⬇️"
+                android:textSize="12sp"
+                android:background="@drawable/icon_button_background"
+                android:textColor="#1976D2"
+                android:padding="0dp"
+                android:layout_marginStart="4dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</androidx.cardview.widget.CardView>
