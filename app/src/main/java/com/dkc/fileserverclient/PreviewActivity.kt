@@ -3,9 +3,9 @@ package com.dkc.fileserverclient
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.ActivityInfo
-import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.PointF
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -31,7 +31,6 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import coil.Coil
 import coil.ImageLoader
-import coil.fetch.Fetcher
 import coil.request.ImageRequest
 import coil.transform.RoundedCornersTransformation
 import kotlinx.coroutines.*
@@ -41,6 +40,7 @@ import java.io.IOException
 import java.security.cert.X509Certificate
 import java.util.*
 import javax.net.ssl.*
+import kotlin.math.abs
 
 @UnstableApi
 class PreviewActivity : AppCompatActivity() {
@@ -119,6 +119,32 @@ class PreviewActivity : AppCompatActivity() {
     private var minScale = 1.0f
     private var maxScale = 4.0f
 
+    // 滑动控制相关变量
+    private var startX = 0f
+    private var startY = 0f
+    private var isSwiping = false
+    private var swipeRegion = 0 // 0:左, 1:中, 2:右
+    private var regionWidth = 0
+
+    // 音频管理
+    private lateinit var audioManager: AudioManager
+    private var maxVolume = 0
+    private var currentVolume = 0
+
+    // 控制提示视图
+    private lateinit var controlOverlay: TextView
+    private lateinit var controlIcon: ImageView
+    private lateinit var controlContainer: LinearLayout
+    private val hideControlRunnable = Runnable { hideControlOverlay() }
+
+    // 进度控制相关
+    private var progressSensitivity = 0.5f // 进度控制灵敏度
+    private var volumeSensitivity = 1.2f // 音量控制灵敏度
+    private var brightnessSensitivity = 0.6f // 亮度控制灵敏度
+    // 音量控制相关变量
+    private var virtualVolume = 7.5f // 虚拟连续音量值 (0.0-15.0)
+    private var lastSystemVolume = 0 // 上次设置的系统音量
+
     // 缩放模式常量
     companion object {
         private const val NONE = 0
@@ -136,6 +162,7 @@ class PreviewActivity : AppCompatActivity() {
         setupEventListeners()
         setupGestureDetectors()
         setupImageZoom()
+        setupAudioManager()
         loadPreview()
     }
 
@@ -173,6 +200,11 @@ class PreviewActivity : AppCompatActivity() {
         webViewPreview = findViewById(R.id.webViewPreview)
         generalLoadingProgress = findViewById(R.id.generalLoadingProgress)
 
+        // 初始化控制覆盖层
+        controlOverlay = findViewById(R.id.controlOverlay)
+        controlIcon = findViewById(R.id.controlIcon)
+        controlContainer = findViewById(R.id.controlContainer)
+
         // 初始化WebView
         setupWebView()
         // 初始化 ExoPlayer
@@ -182,6 +214,22 @@ class PreviewActivity : AppCompatActivity() {
 
         // 初始状态：非全屏模式下控制栏始终显示
         updateControlsVisibility()
+
+        // 计算区域宽度
+        val displayMetrics = resources.displayMetrics
+        regionWidth = displayMetrics.widthPixels / 3
+    }
+
+    private fun setupAudioManager() {
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+
+        // 初始化虚拟音量值为当前系统音量 (0-15)
+        virtualVolume = currentVolume.toFloat()
+        lastSystemVolume = currentVolume
+
+        Log.d("VolumeControl", "系统音量范围: 0-$maxVolume, 当前音量: $currentVolume")
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -456,14 +504,67 @@ class PreviewActivity : AppCompatActivity() {
         playerView.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    startX = event.x
+                    startY = event.y
+                    isSwiping = false
+                    swipeRegion = -1 // 重置滑动区域
+
+                    // 更新当前系统音量状态
+                    currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    virtualVolume = currentVolume.toFloat() // 直接使用 0-15 的值
+                    lastSystemVolume = currentVolume
+
                     // 开始长按检测
                     isLongPressDetected = false
                     longPressRunnable = Runnable {
                         isLongPressDetected = true
                         enableFastForward(true)
                     }
-                    longPressHandler.postDelayed(longPressRunnable!!, 800) // 长按800ms后触发加速
+                    longPressHandler.postDelayed(longPressRunnable!!, 800)
                 }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaX = event.x - startX
+                    val deltaY = event.y - startY
+
+                    // 检测滑动开始
+                    if (!isSwiping && (abs(deltaX) > 30 || abs(deltaY) > 30)) {
+                        isSwiping = true
+                        // 取消长按检测
+                        longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
+
+                        // 确定滑动类型和区域（只确定一次）
+                        if (swipeRegion == -1) {
+                            if (abs(deltaX) > abs(deltaY) * 1.5) {
+                                // 水平滑动 - 进度控制（全屏任意位置）
+                                swipeRegion = 1
+                                showSwipeHint(1)
+                            } else {
+                                // 垂直滑动 - 根据起始位置判断是亮度还是音量
+                                swipeRegion = if (startX < regionWidth) 0 else 2
+                                showSwipeHint(swipeRegion)
+                            }
+                        }
+                    }
+
+                    if (isSwiping && swipeRegion != -1) {
+                        when (swipeRegion) {
+                            0 -> { // 左侧垂直滑动 - 亮度控制
+                                handleBrightnessControl(deltaY)
+                            }
+                            1 -> { // 水平滑动 - 进度控制
+                                handleProgressControl(deltaX)
+                            }
+                            2 -> { // 右侧垂直滑动 - 音量控制
+                                handleVolumeControl(deltaY)
+                            }
+                        }
+                        // 更新起始位置以实现连续滑动
+                        startX = event.x
+                        startY = event.y
+                    }
+                }
+
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     // 取消长按检测
                     longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
@@ -472,13 +573,149 @@ class PreviewActivity : AppCompatActivity() {
                         // 如果是长按后的松开，恢复速度
                         enableFastForward(false)
                         isLongPressDetected = false
-                    } else {
-                        // 如果不是长按，处理点击事件
+                    } else if (!isSwiping) {
+                        // 如果不是滑动，处理点击事件
                         handlePlayerTap()
                     }
+
+                    // 隐藏控制提示
+                    hideControlOverlay()
+
+                    // 重置状态
+                    isSwiping = false
+                    swipeRegion = -1
                 }
             }
-            true // 消费事件，防止事件传递
+            true
+        }
+    }
+
+    // 显示滑动控制提示
+    private fun showSwipeHint(region: Int) {
+        val (iconRes, hintText) = when (region) {
+            0 -> Pair(R.drawable.ic_brightness, "亮度控制")
+            1 -> Pair(R.drawable.ic_fast_forward, "进度控制")
+            2 -> Pair(R.drawable.ic_volume, "音量控制")
+            else -> Pair(0, "")
+        }
+
+        if (iconRes != 0) {
+            controlIcon.setImageResource(iconRes)
+            controlOverlay.text = hintText
+            controlContainer.visibility = View.VISIBLE
+
+            // 2秒后自动隐藏
+            handler.removeCallbacks(hideControlRunnable)
+            handler.postDelayed(hideControlRunnable, 2000)
+        }
+    }
+
+    // 显示控制覆盖层（用于显示亮度、音量、进度信息）
+    private fun showControlOverlay(text: String, iconRes: Int = 0) {
+        controlOverlay.text = text
+        if (iconRes != 0) {
+            controlIcon.setImageResource(iconRes)
+        }
+        controlContainer.visibility = View.VISIBLE
+
+        // 2秒后自动隐藏
+        handler.removeCallbacks(hideControlRunnable)
+        handler.postDelayed(hideControlRunnable, 2000)
+    }
+
+    // 隐藏控制覆盖层
+    private fun hideControlOverlay() {
+        controlContainer.visibility = View.GONE
+    }
+
+    // 亮度控制
+    private fun handleBrightnessControl(deltaY: Float) {
+        val window = window
+        val layoutParams = window.attributes
+
+        // 计算亮度变化（向下滑动降低亮度，向上滑动提高亮度）
+        val brightnessChange = -deltaY / 800f * brightnessSensitivity // 调整灵敏度
+
+        // 更新亮度值（范围：0.0 - 1.0）
+        var newBrightness = layoutParams.screenBrightness + brightnessChange
+        if (layoutParams.screenBrightness < 0) {
+            // 如果之前没有设置过亮度，使用系统默认
+            newBrightness = 0.5f + brightnessChange
+        }
+        newBrightness = newBrightness.coerceIn(0.01f, 1.0f)
+
+        // 设置新的亮度
+        layoutParams.screenBrightness = newBrightness
+        window.attributes = layoutParams
+
+        // 显示亮度提示
+        showControlOverlay("亮度: ${(newBrightness * 100).toInt()}%", android.R.drawable.ic_menu_edit)
+    }
+
+    // 进度控制 - 修复版本
+    private fun handleProgressControl(deltaX: Float) {
+        exoPlayer?.let { player ->
+            val duration = player.duration
+            if (duration > 0) {
+                // 计算进度变化（向右滑动快进，向左滑动快退）
+                // 使用灵敏度系数，使小幅度滑动也能产生明显效果
+                val progressChange = (deltaX / resources.displayMetrics.widthPixels) * duration * progressSensitivity
+
+                // 计算新的播放位置
+                var newPosition = player.currentPosition + progressChange.toLong()
+                newPosition = newPosition.coerceIn(0, duration)
+
+                // 跳转到新位置
+                player.seekTo(newPosition)
+
+                // 显示进度提示
+                val progressPercent = (newPosition * 100 / duration).toInt()
+                val direction = if (deltaX > 0) "快进" else "快退"
+                showControlOverlay("$direction ${formatTime(newPosition)} / ${formatTime(duration)} ($progressPercent%)",
+                    android.R.drawable.ic_media_ff)
+
+                // 更新进度条显示
+                updateSeekBarProgress(newPosition, duration)
+            }
+        }
+    }
+
+    // 更新进度条显示
+    private fun updateSeekBarProgress(position: Long, duration: Long) {
+        if (duration > 0) {
+            val progress = (position * 1000 / duration).toInt()
+            seekBar.progress = progress
+            currentTimeTextView.text = formatTime(position)
+        }
+    }
+
+    // 音量控制 - 使用累计变化量避免跳变
+    private var volumeChangeAccumulator = 0f
+
+    private fun handleVolumeControl(deltaY: Float) {
+        // 累计变化量
+        volumeChangeAccumulator += -deltaY / 800f * volumeSensitivity
+
+        // 当累计变化量足够改变至少1个音量单位时
+        if (abs(volumeChangeAccumulator) >= 1.0f / maxVolume) {
+            currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+
+            // 计算需要改变的音量单位数
+            val volumeUnitsToChange = (volumeChangeAccumulator * maxVolume).toInt()
+
+            if (volumeUnitsToChange != 0) {
+                var newVolume = currentVolume + volumeUnitsToChange
+                newVolume = newVolume.coerceIn(0, maxVolume)
+
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
+
+                // 显示音量提示
+                val volumePercent = (newVolume * 100 / maxVolume).toInt()
+                showControlOverlay("音量: $volumePercent%", R.drawable.ic_volume)
+
+                // 重置累计器，保留余数
+                volumeChangeAccumulator -= volumeUnitsToChange.toFloat() / maxVolume
+            }
         }
     }
 
@@ -893,6 +1130,9 @@ class PreviewActivity : AppCompatActivity() {
         stopProgressUpdates()
         // 清理长按检测
         longPressHandler.removeCallbacksAndMessages(null)
+        // 隐藏控制覆盖层
+        handler.removeCallbacks(hideControlRunnable)
+        hideControlOverlay()
     }
 
     override fun onResume() {
@@ -910,6 +1150,7 @@ class PreviewActivity : AppCompatActivity() {
         stopProgressUpdates()
         doubleTapHandler.removeCallbacksAndMessages(null)
         longPressHandler.removeCallbacksAndMessages(null)
+        handler.removeCallbacks(hideControlRunnable)
 
         // 释放播放器资源
         exoPlayer?.release()

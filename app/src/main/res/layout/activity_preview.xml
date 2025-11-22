@@ -178,6 +178,36 @@
             android:visibility="gone"
             android:elevation="4dp" />
 
+        <!-- 控制提示覆盖层 -->
+        <LinearLayout
+            android:id="@+id/controlContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="#CC000000"
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:visibility="gone"
+            android:gravity="center_vertical"
+            android:elevation="8dp"
+            android:alpha="0.9">
+
+            <ImageView
+                android:id="@+id/controlIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="8dp"
+                android:tint="#FFFFFF" />
+
+            <TextView
+                android:id="@+id/controlOverlay"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
     </FrameLayout>
 
     <!-- 文本预览容器 -->
