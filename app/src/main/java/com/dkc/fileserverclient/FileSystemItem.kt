@@ -12,15 +12,23 @@ data class FileSystemItem(
     @SerializedName("isVideo") val isVideo: Boolean = false,
     @SerializedName("isAudio") val isAudio: Boolean = false,
     @SerializedName("mimeType") val mimeType: String = "",
-    @SerializedName("encoding") val encoding: String = ""
+    @SerializedName("encoding") val encoding: String = "",
+    @SerializedName("hasThumbnail") val hasThumbnail: Boolean = false
 ) {
+    // 修复：更严格的文件夹判断
     val isDirectory: Boolean
-        get() = size == 0L && extension.isEmpty()
+        get() = mimeType == "inode/directory" || (size == 0L && extension.isEmpty() && !isImage)
 
-    // 添加一个计算属性来确保文件名不为空
+    // 修复：更严格的图片文件判断
+    val isImage: Boolean
+        get() {
+            if (isDirectory) return false // 确保文件夹不会被识别为图片
+            val ext = extension.lowercase()
+            return ext in listOf(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".jfif")
+        }
+
     val displayName: String
         get() = if (name.isEmpty()) {
-            // 从路径中提取文件名
             if (path.isNotEmpty()) {
                 path.substringAfterLast('/').ifEmpty { "未命名文件" }
             } else {

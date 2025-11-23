@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.cardview.widget.CardView 
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -14,14 +15,21 @@
         android:padding="12dp"
         android:background="#FFFFFF">
 
-        <!-- 文件图标 -->
-        <TextView
-            android:id="@+id/fileIcon"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:gravity="center"
-            android:textSize="18sp"
-            android:layout_marginEnd="12dp" />
+        <!-- 文件图标/缩略图 - 增加大小并添加边框 -->
+        <FrameLayout
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/thumbnail_background">
+
+            <ImageView
+                android:id="@+id/fileIcon"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:scaleType="centerCrop"
+                android:layout_gravity="center" />
+
+        </FrameLayout>
 
         <!-- 文件信息区域 -->
         <LinearLayout
@@ -67,8 +75,7 @@
             android:textColor="#757575"
             android:layout_marginStart="8dp"
             android:layout_marginEnd="8dp"
-            android:gravity="end"
-            android:visibility="gone" />
+            android:gravity="end" />
 
         <!-- 操作按钮组 -->
         <LinearLayout
@@ -78,27 +85,31 @@
             android:gravity="center_vertical">
 
             <!-- 预览按钮 -->
-            <Button
+            <ImageButton
                 android:id="@+id/previewButton"
                 android:layout_width="36dp"
                 android:layout_height="36dp"
-                android:text="👁️"
-                android:textSize="12sp"
                 android:background="@drawable/icon_button_background"
-                android:textColor="#1976D2"
-                android:padding="0dp"
+                android:padding="8dp"
                 android:visibility="gone" />
 
             <!-- 下载按钮 -->
-            <Button
+            <ImageButton
                 android:id="@+id/downloadButton"
                 android:layout_width="36dp"
                 android:layout_height="36dp"
-                android:text="⬇️"
-                android:textSize="12sp"
                 android:background="@drawable/icon_button_background"
-                android:textColor="#1976D2"
-                android:padding="0dp"
+                android:padding="8dp"
+                android:layout_marginStart="4dp"
+                android:visibility="gone" />
+
+            <!-- 删除按钮 -->
+            <ImageButton
+                android:id="@+id/deleteButton"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="@drawable/icon_button_background"
+                android:padding="8dp"
                 android:layout_marginStart="4dp"
                 android:visibility="gone" />
 

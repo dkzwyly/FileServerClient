@@ -1,0 +1,13 @@
+<!-- res/drawable/ic_pdf.xml -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#F44336"
+        android:pathData="M20,2L8,2c-1.1,0 -2,0.9 -2,2l0,12c0,1.1 0.9,2 2,2l12,0c1.1,0 2,-0.9 2,-2L22,4c0,-1.1 -0.9,-2 -2,-2zM11,7.5h1.5v2.25L14.25,9L14.25,7.5H16l0,6L14.5,13.5l0,-2.25l-2.25,0L12.25,13.5L11,13.5L11,7.5zM5.5,9L7,9v1.5L5.5,10.5L5.5,12L4,12L4,9L5.5,9z" />
+    <path
+        android:fillColor="#F44336"
+        android:pathData="M13.5,10.5h-0.75L12.75,12h0.75L13.5,10.5z" />
+</vector>

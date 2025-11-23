@@ -14,13 +14,25 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
 import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import coil.ImageLoader
+import coil.request.ImageRequest
+import coil.load
+import coil.request.CachePolicy
 import kotlinx.coroutines.*
+import okhttp3.OkHttpClient
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 class FileListActivity : AppCompatActivity() {
 
@@ -79,9 +91,14 @@ class FileListActivity : AppCompatActivity() {
         uploadStatusCard = findViewById(R.id.uploadStatusCard)
         fileCountText = findViewById(R.id.fileCountText)
 
-        adapter = FileListAdapter(this, currentServerUrl, fileList) { item ->
-            onFileItemClicked(item)
-        }
+        adapter = FileListAdapter(this, currentServerUrl, fileList,
+            onItemClick = { item ->
+                onFileItemClicked(item)
+            },
+            onDeleteClick = { item ->
+                showDeleteConfirmation(item)
+            }
+        )
         filesRecyclerView.layoutManager = LinearLayoutManager(this)
         filesRecyclerView.adapter = adapter
 
@@ -361,6 +378,37 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
+    private fun showDeleteConfirmation(item: FileSystemItem) {
+        AlertDialog.Builder(this)
+            .setTitle("删除文件")
+            .setMessage("确定要删除文件 \"${item.displayName}\" 吗？此操作不可恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                deleteFile(item)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun deleteFile(item: FileSystemItem) {
+        coroutineScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    fileServerService.deleteFile(currentServerUrl, item.path)
+                }
+
+                if (result) {
+                    showToast("文件删除成功")
+                    loadCurrentDirectory(currentPath) // 刷新列表
+                } else {
+                    showToast("删除失败")
+                }
+            } catch (e: Exception) {
+                showToast("删除异常: ${e.message}")
+                Log.e("FileListActivity", "删除文件失败", e)
+            }
+        }
+    }
+
     private fun getFileName(uri: Uri): String {
         var result = ""
 
@@ -427,21 +475,27 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
-    // 适配器类保持不变
+    // 适配器类
+    // 适配器类
     class FileListAdapter(
         private val context: Context,
         private val serverUrl: String,
         private val items: List<FileSystemItem>,
-        private val onItemClick: (FileSystemItem) -> Unit
+        private val onItemClick: (FileSystemItem) -> Unit,
+        private val onDeleteClick: (FileSystemItem) -> Unit
     ) : RecyclerView.Adapter<FileListAdapter.ViewHolder>() {
 
+        // 用于跟踪每个位置的加载状态
+        private val loadStates = mutableMapOf<Int, Boolean>()
+
         class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-            val fileIcon: TextView = view.findViewById(R.id.fileIcon)
+            val fileIcon: ImageView = view.findViewById(R.id.fileIcon)
             val fileName: TextView = view.findViewById(R.id.fileName)
             val fileInfo: TextView = view.findViewById(R.id.fileInfo)
             val fileSize: TextView = view.findViewById(R.id.fileSize)
-            val previewButton: Button = view.findViewById(R.id.previewButton)
-            val downloadButton: Button = view.findViewById(R.id.downloadButton)
+            val previewButton: ImageButton = view.findViewById(R.id.previewButton)
+            val downloadButton: ImageButton = view.findViewById(R.id.downloadButton)
+            val deleteButton: ImageButton = view.findViewById(R.id.deleteButton)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -453,52 +507,145 @@ class FileListActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = items[position]
 
-            holder.fileIcon.text = getFileIcon(item)
-            holder.fileName.text = item.name
+            // 记录当前绑定位置
+            loadStates[position] = true
 
+            // 调试信息
+            Log.d("AdapterDebug",
+                "绑定项目: ${item.name}, " +
+                        "isDirectory: ${item.isDirectory}, " +
+                        "isImage: ${item.isImage}, " +
+                        "mimeType: ${item.mimeType}"
+            )
+
+            holder.fileName.text = item.displayName
+
+            // 关键修复：完全重置ImageView
+            resetImageView(holder.fileIcon)
+
+            // 严格区分文件夹和文件
             if (item.isDirectory) {
-                holder.fileInfo.text = "目录"
-                holder.fileSize.visibility = View.GONE
+                bindDirectory(holder, item, position)
             } else {
-                holder.fileInfo.text = "${item.sizeFormatted} • ${formatDate(item.lastModified)}"
-                holder.fileSize.text = item.sizeFormatted
-                holder.fileSize.visibility = View.VISIBLE
+                bindFile(holder, item, position)
             }
+        }
 
-            val isPreviewable = isPreviewableFile(item)
-            holder.previewButton.visibility = if (isPreviewable) View.VISIBLE else View.GONE
+        private fun resetImageView(imageView: ImageView) {
+            // 完全重置ImageView状态
+            imageView.setImageDrawable(null)
+            imageView.background = null
+            imageView.clearColorFilter()
+        }
 
-            holder.downloadButton.visibility = if (item.isDirectory) View.GONE else View.VISIBLE
+        private fun bindDirectory(holder: ViewHolder, item: FileSystemItem, position: Int) {
+            // 文件夹处理 - 强制使用文件夹图标，不加载任何缩略图
+            holder.fileInfo.text = "目录"
+            holder.fileSize.visibility = View.GONE
 
+            // 关键修复：立即设置文件夹图标，不进行任何异步操作
+            holder.fileIcon.setImageResource(R.drawable.ic_folder)
+
+            // 额外保护：清除任何可能的加载状态
+            loadStates[position] = false
+
+            // 文件夹不应该有任何操作按钮
+            holder.previewButton.visibility = View.GONE
+            holder.downloadButton.visibility = View.GONE
+            holder.deleteButton.visibility = View.GONE
+
+            // 文件夹点击事件 - 直接导航
             holder.itemView.setOnClickListener {
+                Log.d("AdapterDebug", "文件夹点击: ${item.name}")
                 onItemClick(item)
             }
 
+            // 确保按钮没有点击事件
+            holder.previewButton.setOnClickListener(null)
+            holder.downloadButton.setOnClickListener(null)
+            holder.deleteButton.setOnClickListener(null)
+        }
+
+        private fun bindFile(holder: ViewHolder, item: FileSystemItem, position: Int) {
+            // 文件处理
+            holder.fileInfo.text = "${item.sizeFormatted} • ${formatDate(item.lastModified)}"
+            holder.fileSize.text = item.sizeFormatted
+            holder.fileSize.visibility = View.VISIBLE
+
+            // 设置按钮可见性
+            val isPreviewable = isPreviewableFile(item)
+            holder.previewButton.visibility = if (isPreviewable) View.VISIBLE else View.GONE
+            holder.downloadButton.visibility = View.VISIBLE
+            holder.deleteButton.visibility = View.VISIBLE
+
+            // 处理图片文件缩略图
+            if (item.isImage) {
+                // 只有图片文件才加载缩略图
+                loadImageThumbnail(holder.fileIcon, item, position)
+            } else {
+                // 非图片文件使用文件类型图标 - 立即设置，不异步
+                holder.fileIcon.setImageResource(getFileIconRes(item))
+            }
+
+            // 设置按钮图标
+            holder.previewButton.setImageResource(R.drawable.ic_preview)
+            holder.downloadButton.setImageResource(R.drawable.ic_download)
+            holder.deleteButton.setImageResource(R.drawable.ic_delete)
+
+            // 文件点击事件 - 图片直接预览，其他文件导航
+            holder.itemView.setOnClickListener {
+                if (item.isImage) {
+                    showPreview(item, holder.itemView.context)
+                } else {
+                    onItemClick(item)
+                }
+            }
+
+            // 预览按钮点击事件
             holder.previewButton.setOnClickListener {
                 showPreview(item, holder.itemView.context)
             }
 
+            // 下载按钮点击事件
             holder.downloadButton.setOnClickListener {
                 downloadFile(item, holder.itemView.context)
             }
+
+            // 删除按钮点击事件
+            holder.deleteButton.setOnClickListener {
+                onDeleteClick(item)
+            }
         }
 
-        override fun getItemCount() = items.size
+        override fun getItemCount(): Int = items.size
 
-        private fun getFileIcon(item: FileSystemItem): String {
+        override fun onViewRecycled(holder: ViewHolder) {
+            super.onViewRecycled(holder)
+            // 关键修复：当视图被回收时，完全重置ImageView和加载状态
+            resetImageView(holder.fileIcon)
+            // 清除所有可能的加载状态
+            loadStates.keys.forEach { position ->
+                if (position >= items.size || !items[position].isImage) {
+                    loadStates[position] = false
+                }
+            }
+        }
+
+        override fun onViewDetachedFromWindow(holder: ViewHolder) {
+            super.onViewDetachedFromWindow(holder)
+            // 当视图从窗口分离时也重置
+            resetImageView(holder.fileIcon)
+        }
+
+        private fun getFileIconRes(item: FileSystemItem): Int {
             return when {
-                item.isDirectory -> if (item.name == "..") "⬆️" else "📁"
-                item.isVideo -> "🎬"
-                item.isAudio -> "🎵"
-                item.extension in listOf(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp") -> "🖼️"
-                item.extension in listOf(".pdf") -> "📕"
-                item.extension in listOf(".doc", ".docx") -> "📝"
-                item.extension in listOf(".xls", ".xlsx") -> "📊"
-                item.extension in listOf(".zip", ".rar", ".7z", ".tar", ".gz") -> "📦"
-                item.extension in listOf(".exe", ".bat", ".cmd", ".msi") -> "⚙️"
-                item.extension in listOf(".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm") -> "🎬"
-                item.extension in listOf(".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma") -> "🎵"
-                else -> "📄"
+                item.isVideo -> R.drawable.ic_video
+                item.isAudio -> R.drawable.ic_audio
+                item.extension in listOf(".pdf") -> R.drawable.ic_pdf
+                item.extension in listOf(".doc", ".docx") -> R.drawable.ic_document
+                item.extension in listOf(".xls", ".xlsx") -> R.drawable.ic_spreadsheet
+                item.extension in listOf(".zip", ".rar", ".7z", ".tar", ".gz") -> R.drawable.ic_archive
+                else -> R.drawable.ic_file
             }
         }
 
@@ -507,7 +654,6 @@ class FileListActivity : AppCompatActivity() {
 
             return when {
                 item.isVideo || item.isAudio -> true
-                item.extension in listOf(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp") -> true
                 item.extension in listOf(".txt", ".log", ".json", ".xml", ".csv", ".md",
                     ".html", ".htm", ".css", ".js", ".java", ".kt", ".py") -> true
                 else -> false
@@ -517,16 +663,19 @@ class FileListActivity : AppCompatActivity() {
         private fun showPreview(item: FileSystemItem, context: Context) {
             try {
                 val fileType = getFileType(item)
-                val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
-                val fileUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+                val fileUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/preview/${java.net.URLEncoder.encode(item.path, "UTF-8")}"
+
+                Log.d("Preview", "预览文件: ${item.name}, 类型: $fileType")
 
                 val intent = Intent(context, PreviewActivity::class.java).apply {
                     putExtra("FILE_NAME", item.name)
                     putExtra("FILE_URL", fileUrl)
                     putExtra("FILE_TYPE", fileType)
+                    putExtra("FILE_PATH", item.path)
                 }
                 context.startActivity(intent)
             } catch (e: Exception) {
+                Log.e("Preview", "预览文件失败: ${e.message}", e)
                 Toast.makeText(context, "预览失败: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
@@ -535,7 +684,7 @@ class FileListActivity : AppCompatActivity() {
             return when {
                 item.isVideo -> "video"
                 item.isAudio -> "audio"
-                item.extension in listOf(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp") -> "image"
+                item.isImage -> "image"
                 item.extension in listOf(".txt", ".log", ".json", ".xml", ".csv", ".md",
                     ".html", ".htm", ".css", ".js", ".java", ".kt", ".py") -> "text"
                 else -> "general"
@@ -561,6 +710,112 @@ class FileListActivity : AppCompatActivity() {
                 dateString.substring(0, 10)
             } else {
                 dateString
+            }
+        }
+
+        private fun createUnsafeOkHttpClient(): OkHttpClient {
+            try {
+                // 创建信任所有证书的 TrustManager
+                val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                        // 信任所有客户端证书
+                    }
+
+                    override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                        // 信任所有服务器证书
+                    }
+
+                    override fun getAcceptedIssuers(): Array<X509Certificate> {
+                        return arrayOf()
+                    }
+                })
+
+                // 创建 SSLContext 使用信任所有证书的 TrustManager
+                val sslContext = SSLContext.getInstance("SSL")
+                sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+
+                // 创建不验证主机名的 HostnameVerifier
+                val hostnameVerifier = HostnameVerifier { _, _ -> true }
+
+                return OkHttpClient.Builder()
+                    .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
+                    .hostnameVerifier(hostnameVerifier)
+                    .connectTimeout(15, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(30, TimeUnit.SECONDS)
+                    .build()
+            } catch (e: Exception) {
+                throw RuntimeException(e)
+            }
+        }
+
+        private fun loadImageThumbnail(imageView: ImageView, item: FileSystemItem, position: Int) {
+            try {
+                // 构建缩略图URL
+                val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
+                val thumbnailUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/thumbnail/$encodedPath"
+
+                Log.d("ThumbnailDebug", "开始加载缩略图: ${item.name}, URL: $thumbnailUrl")
+
+                // 创建忽略SSL的ImageLoader
+                val unsafeImageLoader = ImageLoader.Builder(context)
+                    .okHttpClient(createUnsafeOkHttpClient())
+                    .build()
+
+                // 关键修复：在加载前再次检查当前项是否仍然是图片文件
+                // 防止视图复用时错误加载
+                val currentItem = if (position < items.size) items[position] else null
+                if (currentItem == null || !currentItem.isImage || currentItem.isDirectory) {
+                    Log.d("ThumbnailDebug", "项目状态已改变，取消缩略图加载: ${item.name}")
+                    imageView.setImageResource(R.drawable.ic_image)
+                    return
+                }
+
+                // 使用 Coil 加载缩略图
+                val request = ImageRequest.Builder(context)
+                    .data(thumbnailUrl)
+                    .target { drawable ->
+                        // 关键修复：在设置图片前再次验证
+                        if (loadStates[position] == true &&
+                            position < items.size &&
+                            items[position].isImage &&
+                            !items[position].isDirectory) {
+                            imageView.setImageDrawable(drawable)
+                            Log.d("ThumbnailDebug", "缩略图加载成功: ${item.name}")
+                        } else {
+                            Log.d("ThumbnailDebug", "缩略图加载完成但项目状态已改变: ${item.name}")
+                            imageView.setImageResource(R.drawable.ic_image)
+                        }
+                    }
+                    .placeholder(R.drawable.ic_image)
+                    .error(R.drawable.ic_image)
+                    .listener(
+                        onStart = {
+                            Log.d("ThumbnailDebug", "开始加载缩略图: ${item.name}")
+                        },
+                        onError = { _, result ->
+                            Log.e("ThumbnailDebug",
+                                "缩略图加载失败: ${item.name}\n" +
+                                        "错误: ${result.throwable.message}\n" +
+                                        "URL: $thumbnailUrl"
+                            )
+                            // 只在仍然绑定时设置错误图标
+                            if (loadStates[position] == true && position < items.size) {
+                                imageView.setImageResource(R.drawable.ic_image)
+                            }
+                        }
+                    )
+                    .build()
+
+                // 执行请求
+                unsafeImageLoader.enqueue(request)
+
+            } catch (e: Exception) {
+                Log.e("ThumbnailDebug", "缩略图加载异常: ${e.message}", e)
+                // 只在仍然绑定时设置错误图标
+                if (loadStates[position] == true && position < items.size) {
+                    imageView.setImageResource(R.drawable.ic_image)
+                }
             }
         }
     }

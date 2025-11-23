@@ -300,4 +300,34 @@ class FileServerService(private val context: Context) {
         }
         return "%.2f ${sizes[order]}".format(len)
     }
+    // 在 FileServerService.kt 中添加这个方法
+    suspend fun deleteFile(serverUrl: String, filePath: String): Boolean {
+        return try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedPath = java.net.URLEncoder.encode(filePath, "UTF-8")
+            val deleteUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/delete/$encodedPath"
+
+            Log.d("FileServerService", "删除文件: $deleteUrl")
+
+            val request = okhttp3.Request.Builder()
+                .url(deleteUrl)
+                .delete()
+                .build()
+
+            val response = client.newCall(request).execute()
+            val isSuccessful = response.isSuccessful
+
+            if (isSuccessful) {
+                Log.d("FileServerService", "删除文件成功: $filePath")
+            } else {
+                Log.e("FileServerService", "删除文件失败: ${response.code} - ${response.message}")
+            }
+
+            response.close()
+            isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "删除文件异常: ${e.message}")
+            false
+        }
+    }
 }
