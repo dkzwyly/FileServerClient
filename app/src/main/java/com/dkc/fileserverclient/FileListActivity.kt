@@ -506,7 +506,6 @@ class FileListActivity : AppCompatActivity() {
             val fileIcon: ImageView = view.findViewById(R.id.fileIcon)
             val fileName: TextView = view.findViewById(R.id.fileName)
             val fileInfo: TextView = view.findViewById(R.id.fileInfo)
-            val fileSize: TextView = view.findViewById(R.id.fileSize)
             val previewButton: ImageButton = view.findViewById(R.id.previewButton)
             val downloadButton: ImageButton = view.findViewById(R.id.downloadButton)
             val deleteButton: ImageButton = view.findViewById(R.id.deleteButton)
@@ -515,7 +514,6 @@ class FileListActivity : AppCompatActivity() {
                 // 文件夹处理 - 强制使用文件夹图标，不加载任何缩略图
                 fileName.text = item.displayName
                 fileInfo.text = "目录"
-                fileSize.visibility = View.GONE
 
                 // 关键修复：立即设置文件夹图标，不进行任何异步操作
                 fileIcon.setImageResource(R.drawable.ic_folder)
@@ -524,12 +522,6 @@ class FileListActivity : AppCompatActivity() {
                 previewButton.visibility = View.GONE
                 downloadButton.visibility = View.GONE
                 deleteButton.visibility = View.GONE
-
-                // 文件夹点击事件 - 直接导航
-                itemView.setOnClickListener {
-                    Log.d("AdapterDebug", "文件夹点击: ${item.name}")
-                    // 注意：这里需要外部处理点击事件
-                }
 
                 // 确保按钮没有点击事件
                 previewButton.setOnClickListener(null)
@@ -548,7 +540,6 @@ class FileListActivity : AppCompatActivity() {
             val fileIcon: ImageView = view.findViewById(R.id.fileIcon)
             val fileName: TextView = view.findViewById(R.id.fileName)
             val fileInfo: TextView = view.findViewById(R.id.fileInfo)
-            val fileSize: TextView = view.findViewById(R.id.fileSize)
             val previewButton: ImageButton = view.findViewById(R.id.previewButton)
             val downloadButton: ImageButton = view.findViewById(R.id.downloadButton)
             val deleteButton: ImageButton = view.findViewById(R.id.deleteButton)
@@ -560,11 +551,9 @@ class FileListActivity : AppCompatActivity() {
                 // 重置当前状态
                 currentLoadPath = null
 
-                // 文件处理
+                // 文件处理 - 将大小和日期信息合并显示在fileInfo中
                 fileName.text = item.displayName
                 fileInfo.text = "${item.sizeFormatted} • ${formatDate(item.lastModified)}"
-                fileSize.text = item.sizeFormatted
-                fileSize.visibility = View.VISIBLE
 
                 // 设置按钮可见性
                 val isPreviewable = isPreviewableFile(item)

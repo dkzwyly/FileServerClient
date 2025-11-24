@@ -15,30 +15,31 @@
         android:padding="12dp"
         android:background="#FFFFFF">
 
-        <!-- 文件图标/缩略图 - 增加大小并添加边框 -->
+        <!-- 文件图标/缩略图 -->
         <FrameLayout
-            android:layout_width="64dp"
-            android:layout_height="64dp"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
             android:layout_marginEnd="12dp"
             android:background="@drawable/thumbnail_background">
 
             <ImageView
                 android:id="@+id/fileIcon"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:scaleType="centerCrop"
                 android:layout_gravity="center" />
 
         </FrameLayout>
 
-        <!-- 文件信息区域 -->
+        <!-- 文件信息区域 - 优化权重分配 -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center_vertical">
+            android:layout_gravity="center_vertical"
+            android:orientation="vertical">
 
+            <!-- 文件名 - 允许最多2行显示 -->
             <TextView
                 android:id="@+id/fileName"
                 android:layout_width="match_parent"
@@ -48,9 +49,10 @@
                 android:textStyle="bold"
                 android:textColor="#212121"
                 android:ellipsize="end"
-                android:singleLine="true"
-                android:maxLines="1" />
+                android:maxLines="2"
+                android:lineSpacingExtra="2dp" />
 
+            <!-- 文件信息 - 包含大小和日期 -->
             <TextView
                 android:id="@+id/fileInfo"
                 android:layout_width="match_parent"
@@ -65,52 +67,41 @@
 
         </LinearLayout>
 
-        <!-- 文件大小 -->
-        <TextView
-            android:id="@+id/fileSize"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="大小"
-            android:textSize="12sp"
-            android:textColor="#757575"
-            android:layout_marginStart="8dp"
-            android:layout_marginEnd="8dp"
-            android:gravity="end" />
-
-        <!-- 操作按钮组 -->
+        <!-- 操作按钮组 - 固定宽度 -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:gravity="center_vertical"
+            android:layout_marginStart="8dp">
 
             <!-- 预览按钮 -->
             <ImageButton
                 android:id="@+id/previewButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
                 android:background="@drawable/icon_button_background"
-                android:padding="8dp"
+                android:padding="6dp"
                 android:visibility="gone" />
 
             <!-- 下载按钮 -->
             <ImageButton
                 android:id="@+id/downloadButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
                 android:background="@drawable/icon_button_background"
-                android:padding="8dp"
-                android:layout_marginStart="4dp"
+                android:padding="6dp"
+                android:layout_marginStart="2dp"
                 android:visibility="gone" />
 
             <!-- 删除按钮 -->
             <ImageButton
                 android:id="@+id/deleteButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
                 android:background="@drawable/icon_button_background"
-                android:padding="8dp"
-                android:layout_marginStart="4dp"
+                android:padding="6dp"
+                android:layout_marginStart="2dp"
                 android:visibility="gone" />
 
         </LinearLayout>
