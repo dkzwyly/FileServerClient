@@ -589,26 +589,78 @@ class TextPreviewActivity : AppCompatActivity() {
             statusLabel.text = "正在构建章节索引..."
 
             try {
+                // 先检查是否已经知道总页数
+                if (totalServerPages <= 0) {
+                    statusLabel.text = "正在获取文件信息..."
+                    // 如果没有总页数信息，先获取第一页来获取分页信息
+                    val firstPageUrl = if (currentFileUrl.contains("?")) {
+                        "${currentFileUrl}&page=1"
+                    } else {
+                        "${currentFileUrl}?page=1"
+                    }
+
+                    val firstPageData = withContext(Dispatchers.IO) {
+                        loadTextContentFromServer(firstPageUrl)
+                    }
+
+                    val jsonObject = JSONObject(firstPageData)
+                    val pagination = jsonObject.optJSONObject("pagination")
+                    totalServerPages = pagination?.optInt("totalPages", 1) ?: 1
+                    Log.d("TextPreview", "获取到总页数: $totalServerPages")
+                }
+
                 val fullText = withContext(Dispatchers.IO) {
                     loadFullTextContent()
                 }
 
+                statusLabel.text = "正在分析章节结构..."
+
                 val chapters = detectChapters(fullText)
                 chapterList.clear()
                 chapterList.addAll(chapters)
+
+                // 按行号排序
+                chapterList.sortBy { it.lineNumber }
 
                 saveChapterIndex()
 
                 isChapterIndexBuilt = true
                 showContentState()
 
-                showChapterList()
+                // 显示构建结果
+                val chapterCount = chapters.size
+                if (chapterCount > 0) {
+                    showChapterList()
+                    Toast.makeText(this@TextPreviewActivity,
+                        "章节索引构建完成，共发现 $chapterCount 个章节",
+                        Toast.LENGTH_LONG).show()
+
+                    // 记录发现的章节类型统计
+                    val symbolWrappedCount = chapters.count {
+                        it.title != extractContentFromWrapping(it.title)
+                    }
+                    Log.d("TextPreview", "章节统计: 符号包裹章节=$symbolWrappedCount, 普通章节=${chapterCount - symbolWrappedCount}")
+                } else {
+                    Toast.makeText(this@TextPreviewActivity,
+                        "未发现章节结构，请检查文件格式",
+                        Toast.LENGTH_LONG).show()
+                }
 
                 Log.d("TextPreview", "章节索引构建完成，共找到 ${chapters.size} 个章节")
 
             } catch (e: Exception) {
                 Log.e("TextPreview", "构建章节索引失败", e)
                 showErrorState("构建章节索引失败: ${e.message}")
+
+                // 提供重试选项
+                AlertDialog.Builder(this@TextPreviewActivity)
+                    .setTitle("章节索引构建失败")
+                    .setMessage("是否重新尝试构建章节索引？")
+                    .setPositiveButton("重试") { _, _ ->
+                        buildChapterIndex()
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
             }
         }
     }
@@ -658,13 +710,98 @@ class TextPreviewActivity : AppCompatActivity() {
 
         Log.d("TextPreview", "开始检测章节，总行数: ${lines.size}")
 
+        // 更健壮的章节模式匹配
         val chapterPatterns = listOf(
-            Pattern.compile("第[零一二三四五六七八九十百千]+章\\s*[^\\s].*"),
-            Pattern.compile("第\\d+章\\s*[^\\s].*"),
-            Pattern.compile("第\\d+节\\s*[^\\s].*"),
-            Pattern.compile("第[零一二三四五六七八九十百千]+节\\s*[^\\s].*"),
-            Pattern.compile("^\\d+(\\.\\d+)*\\s+.*"),
-            Pattern.compile("^[一二三四五六七八九十]+、.*")
+            // 中文数字章节: 第一章, 第一百章, 第零章
+            Pattern.compile("^第[零一二三四五六七八九十百千]+章[\\s\\S]*"),
+            Pattern.compile("^第[零一二三四五六七八九十百千]+节[\\s\\S]*"),
+            Pattern.compile("^第[零一二三四五六七八九十百千]+回[\\s\\S]*"),
+
+            // 阿拉伯数字章节: 第1章, 第123章, 第2节
+            Pattern.compile("^第\\d+章[\\s\\S]*"),
+            Pattern.compile("^第\\d+节[\\s\\S]*"),
+            Pattern.compile("^第\\d+回[\\s\\S]*"),
+
+            // 混合数字章节: 第1章, 第2节等
+            Pattern.compile("^第\\d+[章节回][\\s\\S]*"),
+
+            // 数字序号: 1., 1.1, 1.1.1, 01.
+            Pattern.compile("^\\d+\\.[\\s\\S]*"),
+            Pattern.compile("^\\d+\\.\\d+[\\s\\S]*"),
+            Pattern.compile("^\\d+\\.\\d+\\.\\d+[\\s\\S]*"),
+            Pattern.compile("^\\d{2,}\\.[\\s\\S]*"),
+
+            // 中文序号: 一、, 二、, 第一章, 第一节
+            Pattern.compile("^[一二三四五六七八九十百千]+、[\\s\\S]*"),
+            Pattern.compile("^[一二三四五六七八九十百千]+\\.[\\s\\S]*"),
+
+            // 括号数字: (1), (2), (一), (二)
+            Pattern.compile("^[(（][一二三四五六七八九十百千]+[)）][\\s\\S]*"),
+            Pattern.compile("^[(（]\\d+[)）][\\s\\S]*"),
+
+            // 英文章节: Chapter 1, CHAPTER 1, Section 1
+            Pattern.compile("^[Cc]hapter\\s+\\d+[\\s\\S]*"),
+            Pattern.compile("^[Cc]hapter\\s+[IVXLCDM]+[\\s\\S]*"),
+            Pattern.compile("^[Ss]ection\\s+\\d+[\\s\\S]*"),
+            Pattern.compile("^[Pp]art\\s+\\d+[\\s\\S]*"),
+
+            // 特殊章节标记
+            Pattern.compile("^[卷集部篇][\\s\\S]*[一二三四五六七八九十百千\\d]+[\\s\\S]*"),
+            Pattern.compile("^[前序后末终][记述言][\\s\\S]*"),
+            Pattern.compile("^[引子楔子尾声结局][\\s\\S]*"),
+
+            // 新增：处理特殊符号包裹的章节标题
+            // ###第四章 标题###
+            Pattern.compile("^###.*第[零一二三四五六七八九十百千]+章.*###"),
+            Pattern.compile("^###.*第\\d+章.*###"),
+
+            // ***第四章 标题***
+            Pattern.compile("^\\*{3,}.*第[零一二三四五六七八九十百千]+章.*\\*{3,}"),
+            Pattern.compile("^\\*{3,}.*第\\d+章.*\\*{3,}"),
+
+            // ---第四章 标题---
+            Pattern.compile("^-{3,}.*第[零一二三四五六七八九十百千]+章.*-{3,}"),
+            Pattern.compile("^-{3,}.*第\\d+章.*-{3,}"),
+
+            // ===第四章 标题===
+            Pattern.compile("^={3,}.*第[零一二三四五六七八九十百千]+章.*={3,}"),
+            Pattern.compile("^={3,}.*第\\d+章.*={3,}"),
+
+            // 《《第四章 标题》》
+            Pattern.compile("^《+.*第[零一二三四五六七八九十百千]+章.*》+"),
+            Pattern.compile("^《+.*第\\d+章.*》+"),
+
+            // 【第四章 标题】
+            Pattern.compile("^【.*第[零一二三四五六七八九十百千]+章.*】"),
+            Pattern.compile("^【.*第\\d+章.*】"),
+
+            // [[第四章 标题]]
+            Pattern.compile("^\\[+.*第[零一二三四五六七八九十百千]+章.*\\]+"),
+            Pattern.compile("^\\[+.*第\\d+章.*\\]+"),
+
+            // 通用符号包裹模式：任意重复符号包裹的章节
+            Pattern.compile("^(.)\\1{2,}.*第[零一二三四五六七八九十百千]+章.*\\1{2,}"),
+            Pattern.compile("^(.)\\1{2,}.*第\\d+章.*\\1{2,}")
+        )
+
+        // 章节关键词，用于进一步验证
+        val chapterKeywords = listOf(
+            "章", "节", "回", "卷", "集", "部", "篇",
+            "chapter", "Chapter", "section", "Section", "part", "Part",
+            "序", "前言", "后记", "楔子", "引子", "尾声", "结局"
+        )
+
+        // 特殊符号前缀模式（用于快速检测可能被符号包裹的章节行）
+        val symbolPrefixPatterns = listOf(
+            Pattern.compile("^###.*"),
+            Pattern.compile("^\\*{3,}.*"),
+            Pattern.compile("^-{3,}.*"),
+            Pattern.compile("^={3,}.*"),
+            Pattern.compile("^《+.*"),
+            Pattern.compile("^【.*"),
+            Pattern.compile("^\\[+.*"),
+            Pattern.compile("^#+.*"), // Markdown 标题
+            Pattern.compile("^~{3,}.*") // 其他符号
         )
 
         var currentServerPage = 1
@@ -672,16 +809,90 @@ class TextPreviewActivity : AppCompatActivity() {
         var linesInCurrentPage = 0
 
         for ((lineIndex, line) in lines.withIndex()) {
-            var isChapter = false
-            var chapterTitle = ""
+            val trimmedLine = line.trim()
 
+            // 跳过空行和过短的行
+            if (trimmedLine.isEmpty() || trimmedLine.length < 2) {
+                continue
+            }
+
+            var isChapter = false
+            var chapterTitle = trimmedLine
+
+            // 1. 首先使用正则表达式匹配
             for (pattern in chapterPatterns) {
-                val matcher = pattern.matcher(line.trim())
+                val matcher = pattern.matcher(trimmedLine)
                 if (matcher.matches()) {
                     isChapter = true
-                    chapterTitle = line.trim()
+
+                    // 对于符号包裹的章节，清理符号提取纯文本标题
+                    chapterTitle = extractCleanChapterTitle(trimmedLine)
                     break
                 }
+            }
+
+            // 2. 如果正则匹配失败，检查是否是符号包裹的行，然后提取内容再匹配
+            if (!isChapter && hasSymbolWrapping(trimmedLine, symbolPrefixPatterns)) {
+                val cleanContent = extractContentFromWrapping(trimmedLine)
+                if (cleanContent.isNotEmpty()) {
+                    // 对清理后的内容再次进行章节匹配
+                    for (pattern in chapterPatterns.subList(0, 20)) { // 使用基础模式匹配
+                        val matcher = pattern.matcher(cleanContent)
+                        if (matcher.matches()) {
+                            isChapter = true
+                            chapterTitle = extractCleanChapterTitle(cleanContent)
+                            break
+                        }
+                    }
+
+                    // 如果清理后的内容包含章节关键词，也认为是章节
+                    if (!isChapter) {
+                        val hasChapterKeyword = chapterKeywords.any { keyword ->
+                            cleanContent.contains(keyword) &&
+                                    cleanContent.substring(0, minOf(20, cleanContent.length)).contains(keyword)
+                        }
+
+                        if (hasChapterKeyword && cleanContent.length <= 50) {
+                            isChapter = true
+                            chapterTitle = cleanContent
+                        }
+                    }
+                }
+            }
+
+            // 3. 如果正则匹配失败，使用关键词匹配
+            if (!isChapter) {
+                isChapter = chapterKeywords.any { keyword ->
+                    trimmedLine.contains(keyword) &&
+                            // 确保关键词不是出现在行中间（大概率是章节标题）
+                            (trimmedLine.startsWith(keyword) ||
+                                    trimmedLine.substring(0, minOf(20, trimmedLine.length)).contains(keyword))
+                }
+            }
+
+            // 4. 进一步验证：检查行长度和内容特征
+            if (isChapter) {
+                // 章节标题通常不会太长（排除可能是正文的情况）
+                if (trimmedLine.length > 100 && !hasSymbolWrapping(trimmedLine, symbolPrefixPatterns)) {
+                    isChapter = false
+                }
+
+                // 章节标题通常不会包含太多标点符号（排除对话等）
+                val punctuationCount = trimmedLine.count { it in listOf('，', '。', '！', '？', '；', '：', '、') }
+                if (punctuationCount > 3 && !hasSymbolWrapping(trimmedLine, symbolPrefixPatterns)) {
+                    isChapter = false
+                }
+
+                // 检查是否包含明显的非章节词汇
+                val excludeWords = listOf("说道", "心想", "看着", "然后", "但是", "因为", "所以", "突然", "不过")
+                if (excludeWords.any { trimmedLine.contains(it) } && !hasSymbolWrapping(trimmedLine, symbolPrefixPatterns)) {
+                    isChapter = false
+                }
+            }
+
+            // 5. 数字序列检测（备用方案）
+            if (!isChapter && lineIndex > 0) {
+                isChapter = detectNumberSequence(lines, lineIndex, trimmedLine)
             }
 
             if (isChapter) {
@@ -692,6 +903,7 @@ class TextPreviewActivity : AppCompatActivity() {
                 Log.d("TextPreview", "发现章节: $chapterTitle, 服务器页: $serverPage, 客户端页: $clientPage, 行号: $lineIndex")
             }
 
+            // 更新分页状态
             linesInCurrentPage++
             if (linesInCurrentPage >= linesPerPage) {
                 linesInCurrentPage = 0
@@ -705,7 +917,117 @@ class TextPreviewActivity : AppCompatActivity() {
         }
 
         Log.d("TextPreview", "章节检测完成，共发现 ${chapters.size} 个章节")
-        return chapters
+
+        // 后处理：过滤掉过于密集的"章节"（可能是误识别）
+        return filterDenseChapters(chapters)
+    }
+
+    /**
+     * 检查行是否被特殊符号包裹
+     */
+    private fun hasSymbolWrapping(line: String, patterns: List<Pattern>): Boolean {
+        return patterns.any { pattern ->
+            pattern.matcher(line).matches()
+        }
+    }
+
+    /**
+     * 从符号包裹的行中提取内容
+     */
+    private fun extractContentFromWrapping(line: String): String {
+        var content = line.trim()
+
+        // 移除常见的包裹符号
+        val wrappingPatterns = listOf(
+            Pattern.compile("^###(.*)###$"),
+            Pattern.compile("^\\*{3,}(.*)\\*{3,}$"),
+            Pattern.compile("^-{3,}(.*)-{3,}$"),
+            Pattern.compile("^={3,}(.*)={3,}$"),
+            Pattern.compile("^《+(.*)》+$"),
+            Pattern.compile("^【(.*)】$"),
+            Pattern.compile("^\\[+(.*)\\]$"),
+            Pattern.compile("^#+(.*)$"), // Markdown 标题
+            Pattern.compile("^~{3,}(.*)~{3,}$")
+        )
+
+        for (pattern in wrappingPatterns) {
+            val matcher = pattern.matcher(content)
+            if (matcher.matches()) {
+                content = matcher.group(1)?.trim() ?: content
+                break
+            }
+        }
+
+        return content
+    }
+
+    /**
+     * 提取清理后的章节标题（移除多余的符号）
+     */
+    private fun extractCleanChapterTitle(line: String): String {
+        var title = line.trim()
+
+        // 移除常见的包裹符号
+        title = extractContentFromWrapping(title)
+
+        // 移除行首行尾的标点符号
+        title = title.trimStart(' ', '#', '*', '-', '=', '~', '《', '【', '[', '（', '(')
+            .trimEnd(' ', '#', '*', '-', '=', '~', '》', '】', ']', '）', ')')
+
+        return title
+    }
+
+    /**
+     * 检测数字序列，用于识别类似"1" "2" "3"这样的简单章节编号
+     */
+    private fun detectNumberSequence(lines: List<String>, currentIndex: Int, currentLine: String): Boolean {
+        if (currentIndex < 2) return false
+
+        val currentTrimmed = currentLine.trim()
+        val prev1Trimmed = lines[currentIndex - 1].trim()
+        val prev2Trimmed = lines[currentIndex - 2].trim()
+
+        // 检查当前行是否是纯数字
+        val isCurrentNumber = currentTrimmed.matches(Regex("^\\d+$"))
+        val isPrev1Number = prev1Trimmed.matches(Regex("^\\d+$"))
+        val isPrev2Number = prev2Trimmed.matches(Regex("^\\d+$"))
+
+        // 如果连续三行都是数字，且是递增的，则认为是章节编号
+        if (isCurrentNumber && isPrev1Number && isPrev2Number) {
+            val currentNum = currentTrimmed.toIntOrNull()
+            val prev1Num = prev1Trimmed.toIntOrNull()
+            val prev2Num = prev2Trimmed.toIntOrNull()
+
+            if (currentNum != null && prev1Num != null && prev2Num != null) {
+                return currentNum == prev1Num + 1 && prev1Num == prev2Num + 1
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * 过滤过于密集的章节识别结果
+     */
+    private fun filterDenseChapters(chapters: List<ChapterInfo>): List<ChapterInfo> {
+        if (chapters.size < 3) return chapters
+
+        val filtered = mutableListOf<ChapterInfo>()
+        filtered.add(chapters[0])
+
+        for (i in 1 until chapters.size) {
+            val current = chapters[i]
+            val previous = filtered.last()
+
+            // 如果两个相邻章节行号差距太小（小于10行），可能是误识别，跳过
+            if (current.lineNumber - previous.lineNumber > 10) {
+                filtered.add(current)
+            } else {
+                Log.d("TextPreview", "过滤密集章节: ${current.title} (行号: ${current.lineNumber})")
+            }
+        }
+
+        return filtered
     }
 
     private fun saveChapterIndex() {
