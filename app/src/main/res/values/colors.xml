@@ -19,4 +19,10 @@
         <color name="card_background">#FFFFFF</color>
         <color name="button_primary">#1976D2</color>
         <color name="button_secondary">#F5F7FA</color>
+    <color name="on_background">#FF000000</color>
+    <color name="surface">#FFF5F5F5</color>
+    <color name="on_surface">#FF424242</color>
+    <color name="surface_variant">#FFE0E0E0</color>
+    <color name="primary">#FF2196F3</color>
+    <color name="error">#FFB00020</color>
 </resources>

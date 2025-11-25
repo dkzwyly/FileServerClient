@@ -37,9 +37,7 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
-import java.security.cert.X509Certificate
 import java.util.*
-import javax.net.ssl.*
 import kotlin.math.abs
 
 @UnstableApi
@@ -93,8 +91,8 @@ class PreviewActivity : AppCompatActivity() {
     // ExoPlayer 实例
     private var exoPlayer: ExoPlayer? = null
 
-    // 网络客户端
-    private val client = createUnsafeOkHttpClient()
+    // 网络客户端 - 使用统一的 UnsafeHttpClient
+    private val client = UnsafeHttpClient.createUnsafeOkHttpClient()
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
     private val updateProgressRunnable = Runnable { updateProgress() }
@@ -494,8 +492,8 @@ class PreviewActivity : AppCompatActivity() {
 
     @UnstableApi
     private fun createUnsafeDataSourceFactory(): DataSource.Factory {
-        val okHttpClient = createUnsafeOkHttpClient()
-        val okHttpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+        // 使用统一的 UnsafeHttpClient 创建数据源工厂
+        val okHttpDataSourceFactory = OkHttpDataSource.Factory(client)
         return DefaultDataSource.Factory(this, okHttpDataSourceFactory)
     }
 
@@ -827,9 +825,9 @@ class PreviewActivity : AppCompatActivity() {
 
         coroutineScope.launch {
             try {
-                // 创建忽略SSL的ImageLoader
+                // 使用统一的 UnsafeHttpClient 创建 ImageLoader
                 val imageLoader = ImageLoader.Builder(this@PreviewActivity)
-                    .okHttpClient(client) // 使用忽略SSL的客户端
+                    .okHttpClient(client) // 使用统一的客户端
                     .components {
                         // 如果需要自定义组件可以在这里添加
                     }
@@ -845,7 +843,6 @@ class PreviewActivity : AppCompatActivity() {
                         },
                         onSuccess = { _, _ ->
                             imageLoadingProgress.visibility = View.GONE
-                            // 图片加载成功后，设置初始缩放以显示全图
                             setupInitialImageScale()
                         },
                         onError = { _, result ->
@@ -941,22 +938,13 @@ class PreviewActivity : AppCompatActivity() {
     }
 
     private fun loadTextPreview() {
-        showContainer(textContainer)
-        fileTypeTextView.visibility = View.VISIBLE
-
-        coroutineScope.launch {
-            try {
-                val textContent = withContext(Dispatchers.IO) {
-                    loadTextContent(currentFileUrl)
-                }
-
-                textLoadingProgress.visibility = View.GONE
-                textPreview.text = textContent
-
-            } catch (e: Exception) {
-                showError("文本加载失败: ${e.message}")
-            }
+        // 启动新的文本预览Activity
+        val intent = Intent(this, TextPreviewActivity::class.java).apply {
+            putExtra("FILE_NAME", currentFileName)
+            putExtra("FILE_URL", currentFileUrl)
         }
+        startActivity(intent)
+        finish() // 关闭当前预览界面
     }
 
     private fun loadGeneralPreview() {
@@ -965,19 +953,6 @@ class PreviewActivity : AppCompatActivity() {
 
         // 使用WebView加载文件
         webViewPreview.loadUrl(currentFileUrl)
-    }
-
-    private suspend fun loadTextContent(url: String): String {
-        return withContext(Dispatchers.IO) {
-            val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute()
-
-            if (!response.isSuccessful) {
-                throw IOException("HTTP ${response.code}: ${response.message}")
-            }
-
-            response.body?.string() ?: throw IOException("响应体为空")
-        }
     }
 
     private fun showContainer(container: View) {
@@ -1155,30 +1130,5 @@ class PreviewActivity : AppCompatActivity() {
         // 释放播放器资源
         exoPlayer?.release()
         exoPlayer = null
-    }
-
-    private fun createUnsafeOkHttpClient(): OkHttpClient {
-        try {
-            // 创建信任所有证书的 TrustManager
-            val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-            })
-
-            // 创建 SSLContext 使用信任所有证书的 TrustManager
-            val sslContext = SSLContext.getInstance("SSL")
-            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
-
-            // 创建不验证主机名的 HostnameVerifier
-            val hostnameVerifier = HostnameVerifier { _, _ -> true }
-
-            return OkHttpClient.Builder()
-                .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
-                .hostnameVerifier(hostnameVerifier)
-                .build()
-        } catch (e: Exception) {
-            throw RuntimeException(e)
-        }
     }
 }

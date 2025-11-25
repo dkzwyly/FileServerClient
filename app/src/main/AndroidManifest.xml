@@ -35,6 +35,11 @@
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
+        <activity
+            android:name=".TextPreviewActivity"
+            android:label="文本预览"
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
+
     </application>
 
 </manifest>
