@@ -269,12 +269,16 @@ class TextPreviewActivity : AppCompatActivity() {
 
                 Log.d("TextPreview", "文本加载成功: ${fileName}, 服务器页码: ${currentServerPage}")
 
+                // 立即更新进度显示
+                updatePageIndicator()
+
                 // 使用双次加载机制确保视图布局完成
                 performClientPagingWithRetry()
 
             } catch (e: Exception) {
                 Log.e("TextPreviewActivity", "文本加载失败", e)
                 showErrorState("文本加载失败: ${e.message}")
+                updatePageIndicator() // 错误时也更新进度
             }
         }
     }
@@ -301,7 +305,7 @@ class TextPreviewActivity : AppCompatActivity() {
         if (fullContent.isEmpty()) {
             Log.w("TextPreview", "$attempt: 内容为空")
             textContentTextView.text = ""
-            updatePageIndicator()
+            updatePageIndicator() // 确保进度更新
             return
         }
 
@@ -327,8 +331,9 @@ class TextPreviewActivity : AppCompatActivity() {
             // 显示当前客户端页面
             showCurrentClientPage(lines, linesPerPage, attempt)
 
-            // 保存阅读历史
+            // 保存阅读历史和更新进度
             saveReadingHistory()
+            updatePageIndicator() // 确保进度更新
 
             // 显示内容状态
             showContentState()
@@ -337,7 +342,7 @@ class TextPreviewActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             Log.e("TextPreview", "$attempt: 分页失败", e)
-            // 不显示错误状态，等待下一次尝试
+            updatePageIndicator() // 即使失败也更新进度
         }
     }
 
@@ -417,23 +422,75 @@ class TextPreviewActivity : AppCompatActivity() {
     }
 
     private fun updatePageIndicator() {
-        // 计算相对于总体的阅读进度百分比
-        val progress = if (totalLines > 0) {
-            // 估算当前已读行数
-            val estimatedCurrentLines = (currentServerPage - 1) * linesPerPage + (currentClientPage - 1) * linesPerPage
+        val progress = calculateReadingProgress()
+        pageIndicator.text = "$progress%"
+    }
 
-            // 计算百分比，确保不超过100%
-            ((estimatedCurrentLines * 100) / totalLines.toFloat()).coerceAtMost(100f).toInt()
-        } else {
-            // 如果没有总体行数信息，使用客户端分页百分比
-            if (totalClientPages > 0) {
+    private fun calculateReadingProgress(): Int {
+        return try {
+            // 方法1: 使用服务器分页信息计算（更准确）
+            if (totalServerPages > 0) {
+                val serverProgress = ((currentServerPage - 1) * 100 / totalServerPages).toFloat()
+
+                // 如果当前服务器页有客户端分页，添加当前页内的进度
+                val pageProgress = if (totalClientPages > 1) {
+                    ((currentClientPage - 1) * 100 / totalClientPages).toFloat() / totalServerPages
+                } else {
+                    0f
+                }
+
+                (serverProgress + pageProgress).toInt().coerceIn(0, 100)
+            }
+            // 方法2: 使用客户端分页信息计算（备选方案）
+            else if (totalClientPages > 0) {
                 (currentClientPage * 100 / totalClientPages).coerceAtMost(100)
+            }
+            // 方法3: 使用总行数计算（如果可用）
+            else if (totalLines > 0 && fullContent.isNotEmpty()) {
+                val lines = fullContent.split("\n")
+                val currentLine = ((currentServerPage - 1) * linesPerPage) + ((currentClientPage - 1) * linesPerPage)
+                ((currentLine * 100) / totalLines.toFloat()).toInt().coerceIn(0, 100)
+            }
+            else {
+                // 默认方法：基于当前章节位置估算
+                estimateProgressFromChapters()
+            }
+        } catch (e: Exception) {
+            Log.e("TextPreview", "计算阅读进度失败", e)
+            estimateProgressFromChapters()
+        }
+    }
+
+    private fun estimateProgressFromChapters(): Int {
+        return if (chapterList.isNotEmpty() && totalServerPages > 0) {
+            // 基于当前章节在章节列表中的位置估算进度
+            val currentChapterIndex = findCurrentChapterIndex()
+            if (currentChapterIndex >= 0) {
+                ((currentChapterIndex + 1) * 100 / chapterList.size).coerceAtMost(100)
+            } else {
+                // 如果没有找到匹配的章节，使用服务器页数估算
+                (currentServerPage * 100 / totalServerPages).coerceAtMost(100)
+            }
+        } else {
+            // 最后备选：使用服务器页数
+            if (totalServerPages > 0) {
+                (currentServerPage * 100 / totalServerPages).coerceAtMost(100)
             } else {
                 0
             }
         }
+    }
 
-        pageIndicator.text = "$progress%"
+    private fun findCurrentChapterIndex(): Int {
+        // 查找当前阅读位置对应的章节
+        for ((index, chapter) in chapterList.withIndex()) {
+            if (chapter.serverPage == currentServerPage && chapter.clientPage <= currentClientPage) {
+                return index
+            } else if (chapter.serverPage < currentServerPage) {
+                return index
+            }
+        }
+        return -1
     }
 
     private fun showPreviousPage() {
@@ -510,7 +567,7 @@ class TextPreviewActivity : AppCompatActivity() {
         statusLabel.isVisible = false
     }
 
-    // 章节跳转相关功能（保持不变）
+    // 章节跳转相关功能
     private fun showChapterDialog() {
         Log.d("TextPreview", "显示章节对话框，章节索引构建状态: $isChapterIndexBuilt")
 
@@ -711,6 +768,9 @@ class TextPreviewActivity : AppCompatActivity() {
         currentServerPage = chapter.serverPage
         currentClientPage = chapter.clientPage
         loadTextContent()
+
+        // 立即更新进度显示
+        updatePageIndicator()
 
         Toast.makeText(this, "跳转到: ${chapter.title}", Toast.LENGTH_SHORT).show()
         Log.d("TextPreview", "跳转到章节: ${chapter.title}, 服务器页: ${chapter.serverPage}, 客户端页: ${chapter.clientPage}")
