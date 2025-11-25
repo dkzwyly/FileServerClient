@@ -110,6 +110,10 @@ class TextPreviewActivity : AppCompatActivity() {
         pageIndicator.setBackgroundColor(Color.TRANSPARENT)
         pageIndicator.setTextColor(getColor(R.color.text_primary))
 
+        // 设置章节按钮为透明但保持可点击
+        chapterButton.setImageResource(android.R.color.transparent)
+        chapterButton.setBackgroundColor(Color.TRANSPARENT)
+
         // 设置章节按钮点击事件
         chapterButton.setOnClickListener {
             showChapterDialog()
