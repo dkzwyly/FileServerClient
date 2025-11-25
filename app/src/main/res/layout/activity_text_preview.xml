@@ -24,7 +24,21 @@
         android:fontFamily="monospace"
         android:scrollbars="none" />
 
-    <!-- 页面指示器 - 保持当前位置 -->
+    <!-- 章节跳转按钮 -->
+    <ImageButton
+        android:id="@+id/chapterButton"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_alignParentTop="true"
+        android:layout_alignParentRight="true"
+        android:layout_marginTop="8dp"
+        android:layout_marginRight="8dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:src="@android:drawable/ic_menu_sort_by_size"
+        android:contentDescription="章节跳转"
+        android:visibility="gone" />
+
+    <!-- 页面指示器 - 调整到真正的右下角 -->
     <TextView
         android:id="@+id/pageIndicator"
         android:layout_width="wrap_content"
@@ -48,6 +62,20 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_centerInParent="true" />
+
+    <!-- 状态标签 -->
+    <TextView
+        android:id="@+id/statusLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_above="@id/loadingProgress"
+        android:layout_centerHorizontal="true"
+        android:padding="16dp"
+        android:text="正在加载..."
+        android:textSize="14sp"
+        android:textColor="@color/text_secondary"
+        android:gravity="center"
+        android:visibility="gone" />
 
     <!-- 错误信息 -->
     <TextView
