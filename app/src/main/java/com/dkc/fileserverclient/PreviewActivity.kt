@@ -155,6 +155,10 @@ class PreviewActivity : AppCompatActivity() {
     private var currentDirectoryPath = ""
     private var autoPlayListener: Player.Listener? = null
 
+    // 控制栏显示状态
+    private var controlsVisible = true
+    private var controlsAutoHideEnabled = true
+
     // 缩放模式常量
     companion object {
         private const val NONE = 0
@@ -469,11 +473,19 @@ class PreviewActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(seekBar: SeekBar) {
                 // 停止进度更新，避免冲突
                 stopProgressUpdates()
+                // 暂停自动隐藏控制栏
+                controlsAutoHideEnabled = false
             }
 
             override fun onStopTrackingTouch(seekBar: SeekBar) {
                 // 重新开始进度更新
                 startProgressUpdates()
+                // 恢复自动隐藏控制栏
+                controlsAutoHideEnabled = true
+                // 如果正在播放，3秒后隐藏控制栏
+                if (isFullscreen && isPlaying) {
+                    handler.postDelayed({ hideControls() }, 3000)
+                }
             }
         })
     }
@@ -697,7 +709,7 @@ class PreviewActivity : AppCompatActivity() {
     }
 
     private fun toggleControlsVisibility() {
-        if (videoControls.visibility == View.VISIBLE) {
+        if (controlsVisible) {
             hideControls()
         } else {
             showControls()
@@ -706,16 +718,19 @@ class PreviewActivity : AppCompatActivity() {
 
     private fun showControls() {
         videoControls.visibility = View.VISIBLE
+        controlsVisible = true
+
         // 显示时重置自动隐藏计时器
         handler.removeCallbacks(hideControlsRunnable)
-        if (isFullscreen && isPlaying) {
+        if (isFullscreen && isPlaying && controlsAutoHideEnabled) {
             handler.postDelayed(hideControlsRunnable, 3000)
         }
     }
 
     private fun hideControls() {
-        if (isFullscreen) {
+        if (isFullscreen && controlsAutoHideEnabled) {
             videoControls.visibility = View.GONE
+            controlsVisible = false
         }
     }
 
@@ -1294,6 +1309,7 @@ class PreviewActivity : AppCompatActivity() {
 
         // 非全屏模式下显示控制栏
         videoControls.visibility = View.VISIBLE
+        controlsVisible = true
         handler.removeCallbacks(hideControlsRunnable)
     }
 
@@ -1325,11 +1341,8 @@ class PreviewActivity : AppCompatActivity() {
             // 全屏模式下：播放时自动隐藏控制栏，暂停时显示
             if (isPlaying) {
                 // 如果控制栏当前可见，3秒后隐藏
-                if (videoControls.visibility == View.VISIBLE) {
+                if (controlsVisible && controlsAutoHideEnabled) {
                     handler.postDelayed(hideControlsRunnable, 3000)
-                } else {
-                    // 如果控制栏不可见，保持隐藏状态
-                    handler.removeCallbacks(hideControlsRunnable)
                 }
             } else {
                 // 暂停时显示控制栏，不自动隐藏
@@ -1339,6 +1352,7 @@ class PreviewActivity : AppCompatActivity() {
         } else {
             // 非全屏模式下：始终显示控制栏
             videoControls.visibility = View.VISIBLE
+            controlsVisible = true
             handler.removeCallbacks(hideControlsRunnable)
         }
     }
