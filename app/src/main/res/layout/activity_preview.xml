@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000"
+    android:orientation="vertical">
+
+    <!-- 顶部标题栏 -->
+    <LinearLayout
+        android:id="@+id/titleBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#80000000"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center_vertical">
+
+        <Button
+            android:id="@+id/backButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="返回"
+            android:background="@android:color/transparent"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/fileNameTextView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="文件名"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:ellipsize="end"
+            android:singleLine="true" />
+
+        <Button
+            android:id="@+id/downloadButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="下载"
+            android:background="@android:color/transparent"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+    </LinearLayout>
+
+    <!-- 文件类型指示 -->
+    <TextView
+        android:id="@+id/fileTypeTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/titleBar"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="8dp"
+        android:text="文件类型"
+        android:textColor="#CCCCCC"
+        android:textSize="14sp"
+        android:background="#40000000"
+        android:padding="8dp"
+        android:visibility="gone" />
+
+    <!-- 图片预览容器 -->
+    <FrameLayout
+        android:id="@+id/imageContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/titleBar"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/imagePreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:contentDescription="图片预览" />
+
+        <ProgressBar
+            android:id="@+id/imageLoadingProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminate="true" />
+
+    </FrameLayout>
+
+    <!-- 视频预览容器 - 使用 ExoPlayer -->
+    <FrameLayout
+        android:id="@+id/videoContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/titleBar"
+        android:visibility="gone">
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/playerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#000000" />
+
+        <ProgressBar
+            android:id="@+id/videoLoadingProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminate="true" />
+
+        <!-- 底部控制栏 - 优化样式 -->
+        <LinearLayout
+            android:id="@+id/videoControls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="@drawable/control_bar_background"
+            android:orientation="horizontal"
+            android:paddingVertical="12dp"
+            android:paddingHorizontal="16dp"
+            android:gravity="center_vertical"
+            android:visibility="gone"
+            android:layout_marginBottom="8dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp">
+
+            <ImageButton
+                android:id="@+id/playPauseButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@android:drawable/ic_media_play"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="播放/暂停"
+                android:tint="#FFFFFF" />
+
+            <TextView
+                android:id="@+id/currentTimeTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0:00"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:layout_marginStart="12dp"
+                android:minWidth="36dp" />
+
+            <SeekBar
+                android:id="@+id/seekBar"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp" />
+
+            <TextView
+                android:id="@+id/durationTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0:00"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:minWidth="36dp" />
+
+            <ImageButton
+                android:id="@+id/fullscreenToggleButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/ic_fullscreen"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="全屏"
+                android:layout_marginStart="12dp"
+                android:tint="#FFFFFF" />
+
+        </LinearLayout>
+
+        <!-- 加速播放指示器 -->
+        <TextView
+            android:id="@+id/speedIndicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="2.0x"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:background="@drawable/speed_indicator_background"
+            android:padding="12dp"
+            android:visibility="gone"
+            android:elevation="4dp" />
+
+        <!-- 控制提示覆盖层 -->
+        <LinearLayout
+            android:id="@+id/controlContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="@drawable/control_overlay_background"
+            android:orientation="horizontal"
+            android:paddingVertical="12dp"
+            android:paddingHorizontal="16dp"
+            android:visibility="gone"
+            android:gravity="center_vertical"
+            android:elevation="8dp">
+
+            <ImageView
+                android:id="@+id/controlIcon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="8dp"
+                android:tint="#FFFFFF" />
+
+            <TextView
+                android:id="@+id/controlOverlay"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+    </FrameLayout>
+
+    <!-- 文本预览容器 -->
+    <FrameLayout
+        android:id="@+id/textContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/titleBar"
+        android:visibility="gone">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <TextView
+                android:id="@+id/textPreview"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="文本内容加载中..."
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:lineSpacingExtra="4dp"
+                android:padding="16dp"
+                android:textIsSelectable="true" />
+
+        </ScrollView>
+
+        <ProgressBar
+            android:id="@+id/textLoadingProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminate="true" />
+
+    </FrameLayout>
+
+    <!-- 通用预览容器（用于其他文件类型） -->
+    <FrameLayout
+        android:id="@+id/generalContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/titleBar"
+        android:visibility="gone">
+
+        <WebView
+            android:id="@+id/webViewPreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <ProgressBar
+            android:id="@+id/generalLoadingProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminate="true" />
+
+    </FrameLayout>
+
+    <!-- 错误提示 -->
+    <TextView
+        android:id="@+id/errorTextView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:text="预览加载失败"
+        android:textColor="#FF4444"
+        android:textSize="18sp"
+        android:gravity="center"
+        android:visibility="gone" />
+
+</RelativeLayout>
