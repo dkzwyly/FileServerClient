@@ -415,7 +415,7 @@ class PreviewActivity : AppCompatActivity() {
                                 playPauseButton.setImageResource(android.R.drawable.ic_media_play)
                                 this@PreviewActivity.isPlaying = false
                                 if (isFullscreen) {
-                                    showControls() // 播放结束时显示控制栏
+                                    showControlsPersistent() // 播放结束时显示控制栏
                                 }
 
                                 // 自动连播：播放结束后播放下一个
@@ -482,9 +482,9 @@ class PreviewActivity : AppCompatActivity() {
                 startProgressUpdates()
                 // 恢复自动隐藏控制栏
                 controlsAutoHideEnabled = true
-                // 如果正在播放，3秒后隐藏控制栏
+                // 如果正在播放，0.5秒后隐藏控制栏
                 if (isFullscreen && isPlaying) {
-                    handler.postDelayed({ hideControls() }, 3000)
+                    handler.postDelayed({ hideControls() }, 500)
                 }
             }
         })
@@ -568,8 +568,8 @@ class PreviewActivity : AppCompatActivity() {
                     if (tapCount == 1) {
                         doubleTapHandler.postDelayed({
                             if (tapCount == 1) {
-                                // 单机处理
-                                handlePlayerClick()
+                                // 单击处理
+                                handleSingleTap()
                                 tapCount = 0
                             }
                         }, tapTimeoutMillis)
@@ -588,7 +588,7 @@ class PreviewActivity : AppCompatActivity() {
 
                     // 更新当前系统音量状态
                     currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                    virtualVolume = currentVolume.toFloat() // 直接使用 0-15 的值
+                    virtualVolume = currentVolume.toFloat()
                     lastSystemVolume = currentVolume
 
                     // 开始长按检测
@@ -598,11 +598,6 @@ class PreviewActivity : AppCompatActivity() {
                         enableFastForward(true)
                     }
                     longPressHandler.postDelayed(longPressRunnable!!, 800)
-
-                    // 点击时显示控制栏
-                    if (isFullscreen) {
-                        showControls()
-                    }
                 }
 
                 MotionEvent.ACTION_MOVE -> {
@@ -621,13 +616,14 @@ class PreviewActivity : AppCompatActivity() {
                         // 确定滑动类型和区域（只确定一次）
                         if (swipeRegion == -1) {
                             if (abs(deltaX) > abs(deltaY) * 1.5) {
-                                // 水平滑动 - 进度控制（全屏任意位置）
+                                // 水平滑动 - 进度控制
                                 swipeRegion = 1
-                                showSwipeHint(1)
+                                // 水平滑动时显示控制栏
+                                showControlsTemporarily()
                             } else {
                                 // 垂直滑动 - 根据起始位置判断是亮度还是音量
                                 swipeRegion = if (startX < regionWidth) 0 else 2
-                                showSwipeHint(swipeRegion)
+                                // 垂直滑动时不显示控制栏
                             }
                         }
                     }
@@ -660,13 +656,9 @@ class PreviewActivity : AppCompatActivity() {
                         isLongPressDetected = false
                     }
 
-                    // 如果不是滑动，且移动距离很小，认为是点击
-                    if (!isSwiping) {
-                        val deltaX = abs(event.x - startX)
-                        val deltaY = abs(event.y - startY)
-                        if (deltaX < 10 && deltaY < 10) {
-                            // 点击事件已在双击检测中处理，这里不需要重复处理
-                        }
+                    // 如果是水平滑动结束，快速隐藏控制栏
+                    if (isSwiping && swipeRegion == 1) {
+                        handler.postDelayed({ hideControls() }, 500) // 0.5秒后隐藏
                     }
 
                     // 隐藏控制提示
@@ -681,22 +673,16 @@ class PreviewActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupClickGestures() {
-        // 为播放器视图添加单击监听器
-        playerView.setOnClickListener {
-            // 点击事件已在手势检测中处理，这里不需要重复处理
-        }
-
-        // 为控制栏添加点击监听器，防止事件冒泡
-        videoControls.setOnClickListener {
-            // 阻止事件传递到播放器视图
-        }
-    }
-
-    private fun handlePlayerClick() {
+    private fun handleSingleTap() {
         if (isFullscreen) {
             // 全屏模式下：切换控制栏可见性
-            toggleControlsVisibility()
+            if (controlsVisible) {
+                // 如果控制栏正在显示，单击隐藏
+                hideControls()
+            } else {
+                // 如果控制栏没有显示，单击显示并且不会自动隐藏
+                showControlsPersistent()
+            }
         } else {
             // 非全屏模式下：切换播放状态
             toggleVideoPlayback()
@@ -706,31 +692,47 @@ class PreviewActivity : AppCompatActivity() {
     private fun handleDoubleTapVideo() {
         // 视频双击处理：切换播放状态
         toggleVideoPlayback()
+        // 双击时不改变控制栏状态
+    }
+
+    private fun showControlsPersistent() {
+        videoControls.visibility = View.VISIBLE
+        controlsVisible = true
+        // 移除所有自动隐藏任务，保持显示状态
+        handler.removeCallbacks(hideControlsRunnable)
+    }
+
+    private fun showControlsTemporarily() {
+        videoControls.visibility = View.VISIBLE
+        controlsVisible = true
+        // 显示控制栏但不设置自动隐藏
+        // 水平滑动结束后会单独处理隐藏
+    }
+
+    private fun hideControls() {
+        if (isFullscreen) {
+            videoControls.visibility = View.GONE
+            controlsVisible = false
+        }
     }
 
     private fun toggleControlsVisibility() {
         if (controlsVisible) {
             hideControls()
         } else {
-            showControls()
+            showControlsPersistent()
         }
     }
 
-    private fun showControls() {
-        videoControls.visibility = View.VISIBLE
-        controlsVisible = true
-
-        // 显示时重置自动隐藏计时器
-        handler.removeCallbacks(hideControlsRunnable)
-        if (isFullscreen && isPlaying && controlsAutoHideEnabled) {
-            handler.postDelayed(hideControlsRunnable, 3000)
+    private fun setupClickGestures() {
+        // 为播放器视图添加单击监听器
+        playerView.setOnClickListener {
+            // 点击事件已在手势检测中处理，这里不需要重复处理
         }
-    }
 
-    private fun hideControls() {
-        if (isFullscreen && controlsAutoHideEnabled) {
-            videoControls.visibility = View.GONE
-            controlsVisible = false
+        // 为控制栏添加点击监听器，防止事件冒泡
+        videoControls.setOnClickListener {
+            // 阻止事件传递到播放器视图
         }
     }
 
@@ -1338,16 +1340,13 @@ class PreviewActivity : AppCompatActivity() {
     // 更新控制栏可见性
     private fun updateControlsVisibility() {
         if (isFullscreen) {
-            // 全屏模式下：播放时自动隐藏控制栏，暂停时显示
+            // 全屏模式下：播放时控制栏根据手势显示/隐藏，暂停时显示控制栏
             if (isPlaying) {
-                // 如果控制栏当前可见，3秒后隐藏
-                if (controlsVisible && controlsAutoHideEnabled) {
-                    handler.postDelayed(hideControlsRunnable, 3000)
-                }
+                // 播放时不自动显示控制栏，完全由手势控制
+                // 不执行任何操作，保持当前状态
             } else {
                 // 暂停时显示控制栏，不自动隐藏
-                showControls()
-                handler.removeCallbacks(hideControlsRunnable)
+                showControlsPersistent()
             }
         } else {
             // 非全屏模式下：始终显示控制栏
