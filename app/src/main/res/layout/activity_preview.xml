@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000"
@@ -108,13 +109,13 @@
             android:layout_gravity="center"
             android:indeterminate="true" />
 
-        <!-- 底部控制栏 - 优化样式 -->
+        <!-- 底部控制栏 - 完全透明背景 -->
         <LinearLayout
             android:id="@+id/videoControls"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
-            android:background="@drawable/control_bar_background"
+            android:background="#00000000"
             android:orientation="horizontal"
             android:paddingVertical="12dp"
             android:paddingHorizontal="16dp"
@@ -131,7 +132,7 @@
                 android:src="@android:drawable/ic_media_play"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="播放/暂停"
-                android:tint="#FFFFFF" />
+                app:tint="#FFFFFF" />
 
             <TextView
                 android:id="@+id/currentTimeTextView"
@@ -168,7 +169,7 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="全屏"
                 android:layout_marginStart="12dp"
-                android:tint="#FFFFFF" />
+                app:tint="#FFFFFF" />
 
         </LinearLayout>
 
@@ -181,7 +182,7 @@
             android:text="2.0x"
             android:textColor="#FFFFFF"
             android:textSize="20sp"
-            android:background="@drawable/speed_indicator_background"
+            android:background="#00000000"
             android:padding="12dp"
             android:visibility="gone"
             android:elevation="4dp" />
@@ -192,7 +193,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:background="@drawable/control_overlay_background"
+            android:background="#00000000"
             android:orientation="horizontal"
             android:paddingVertical="12dp"
             android:paddingHorizontal="16dp"
@@ -205,7 +206,7 @@
                 android:layout_width="20dp"
                 android:layout_height="20dp"
                 android:layout_marginEnd="8dp"
-                android:tint="#FFFFFF" />
+                app:tint="#FFFFFF" />
 
             <TextView
                 android:id="@+id/controlOverlay"
