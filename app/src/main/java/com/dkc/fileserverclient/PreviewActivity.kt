@@ -551,6 +551,24 @@ class PreviewActivity : AppCompatActivity() {
         playerView.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    // 双击检测
+                    tapCount++
+                    if (tapCount == 1) {
+                        doubleTapHandler.postDelayed({
+                            if (tapCount == 1) {
+                                // 单机处理
+                                handlePlayerClick()
+                                tapCount = 0
+                            }
+                        }, tapTimeoutMillis)
+                    } else if (tapCount == 2) {
+                        // 双击处理
+                        doubleTapHandler.removeCallbacksAndMessages(null)
+                        handleDoubleTapVideo()
+                        tapCount = 0
+                        return@setOnTouchListener true // 消耗双击事件
+                    }
+
                     startX = event.x
                     startY = event.y
                     isSwiping = false
@@ -582,6 +600,9 @@ class PreviewActivity : AppCompatActivity() {
                     // 检测滑动开始
                     if (!isSwiping && (abs(deltaX) > 30 || abs(deltaY) > 30)) {
                         isSwiping = true
+                        // 取消双击检测
+                        doubleTapHandler.removeCallbacksAndMessages(null)
+                        tapCount = 0
                         // 取消长按检测
                         longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
 
@@ -625,12 +646,14 @@ class PreviewActivity : AppCompatActivity() {
                         // 如果是长按后的松开，恢复速度
                         enableFastForward(false)
                         isLongPressDetected = false
-                    } else if (!isSwiping) {
-                        // 如果不是滑动，且移动距离很小，认为是点击
+                    }
+
+                    // 如果不是滑动，且移动距离很小，认为是点击
+                    if (!isSwiping) {
                         val deltaX = abs(event.x - startX)
                         val deltaY = abs(event.y - startY)
                         if (deltaX < 10 && deltaY < 10) {
-                            handlePlayerClick()
+                            // 点击事件已在双击检测中处理，这里不需要重复处理
                         }
                     }
 
@@ -649,7 +672,7 @@ class PreviewActivity : AppCompatActivity() {
     private fun setupClickGestures() {
         // 为播放器视图添加单击监听器
         playerView.setOnClickListener {
-            handlePlayerClick()
+            // 点击事件已在手势检测中处理，这里不需要重复处理
         }
 
         // 为控制栏添加点击监听器，防止事件冒泡
@@ -668,13 +691,16 @@ class PreviewActivity : AppCompatActivity() {
         }
     }
 
+    private fun handleDoubleTapVideo() {
+        // 视频双击处理：切换播放状态
+        toggleVideoPlayback()
+    }
+
     private fun toggleControlsVisibility() {
         if (videoControls.visibility == View.VISIBLE) {
             hideControls()
         } else {
             showControls()
-            // 3秒后自动隐藏
-            handler.postDelayed({ hideControls() }, 3000)
         }
     }
 
@@ -682,11 +708,13 @@ class PreviewActivity : AppCompatActivity() {
         videoControls.visibility = View.VISIBLE
         // 显示时重置自动隐藏计时器
         handler.removeCallbacks(hideControlsRunnable)
-        handler.postDelayed(hideControlsRunnable, 3000)
+        if (isFullscreen && isPlaying) {
+            handler.postDelayed(hideControlsRunnable, 3000)
+        }
     }
 
     private fun hideControls() {
-        if (isFullscreen && isPlaying) {
+        if (isFullscreen) {
             videoControls.visibility = View.GONE
         }
     }
@@ -1178,6 +1206,10 @@ class PreviewActivity : AppCompatActivity() {
 
         // 显示指定的容器
         container.visibility = View.VISIBLE
+
+        // 重置双击状态
+        tapCount = 0
+        doubleTapHandler.removeCallbacksAndMessages(null)
     }
 
     private fun showError(message: String) {
@@ -1274,6 +1306,7 @@ class PreviewActivity : AppCompatActivity() {
             }
             this@PreviewActivity.isPlaying = player.isPlaying
             updatePlayPauseButton()
+            updateControlsVisibility()
         }
     }
 
@@ -1291,9 +1324,17 @@ class PreviewActivity : AppCompatActivity() {
         if (isFullscreen) {
             // 全屏模式下：播放时自动隐藏控制栏，暂停时显示
             if (isPlaying) {
-                handler.postDelayed(hideControlsRunnable, 3000)
+                // 如果控制栏当前可见，3秒后隐藏
+                if (videoControls.visibility == View.VISIBLE) {
+                    handler.postDelayed(hideControlsRunnable, 3000)
+                } else {
+                    // 如果控制栏不可见，保持隐藏状态
+                    handler.removeCallbacks(hideControlsRunnable)
+                }
             } else {
+                // 暂停时显示控制栏，不自动隐藏
                 showControls()
+                handler.removeCallbacks(hideControlsRunnable)
             }
         } else {
             // 非全屏模式下：始终显示控制栏
