@@ -19,6 +19,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -135,6 +136,9 @@ class PreviewActivity : AppCompatActivity() {
     private lateinit var controlContainer: LinearLayout
     private val hideControlRunnable = Runnable { hideControlOverlay() }
 
+    // 控制栏自动隐藏
+    private val hideControlsRunnable = Runnable { hideControls() }
+
     // 进度控制相关
     private var progressSensitivity = 0.5f // 进度控制灵敏度
     private var volumeSensitivity = 1.2f // 音量控制灵敏度
@@ -142,6 +146,14 @@ class PreviewActivity : AppCompatActivity() {
     // 音量控制相关变量
     private var virtualVolume = 7.5f // 虚拟连续音量值 (0.0-15.0)
     private var lastSystemVolume = 0 // 上次设置的系统音量
+
+    // 自动连播相关变量
+    private var autoPlayEnabled = false
+    private var mediaFileList: ArrayList<FileSystemItem>? = null
+    private var currentMediaIndex = -1
+    private var currentServerUrl = ""
+    private var currentDirectoryPath = ""
+    private var autoPlayListener: Player.Listener? = null
 
     // 缩放模式常量
     companion object {
@@ -159,9 +171,28 @@ class PreviewActivity : AppCompatActivity() {
         setupIntentData()
         setupEventListeners()
         setupGestureDetectors()
+        setupClickGestures()
         setupImageZoom()
         setupAudioManager()
         loadPreview()
+
+        // 获取自动连播相关参数
+        autoPlayEnabled = intent.getBooleanExtra("AUTO_PLAY_ENABLED", false)
+        mediaFileList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableArrayListExtra("MEDIA_FILE_LIST", FileSystemItem::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableArrayListExtra("MEDIA_FILE_LIST")
+        }
+        currentMediaIndex = intent.getIntExtra("CURRENT_INDEX", -1)
+        currentServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
+        currentDirectoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
+
+        // 设置自动连播监听
+        if (autoPlayEnabled && mediaFileList != null && currentMediaIndex != -1) {
+            setupAutoPlayListener()
+            addAutoPlayControls()
+        }
     }
 
     private fun initViews() {
@@ -379,6 +410,16 @@ class PreviewActivity : AppCompatActivity() {
                             Player.STATE_ENDED -> {
                                 playPauseButton.setImageResource(android.R.drawable.ic_media_play)
                                 this@PreviewActivity.isPlaying = false
+                                if (isFullscreen) {
+                                    showControls() // 播放结束时显示控制栏
+                                }
+
+                                // 自动连播：播放结束后播放下一个
+                                if (autoPlayEnabled && this@apply.isPlaying) {
+                                    handler.postDelayed({
+                                        playNextMedia()
+                                    }, 1000) // 延迟1秒后播放下一个
+                                }
                             }
                         }
                     }
@@ -386,11 +427,19 @@ class PreviewActivity : AppCompatActivity() {
                     override fun onPlayerError(error: PlaybackException) {
                         videoLoadingProgress.visibility = View.GONE
                         showError("播放错误: ${error.message}")
+
+                        // 自动连播：播放错误时也尝试播放下一个
+                        if (autoPlayEnabled) {
+                            handler.postDelayed({
+                                playNextMedia()
+                            }, 2000)
+                        }
                     }
 
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         this@PreviewActivity.isPlaying = isPlaying
                         updatePlayPauseButton()
+                        updateControlsVisibility() // 播放状态变化时更新控制栏
                     }
                 })
             }
@@ -519,6 +568,11 @@ class PreviewActivity : AppCompatActivity() {
                         enableFastForward(true)
                     }
                     longPressHandler.postDelayed(longPressRunnable!!, 800)
+
+                    // 点击时显示控制栏
+                    if (isFullscreen) {
+                        showControls()
+                    }
                 }
 
                 MotionEvent.ACTION_MOVE -> {
@@ -572,8 +626,12 @@ class PreviewActivity : AppCompatActivity() {
                         enableFastForward(false)
                         isLongPressDetected = false
                     } else if (!isSwiping) {
-                        // 如果不是滑动，处理点击事件
-                        handlePlayerTap()
+                        // 如果不是滑动，且移动距离很小，认为是点击
+                        val deltaX = abs(event.x - startX)
+                        val deltaY = abs(event.y - startY)
+                        if (deltaX < 10 && deltaY < 10) {
+                            handlePlayerClick()
+                        }
                     }
 
                     // 隐藏控制提示
@@ -585,6 +643,51 @@ class PreviewActivity : AppCompatActivity() {
                 }
             }
             true
+        }
+    }
+
+    private fun setupClickGestures() {
+        // 为播放器视图添加单击监听器
+        playerView.setOnClickListener {
+            handlePlayerClick()
+        }
+
+        // 为控制栏添加点击监听器，防止事件冒泡
+        videoControls.setOnClickListener {
+            // 阻止事件传递到播放器视图
+        }
+    }
+
+    private fun handlePlayerClick() {
+        if (isFullscreen) {
+            // 全屏模式下：切换控制栏可见性
+            toggleControlsVisibility()
+        } else {
+            // 非全屏模式下：切换播放状态
+            toggleVideoPlayback()
+        }
+    }
+
+    private fun toggleControlsVisibility() {
+        if (videoControls.visibility == View.VISIBLE) {
+            hideControls()
+        } else {
+            showControls()
+            // 3秒后自动隐藏
+            handler.postDelayed({ hideControls() }, 3000)
+        }
+    }
+
+    private fun showControls() {
+        videoControls.visibility = View.VISIBLE
+        // 显示时重置自动隐藏计时器
+        handler.removeCallbacks(hideControlsRunnable)
+        handler.postDelayed(hideControlsRunnable, 3000)
+    }
+
+    private fun hideControls() {
+        if (isFullscreen && isPlaying) {
+            videoControls.visibility = View.GONE
         }
     }
 
@@ -717,25 +820,6 @@ class PreviewActivity : AppCompatActivity() {
         }
     }
 
-    private fun handlePlayerTap() {
-        tapCount++
-
-        if (tapCount == 1) {
-            // 第一次点击
-            doubleTapHandler.postDelayed({
-                if (tapCount == 1) {
-                    // 这是单击，不是双击 - 不执行任何操作
-                    tapCount = 0
-                }
-            }, tapTimeoutMillis)
-        } else if (tapCount == 2) {
-            // 第二次点击 - 双击
-            doubleTapHandler.removeCallbacksAndMessages(null)
-            toggleVideoPlayback()
-            tapCount = 0
-        }
-    }
-
     private fun enableFastForward(enable: Boolean) {
         exoPlayer?.let { player ->
             if (enable) {
@@ -755,6 +839,135 @@ class PreviewActivity : AppCompatActivity() {
                 isFastForwarding = false
                 speedIndicator.visibility = View.GONE
             }
+        }
+    }
+
+    // 自动连播相关方法
+    private fun setupAutoPlayListener() {
+        autoPlayListener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED && autoPlayEnabled) {
+                    handler.postDelayed({
+                        playNextMedia()
+                    }, 1000) // 延迟1秒后播放下一个
+                }
+            }
+        }
+        exoPlayer?.addListener(autoPlayListener!!)
+
+        // 显示自动连播提示
+        showToast("自动连播已启用 (${currentMediaIndex + 1}/${mediaFileList?.size ?: 0})")
+    }
+
+    private fun addAutoPlayControls() {
+        // 在控制栏添加上一个/下一个按钮
+        val previousButton = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_media_previous)
+            setBackgroundResource(R.drawable.selectable_item_background)
+            setOnClickListener {
+                playPreviousMedia()
+            }
+            contentDescription = "上一个"
+        }
+
+        val nextButton = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_media_next)
+            setBackgroundResource(R.drawable.selectable_item_background)
+            setOnClickListener {
+                playNextMedia()
+            }
+            contentDescription = "下一个"
+        }
+
+        // 在播放/暂停按钮旁边添加上一个/下一个按钮
+        val params = LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx())
+        params.gravity = android.view.Gravity.CENTER_VERTICAL
+
+        // 找到播放/暂停按钮的位置并插入
+        val playPauseIndex = videoControls.indexOfChild(playPauseButton)
+        videoControls.addView(previousButton, playPauseIndex, params)
+        videoControls.addView(nextButton, playPauseIndex + 2, params) // +2 因为已经插入了一个按钮
+    }
+
+    private fun Int.dpToPx(): Int {
+        return (this * resources.displayMetrics.density).toInt()
+    }
+
+    private fun playNextMedia() {
+        if (!autoPlayEnabled || mediaFileList == null) return
+
+        val nextIndex = currentMediaIndex + 1
+        if (nextIndex < mediaFileList!!.size) {
+            val nextItem = mediaFileList!![nextIndex]
+            loadMediaFile(nextItem, nextIndex)
+        } else {
+            // 已经是最后一个，显示提示
+            showToast("已经是最后一个文件")
+            // 可以选择循环播放
+            // loadMediaFile(mediaFileList!![0], 0)
+        }
+    }
+
+    private fun playPreviousMedia() {
+        if (!autoPlayEnabled || mediaFileList == null) return
+
+        val prevIndex = currentMediaIndex - 1
+        if (prevIndex >= 0) {
+            val prevItem = mediaFileList!![prevIndex]
+            loadMediaFile(prevItem, prevIndex)
+        } else {
+            showToast("已经是第一个文件")
+        }
+    }
+
+    private fun loadMediaFile(item: FileSystemItem, index: Int) {
+        try {
+            val fileType = getFileType(item)
+            val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
+            val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+
+            // 更新当前文件信息
+            currentFileName = item.name
+            currentFileUrl = fileUrl
+            currentFileType = fileType
+            currentMediaIndex = index
+
+            // 更新UI
+            fileNameTextView.text = currentFileName
+            fileTypeTextView.text = when (currentFileType) {
+                "image" -> "图片"
+                "video" -> "视频"
+                "text" -> "文本"
+                "audio" -> "音频"
+                else -> "文件"
+            }
+
+            // 重新加载预览
+            loadPreview()
+
+            // 显示提示
+            showToast("正在播放: ${item.name} (${index + 1}/${mediaFileList!!.size})")
+
+        } catch (e: Exception) {
+            Log.e("PreviewActivity", "加载媒体文件失败", e)
+            showToast("加载失败: ${e.message}")
+            // 加载失败时尝试播放下一个
+            if (autoPlayEnabled) {
+                handler.postDelayed({
+                    playNextMedia()
+                }, 2000)
+            }
+        }
+    }
+
+    private fun getFileType(item: FileSystemItem): String {
+        return when {
+            item.isVideo -> "video"
+            item.isAudio -> "audio"
+            item.extension in listOf(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp") -> "image"
+            item.extension in listOf(".txt", ".log", ".json", ".xml", ".csv", ".md",
+                ".html", ".htm", ".css", ".js", ".java", ".kt", ".py") -> "text"
+            else -> "general"
         }
     }
 
@@ -1015,7 +1228,7 @@ class PreviewActivity : AppCompatActivity() {
         // 更新全屏按钮图标
         fullscreenToggleButton.setImageResource(R.drawable.ic_fullscreen_exit)
 
-        // 全屏模式下隐藏控制栏
+        // 全屏模式下更新控制栏可见性
         updateControlsVisibility()
     }
 
@@ -1048,7 +1261,8 @@ class PreviewActivity : AppCompatActivity() {
         fullscreenToggleButton.setImageResource(R.drawable.ic_fullscreen)
 
         // 非全屏模式下显示控制栏
-        updateControlsVisibility()
+        videoControls.visibility = View.VISIBLE
+        handler.removeCallbacks(hideControlsRunnable)
     }
 
     private fun toggleVideoPlayback() {
@@ -1075,11 +1289,16 @@ class PreviewActivity : AppCompatActivity() {
     // 更新控制栏可见性
     private fun updateControlsVisibility() {
         if (isFullscreen) {
-            // 全屏模式下隐藏控制栏
-            videoControls.visibility = View.GONE
+            // 全屏模式下：播放时自动隐藏控制栏，暂停时显示
+            if (isPlaying) {
+                handler.postDelayed(hideControlsRunnable, 3000)
+            } else {
+                showControls()
+            }
         } else {
-            // 非全屏模式下显示控制栏
+            // 非全屏模式下：始终显示控制栏
             videoControls.visibility = View.VISIBLE
+            handler.removeCallbacks(hideControlsRunnable)
         }
     }
 
@@ -1090,7 +1309,15 @@ class PreviewActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
+    // 在返回时通知FileListActivity
     override fun onBackPressed() {
+        val resultIntent = Intent().apply {
+            if (autoPlayEnabled) {
+                putExtra("ACTION", "EXIT_AUTO_PLAY")
+            }
+        }
+        setResult(RESULT_OK, resultIntent)
+
         if (isFullscreen) {
             exitFullscreen()
         } else {
@@ -1108,6 +1335,8 @@ class PreviewActivity : AppCompatActivity() {
         // 隐藏控制覆盖层
         handler.removeCallbacks(hideControlRunnable)
         hideControlOverlay()
+        // 清理控制栏自动隐藏
+        handler.removeCallbacks(hideControlsRunnable)
     }
 
     override fun onResume() {
@@ -1126,9 +1355,19 @@ class PreviewActivity : AppCompatActivity() {
         doubleTapHandler.removeCallbacksAndMessages(null)
         longPressHandler.removeCallbacksAndMessages(null)
         handler.removeCallbacks(hideControlRunnable)
+        handler.removeCallbacks(hideControlsRunnable)
+
+        // 移除自动连播监听器
+        autoPlayListener?.let { listener ->
+            exoPlayer?.removeListener(listener)
+        }
 
         // 释放播放器资源
         exoPlayer?.release()
         exoPlayer = null
+    }
+
+    private fun showToast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 }

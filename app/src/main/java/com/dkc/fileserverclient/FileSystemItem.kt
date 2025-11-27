@@ -1,7 +1,10 @@
 package com.dkc.fileserverclient
 
+import android.os.Parcelable
 import com.google.gson.annotations.SerializedName
+import kotlinx.parcelize.Parcelize
 
+@Parcelize
 data class FileSystemItem(
     @SerializedName("name") val name: String = "",
     @SerializedName("path") val path: String = "",
@@ -14,7 +17,7 @@ data class FileSystemItem(
     @SerializedName("mimeType") val mimeType: String = "",
     @SerializedName("encoding") val encoding: String = "",
     @SerializedName("hasThumbnail") val hasThumbnail: Boolean = false
-) {
+) : Parcelable {
     // 修复：更严格的文件夹判断
     val isDirectory: Boolean
         get() = mimeType == "inode/directory" || (size == 0L && extension.isEmpty() && !isImage)
@@ -39,18 +42,21 @@ data class FileSystemItem(
         }
 }
 
+@Parcelize
 data class ApiListResponse(
     @SerializedName("currentPath") val currentPath: String = "",
     @SerializedName("parentPath") val parentPath: String = "",
     @SerializedName("directories") val directories: List<DirectoryInfo> = emptyList(),
     @SerializedName("files") val files: List<FileInfoResponse> = emptyList()
-)
+) : Parcelable
 
+@Parcelize
 data class DirectoryInfo(
     @SerializedName("name") val name: String = "",
     @SerializedName("path") val path: String = ""
-)
+) : Parcelable
 
+@Parcelize
 data class FileInfoResponse(
     @SerializedName("name") val name: String = "",
     @SerializedName("path") val path: String = "",
@@ -62,12 +68,13 @@ data class FileInfoResponse(
     @SerializedName("isAudio") val isAudio: Boolean = false,
     @SerializedName("mimeType") val mimeType: String = "",
     @SerializedName("encoding") val encoding: String = ""
-)
+) : Parcelable
 
+@Parcelize
 data class UploadResult(
     @SerializedName("success") val success: Boolean = false,
     @SerializedName("message") val message: String = "",
     @SerializedName("files") val files: List<String> = emptyList(),
     @SerializedName("totalSize") val totalSize: Long = 0,
     @SerializedName("totalSizeFormatted") val totalSizeFormatted: String = ""
-)
+) : Parcelable

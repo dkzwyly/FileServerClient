@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    // 移除 kotlin-kapt，因为我们不使用 Glide
+    id("kotlin-parcelize")
 }
 
 android {

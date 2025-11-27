@@ -45,8 +45,14 @@ class FileListActivity : AppCompatActivity() {
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private lateinit var adapter: FileListAdapter
 
+    // 自动连播相关变量
+    private var autoPlayEnabled = false
+    private var currentPlayingIndex = -1
+    private var mediaFileList = mutableListOf<FileSystemItem>()
+
     companion object {
         private const val PICK_FILES_REQUEST = 1001
+        private const val REQUEST_PREVIEW = 1002
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -153,6 +159,9 @@ class FileListActivity : AppCompatActivity() {
                 } else {
                     "当前路径: $path - ${items.size} 个项目"
                 }
+
+                // 重置自动连播状态
+                resetAutoPlay()
 
                 Log.d("FileListActivity", "加载目录完成: path=$path, items=${items.size}")
             } catch (e: Exception) {
@@ -261,12 +270,20 @@ class FileListActivity : AppCompatActivity() {
         fileCountText.text = "${filteredList.size} 个搜索结果"
 
         statusLabel.text = "搜索 '${query}': 找到 ${filteredList.size} 个结果"
-    }
 
+        // 重置自动连播状态
+        resetAutoPlay()
+    }
 
     private fun previewFile(item: FileSystemItem) {
         try {
             val fileType = getFileType(item)
+
+            // 如果是媒体文件，设置自动连播
+            if (fileType == "video" || fileType == "audio") {
+                setupAutoPlay(item)
+            }
+
             val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
             val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
 
@@ -276,11 +293,87 @@ class FileListActivity : AppCompatActivity() {
                 putExtra("FILE_NAME", item.name)
                 putExtra("FILE_URL", fileUrl)
                 putExtra("FILE_TYPE", fileType)
+                putExtra("AUTO_PLAY_ENABLED", autoPlayEnabled)
+                putExtra("MEDIA_FILE_LIST", ArrayList(mediaFileList))
+                putExtra("CURRENT_INDEX", currentPlayingIndex)
+                putExtra("SERVER_URL", currentServerUrl)
+                putExtra("CURRENT_PATH", currentPath)
             }
-            startActivity(intent)
+            startActivityForResult(intent, REQUEST_PREVIEW)
         } catch (e: Exception) {
             Log.e("FileListActivity", "预览文件失败", e)
             showToast("预览失败: ${e.message}")
+        }
+    }
+
+    // 设置自动连播
+    private fun setupAutoPlay(selectedItem: FileSystemItem) {
+        // 获取当前目录下的所有媒体文件
+        mediaFileList.clear()
+        mediaFileList.addAll(fileList.filter { item ->
+            !item.isDirectory && (getFileType(item) == "video" || getFileType(item) == "audio")
+        })
+
+        if (mediaFileList.isNotEmpty()) {
+            // 找到当前点击的文件在列表中的位置
+            currentPlayingIndex = mediaFileList.indexOfFirst { it.path == selectedItem.path }
+            if (currentPlayingIndex == -1) {
+                // 如果没找到，添加到列表开始
+                mediaFileList.add(0, selectedItem)
+                currentPlayingIndex = 0
+            }
+            autoPlayEnabled = true
+
+            Log.d("AutoPlay", "自动连播设置: 共 ${mediaFileList.size} 个媒体文件, 当前索引: $currentPlayingIndex")
+        } else {
+            autoPlayEnabled = false
+            currentPlayingIndex = -1
+        }
+    }
+
+    // 重置自动连播状态
+    private fun resetAutoPlay() {
+        autoPlayEnabled = false
+        currentPlayingIndex = -1
+        mediaFileList.clear()
+    }
+
+    // 播放下一个媒体文件
+    private fun playNextMedia() {
+        if (mediaFileList.isEmpty() || currentPlayingIndex == -1) {
+            return
+        }
+
+        val nextIndex = currentPlayingIndex + 1
+        if (nextIndex < mediaFileList.size) {
+            val nextItem = mediaFileList[nextIndex]
+            currentPlayingIndex = nextIndex
+            previewFile(nextItem)
+
+            Log.d("AutoPlay", "自动播放下一个: ${nextItem.name}, 索引: $nextIndex")
+        } else {
+            // 已经是最后一个文件
+            showToast("已经是最后一个文件")
+            resetAutoPlay()
+        }
+    }
+
+    // 播放上一个媒体文件
+    private fun playPreviousMedia() {
+        if (mediaFileList.isEmpty() || currentPlayingIndex == -1) {
+            return
+        }
+
+        val prevIndex = currentPlayingIndex - 1
+        if (prevIndex >= 0) {
+            val prevItem = mediaFileList[prevIndex]
+            currentPlayingIndex = prevIndex
+            previewFile(prevItem)
+
+            Log.d("AutoPlay", "自动播放上一个: ${prevItem.name}, 索引: $prevIndex")
+        } else {
+            // 已经是第一个文件
+            showToast("已经是第一个文件")
         }
     }
 
@@ -335,6 +428,34 @@ class FileListActivity : AppCompatActivity() {
                 }
                 statusLabel.text = "文件选择完成"
             }
+        } else if (requestCode == REQUEST_PREVIEW && resultCode == Activity.RESULT_OK) {
+            // 处理从PreviewActivity返回的结果
+            handlePreviewResult(data)
+        }
+    }
+
+    // 处理预览结果
+    private fun handlePreviewResult(data: Intent?) {
+        data?.let { intent ->
+            when (intent.getStringExtra("ACTION")) {
+                "PLAY_NEXT" -> {
+                    // 播放下一个
+                    playNextMedia()
+                }
+                "PLAY_PREVIOUS" -> {
+                    // 播放上一个
+                    playPreviousMedia()
+                }
+                "REFRESH_LIST" -> {
+                    // 刷新文件列表
+                    loadCurrentDirectory(currentPath)
+                }
+                "EXIT_AUTO_PLAY" -> {
+                    // 退出自动连播
+                    resetAutoPlay()
+                    showToast("已退出自动连播")
+                }
+            }
         }
     }
 
@@ -386,6 +507,16 @@ class FileListActivity : AppCompatActivity() {
                 if (result) {
                     showToast("文件删除成功")
                     loadCurrentDirectory(currentPath) // 刷新列表
+
+                    // 如果删除的是当前播放的媒体文件，更新自动连播状态
+                    if (autoPlayEnabled && mediaFileList.any { it.path == item.path }) {
+                        mediaFileList.removeAll { it.path == item.path }
+                        if (mediaFileList.isEmpty()) {
+                            resetAutoPlay()
+                        } else if (currentPlayingIndex >= mediaFileList.size) {
+                            currentPlayingIndex = mediaFileList.size - 1
+                        }
+                    }
                 } else {
                     showToast("删除失败")
                 }
