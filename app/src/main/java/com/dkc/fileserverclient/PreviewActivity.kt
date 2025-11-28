@@ -568,8 +568,10 @@ class PreviewActivity : AppCompatActivity() {
                     if (tapCount == 1) {
                         doubleTapHandler.postDelayed({
                             if (tapCount == 1) {
-                                // 单击处理
-                                handleSingleTap()
+                                // 单击处理 - 只有在非长按状态下才处理
+                                if (!isLongPressDetected) {
+                                    handleSingleTap()
+                                }
                                 tapCount = 0
                             }
                         }, tapTimeoutMillis)
@@ -595,6 +597,8 @@ class PreviewActivity : AppCompatActivity() {
                     isLongPressDetected = false
                     longPressRunnable = Runnable {
                         isLongPressDetected = true
+                        // 长按时立即隐藏控制栏
+                        hideControls()
                         enableFastForward(true)
                     }
                     longPressHandler.postDelayed(longPressRunnable!!, 800)
@@ -654,11 +658,14 @@ class PreviewActivity : AppCompatActivity() {
                         // 如果是长按后的松开，恢复速度
                         enableFastForward(false)
                         isLongPressDetected = false
-                    }
-
-                    // 如果是水平滑动结束，快速隐藏控制栏
-                    if (isSwiping && swipeRegion == 1) {
-                        handler.postDelayed({ hideControls() }, 500) // 0.5秒后隐藏
+                        // 长按结束后不显示控制栏，保持隐藏状态
+                    } else {
+                        // 如果不是长按，正常处理控制栏显示
+                        if (isSwiping && swipeRegion == 1) {
+                            handler.postDelayed({ hideControls() }, 500) // 0.5秒后隐藏
+                        } else if (!isSwiping) {
+                            // 非滑动情况，正常处理单击
+                        }
                     }
 
                     // 隐藏控制提示
