@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -98,7 +99,12 @@ class PreviewActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val updateProgressRunnable = Runnable { updateProgress() }
 
-    // 手势检测
+    // 手势检测 - 使用 GestureDetector
+    private lateinit var gestureDetector: GestureDetector
+    private var isGestureHandling = false
+    private var lastMoveX = 0f
+    private var lastMoveY = 0f
+
     private var tapCount = 0
     private val tapTimeoutMillis = 300L
     private val doubleTapHandler = Handler(Looper.getMainLooper())
@@ -172,10 +178,9 @@ class PreviewActivity : AppCompatActivity() {
         setContentView(R.layout.activity_preview)
 
         initViews()
+        setupGestureDetector() // 初始化手势检测器
         setupIntentData()
         setupEventListeners()
-        setupGestureDetectors()
-        setupClickGestures()
         setupImageZoom()
         setupAudioManager()
         loadPreview()
@@ -197,6 +202,65 @@ class PreviewActivity : AppCompatActivity() {
             setupAutoPlayListener()
             addAutoPlayControls()
         }
+    }
+
+    private fun setupGestureDetector() {
+        gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean {
+                // 返回true表示要处理后续事件
+                return true
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                // 确认的单击（不是双击的一部分）
+                if (!isLongPressDetected && !isSwiping && !isGestureHandling) {
+                    handleSingleTap()
+                }
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                // 双击事件
+                if (!isLongPressDetected && !isSwiping && !isGestureHandling) {
+                    handleDoubleTapVideo()
+                }
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                // 长按事件
+                if (!isSwiping && !isGestureHandling) {
+                    handleLongPress()
+                }
+            }
+
+            override fun onScroll(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                distanceX: Float,
+                distanceY: Float
+            ): Boolean {
+                // 滑动事件 - 这里我们主要用来自定义滑动处理
+                if (!isLongPressDetected) {
+                    handleScrollGesture(distanceX, distanceY, e2.x, e2.y)
+                }
+                return true
+            }
+        })
+
+        // 启用长按检测
+        gestureDetector.setIsLongpressEnabled(true)
+    }
+
+    private fun handleScrollGesture(distanceX: Float, distanceY: Float, currentX: Float, currentY: Float) {
+        // 这个方法由GestureDetector的onScroll调用
+        // 但我们主要使用自定义的滑动处理，所以这里可以留空或用于特殊处理
+    }
+
+    private fun handleLongPress() {
+        isLongPressDetected = true
+        hideControls() // 长按时立即隐藏控制栏
+        enableFastForward(true)
     }
 
     private fun initViews() {
@@ -244,6 +308,8 @@ class PreviewActivity : AppCompatActivity() {
         initializePlayer()
         // 初始化进度条
         setupSeekBar()
+        // 初始化手势检测
+        setupGestureDetectors()
 
         // 初始状态：非全屏模式下控制栏始终显示
         updateControlsVisibility()
@@ -561,73 +627,47 @@ class PreviewActivity : AppCompatActivity() {
     @SuppressLint("ClickableViewAccessibility")
     private fun setupGestureDetectors() {
         playerView.setOnTouchListener { _, event ->
+            // 先传递给 GestureDetector
+            val handledByGesture = gestureDetector.onTouchEvent(event)
+
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    // 双击检测
-                    tapCount++
-                    if (tapCount == 1) {
-                        doubleTapHandler.postDelayed({
-                            if (tapCount == 1) {
-                                // 单击处理 - 只有在非长按状态下才处理
-                                if (!isLongPressDetected) {
-                                    handleSingleTap()
-                                }
-                                tapCount = 0
-                            }
-                        }, tapTimeoutMillis)
-                    } else if (tapCount == 2) {
-                        // 双击处理
-                        doubleTapHandler.removeCallbacksAndMessages(null)
-                        handleDoubleTapVideo()
-                        tapCount = 0
-                        return@setOnTouchListener true // 消耗双击事件
-                    }
-
+                    isGestureHandling = false
                     startX = event.x
                     startY = event.y
+                    lastMoveX = event.x
+                    lastMoveY = event.y
                     isSwiping = false
-                    swipeRegion = -1 // 重置滑动区域
+                    swipeRegion = -1
 
                     // 更新当前系统音量状态
                     currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                     virtualVolume = currentVolume.toFloat()
                     lastSystemVolume = currentVolume
 
-                    // 开始长按检测
-                    isLongPressDetected = false
-                    longPressRunnable = Runnable {
-                        isLongPressDetected = true
-                        // 长按时立即隐藏控制栏
-                        hideControls()
-                        enableFastForward(true)
-                    }
-                    longPressHandler.postDelayed(longPressRunnable!!, 800)
+                    // 取消所有延迟任务
+                    doubleTapHandler.removeCallbacksAndMessages(null)
+                    longPressHandler.removeCallbacksAndMessages(null)
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    val deltaX = event.x - startX
-                    val deltaY = event.y - startY
+                    val deltaX = event.x - lastMoveX
+                    val deltaY = event.y - lastMoveY
 
                     // 检测滑动开始
-                    if (!isSwiping && (abs(deltaX) > 30 || abs(deltaY) > 30)) {
+                    if (!isSwiping && (abs(deltaX) > 5 || abs(deltaY) > 5)) {
                         isSwiping = true
-                        // 取消双击检测
-                        doubleTapHandler.removeCallbacksAndMessages(null)
-                        tapCount = 0
-                        // 取消长按检测
-                        longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
+                        isGestureHandling = true
 
                         // 确定滑动类型和区域（只确定一次）
                         if (swipeRegion == -1) {
                             if (abs(deltaX) > abs(deltaY) * 1.5) {
                                 // 水平滑动 - 进度控制
                                 swipeRegion = 1
-                                // 水平滑动时显示控制栏
                                 showControlsTemporarily()
                             } else {
                                 // 垂直滑动 - 根据起始位置判断是亮度还是音量
                                 swipeRegion = if (startX < regionWidth) 0 else 2
-                                // 垂直滑动时不显示控制栏
                             }
                         }
                     }
@@ -644,28 +684,22 @@ class PreviewActivity : AppCompatActivity() {
                                 handleVolumeControl(deltaY)
                             }
                         }
-                        // 更新起始位置以实现连续滑动
-                        startX = event.x
-                        startY = event.y
                     }
+
+                    lastMoveX = event.x
+                    lastMoveY = event.y
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    // 取消长按检测
-                    longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
-
                     if (isLongPressDetected) {
                         // 如果是长按后的松开，恢复速度
                         enableFastForward(false)
                         isLongPressDetected = false
-                        // 长按结束后不显示控制栏，保持隐藏状态
-                    } else {
-                        // 如果不是长按，正常处理控制栏显示
-                        if (isSwiping && swipeRegion == 1) {
-                            handler.postDelayed({ hideControls() }, 500) // 0.5秒后隐藏
-                        } else if (!isSwiping) {
-                            // 非滑动情况，正常处理单击
-                        }
+                    }
+
+                    // 如果是水平滑动结束，快速隐藏控制栏
+                    if (isSwiping && swipeRegion == 1) {
+                        handler.postDelayed({ hideControls() }, 500)
                     }
 
                     // 隐藏控制提示
@@ -673,7 +707,9 @@ class PreviewActivity : AppCompatActivity() {
 
                     // 重置状态
                     isSwiping = false
+                    isGestureHandling = false
                     swipeRegion = -1
+                    volumeChangeAccumulator = 0f // 重置音量累计器
                 }
             }
             true
@@ -681,13 +717,16 @@ class PreviewActivity : AppCompatActivity() {
     }
 
     private fun handleSingleTap() {
+        // 如果处于长按状态或滑动状态，不处理单击事件
+        if (isLongPressDetected || isSwiping || isGestureHandling) {
+            return
+        }
+
         if (isFullscreen) {
             // 全屏模式下：切换控制栏可见性
             if (controlsVisible) {
-                // 如果控制栏正在显示，单击隐藏
                 hideControls()
             } else {
-                // 如果控制栏没有显示，单击显示并且不会自动隐藏
                 showControlsPersistent()
             }
         } else {
@@ -697,12 +736,21 @@ class PreviewActivity : AppCompatActivity() {
     }
 
     private fun handleDoubleTapVideo() {
+        // 如果处于长按状态或滑动状态，不处理双击事件
+        if (isLongPressDetected || isSwiping || isGestureHandling) {
+            return
+        }
+
         // 视频双击处理：切换播放状态
         toggleVideoPlayback()
-        // 双击时不改变控制栏状态
     }
 
     private fun showControlsPersistent() {
+        // 如果处于长按状态，不显示控制栏
+        if (isLongPressDetected) {
+            return
+        }
+
         videoControls.visibility = View.VISIBLE
         controlsVisible = true
         // 移除所有自动隐藏任务，保持显示状态
@@ -710,10 +758,14 @@ class PreviewActivity : AppCompatActivity() {
     }
 
     private fun showControlsTemporarily() {
+        // 如果处于长按状态，不显示控制栏
+        if (isLongPressDetected) {
+            return
+        }
+
         videoControls.visibility = View.VISIBLE
         controlsVisible = true
         // 显示控制栏但不设置自动隐藏
-        // 水平滑动结束后会单独处理隐藏
     }
 
     private fun hideControls() {
@@ -881,6 +933,9 @@ class PreviewActivity : AppCompatActivity() {
                 speedIndicator.visibility = View.VISIBLE
                 speedIndicator.text = "2.0x"
 
+                // 快进时立即隐藏控制栏
+                hideControls()
+
                 // 3秒后自动隐藏加速指示器
                 handler.postDelayed({
                     speedIndicator.visibility = View.GONE
@@ -890,6 +945,13 @@ class PreviewActivity : AppCompatActivity() {
                 player.playbackParameters = player.playbackParameters.withSpeed(1.0f)
                 isFastForwarding = false
                 speedIndicator.visibility = View.GONE
+
+                // 快进结束后，根据播放状态决定是否显示控制栏
+                if (!isPlaying) {
+                    showControlsPersistent() // 如果暂停了，显示控制栏
+                } else {
+                    // 什么都不做 - 只是为了满足语法要求
+                }
             }
         }
     }
@@ -1346,6 +1408,12 @@ class PreviewActivity : AppCompatActivity() {
 
     // 更新控制栏可见性
     private fun updateControlsVisibility() {
+        // 如果处于长按状态，保持控制栏隐藏
+        if (isLongPressDetected) {
+            hideControls()
+            return
+        }
+
         if (isFullscreen) {
             // 全屏模式下：播放时控制栏根据手势显示/隐藏，暂停时显示控制栏
             if (isPlaying) {
@@ -1391,12 +1459,14 @@ class PreviewActivity : AppCompatActivity() {
         // 当Activity进入后台时暂停播放
         exoPlayer?.pause()
         stopProgressUpdates()
-        // 清理长按检测
+        // 清理所有手势相关状态
+        isLongPressDetected = false
+        isSwiping = false
+        isGestureHandling = false
+        // 清理所有handler
+        doubleTapHandler.removeCallbacksAndMessages(null)
         longPressHandler.removeCallbacksAndMessages(null)
-        // 隐藏控制覆盖层
         handler.removeCallbacks(hideControlRunnable)
-        hideControlOverlay()
-        // 清理控制栏自动隐藏
         handler.removeCallbacks(hideControlsRunnable)
     }
 
@@ -1413,6 +1483,8 @@ class PreviewActivity : AppCompatActivity() {
         super.onDestroy()
         coroutineScope.cancel()
         stopProgressUpdates()
+
+        // 清理所有handler
         doubleTapHandler.removeCallbacksAndMessages(null)
         longPressHandler.removeCallbacksAndMessages(null)
         handler.removeCallbacks(hideControlRunnable)
