@@ -11,12 +11,12 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import kotlinx.coroutines.*
 import okhttp3.Request
+import okhttp3.RequestBody
 import org.json.JSONObject
 import java.io.*
-import java.text.SimpleDateFormat
+import java.net.URLEncoder
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.regex.Pattern
 
 class TextPreviewActivity : AppCompatActivity() {
 
@@ -37,7 +37,6 @@ class TextPreviewActivity : AppCompatActivity() {
     private var totalLines = 0
     private var fullContent = ""
     private var linesPerPage = 20
-    private var isChapterIndexBuilt = false
 
     // 防重复点击
     private var lastClickTime = 0L
@@ -51,7 +50,6 @@ class TextPreviewActivity : AppCompatActivity() {
 
     // 章节相关
     private val chapterList = mutableListOf<ChapterInfo>()
-    private val chapterIndexFile by lazy { File(filesDir, "chapter_index_${currentFileName.hashCode()}.dat") }
     private val readingHistoryFile by lazy { File(filesDir, "reading_history_${currentFileName.hashCode()}.dat") }
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
@@ -567,502 +565,253 @@ class TextPreviewActivity : AppCompatActivity() {
         statusLabel.isVisible = false
     }
 
-    // 章节跳转相关功能
+    // 章节跳转相关功能 - 修改为使用服务器端章节索引
     private fun showChapterDialog() {
-        Log.d("TextPreview", "显示章节对话框，章节索引构建状态: $isChapterIndexBuilt")
+        Log.d("TextPreview", "显示章节对话框")
 
-        if (!isChapterIndexBuilt) {
-            isChapterIndexBuilt = loadChapterIndex()
-        }
-
-        if (!isChapterIndexBuilt) {
-            buildChapterIndex()
-        } else {
-            showChapterList()
-        }
-    }
-
-    private fun buildChapterIndex() {
         coroutineScope.launch {
             showLoadingState()
             statusLabel.isVisible = true
-            statusLabel.text = "正在构建章节索引..."
+            statusLabel.text = "正在从服务器加载章节..."
 
             try {
-                // 先检查是否已经知道总页数
-                if (totalServerPages <= 0) {
-                    statusLabel.text = "正在获取文件信息..."
-                    // 如果没有总页数信息，先获取第一页来获取分页信息
-                    val firstPageUrl = if (currentFileUrl.contains("?")) {
-                        "${currentFileUrl}&page=1"
-                    } else {
-                        "${currentFileUrl}?page=1"
-                    }
+                // 添加重试机制
+                var chapters = emptyList<ChapterInfo>()
+                var retryCount = 0
+                val maxRetries = 2
 
-                    val firstPageData = withContext(Dispatchers.IO) {
-                        loadTextContentFromServer(firstPageUrl)
+                while (retryCount <= maxRetries) {
+                    try {
+                        chapters = loadChaptersFromServer()
+                        if (chapters.isNotEmpty()) break
+                        Log.d("TextPreview", "第 ${retryCount + 1} 次加载章节成功但为空列表")
+                    } catch (e: Exception) {
+                        Log.w("TextPreview", "第 ${retryCount + 1} 次加载章节失败", e)
+                        if (retryCount == maxRetries) throw e
+                        delay(1000L) // 延迟1秒后重试
                     }
-
-                    val jsonObject = JSONObject(firstPageData)
-                    val pagination = jsonObject.optJSONObject("pagination")
-                    totalServerPages = pagination?.optInt("totalPages", 1) ?: 1
-                    Log.d("TextPreview", "获取到总页数: $totalServerPages")
+                    retryCount++
                 }
 
-                val fullText = withContext(Dispatchers.IO) {
-                    loadFullTextContent()
-                }
-
-                statusLabel.text = "正在分析章节结构..."
-
-                val chapters = detectChapters(fullText)
                 chapterList.clear()
                 chapterList.addAll(chapters)
 
-                // 按行号排序
-                chapterList.sortBy { it.lineNumber }
-
-                saveChapterIndex()
-
-                isChapterIndexBuilt = true
-                showContentState()
-
-                // 显示构建结果
-                val chapterCount = chapters.size
-                if (chapterCount > 0) {
-                    showChapterList()
-                    Toast.makeText(this@TextPreviewActivity,
-                        "章节索引构建完成，共发现 $chapterCount 个章节",
-                        Toast.LENGTH_LONG).show()
-
-                    // 记录发现的章节类型统计
-                    val symbolWrappedCount = chapters.count {
-                        it.title != extractContentFromWrapping(it.title)
-                    }
-                    Log.d("TextPreview", "章节统计: 符号包裹章节=$symbolWrappedCount, 普通章节=${chapterCount - symbolWrappedCount}")
+                if (chapters.isEmpty()) {
+                    showNoChaptersDialog()
                 } else {
-                    Toast.makeText(this@TextPreviewActivity,
-                        "未发现章节结构，请检查文件格式",
-                        Toast.LENGTH_LONG).show()
+                    showChapterList()
                 }
-
-                Log.d("TextPreview", "章节索引构建完成，共找到 ${chapters.size} 个章节")
-
             } catch (e: Exception) {
-                Log.e("TextPreview", "构建章节索引失败", e)
-                showErrorState("构建章节索引失败: ${e.message}")
+                Log.e("TextPreview", "加载章节失败", e)
+                showChapterErrorState("章节加载失败: ${e.message}")
 
                 // 提供重试选项
-                AlertDialog.Builder(this@TextPreviewActivity)
-                    .setTitle("章节索引构建失败")
-                    .setMessage("是否重新尝试构建章节索引？")
-                    .setPositiveButton("重试") { _, _ ->
-                        buildChapterIndex()
-                    }
-                    .setNegativeButton("取消", null)
-                    .show()
+                showRetryDialog(e.message ?: "未知错误")
+            } finally {
+                showContentState()
+                statusLabel.isVisible = false
             }
         }
     }
 
-    private suspend fun loadFullTextContent(): String {
+    private suspend fun loadChaptersFromServer(): List<ChapterInfo> {
         return withContext(Dispatchers.IO) {
-            val fullText = StringBuilder()
+            try {
+                // 修复 URL 构建逻辑
+                val baseUrl = currentFileUrl.substringBefore("/preview/")
 
-            Log.d("TextPreview", "开始加载完整文本内容，总页数: $totalServerPages")
-
-            for (page in 1..totalServerPages) {
-                val url = if (currentFileUrl.contains("?")) {
-                    "${currentFileUrl}&page=$page"
+                // 正确提取文件名并编码 - 从完整URL中提取文件名部分
+                val fileName = if (currentFileUrl.contains("/preview/")) {
+                    currentFileUrl.substringAfter("/preview/").substringBefore("?")
                 } else {
-                    "${currentFileUrl}?page=$page"
+                    // 如果URL格式不符合预期，使用当前文件名
+                    currentFileName
                 }
 
-                Log.d("TextPreview", "加载页面 $page: $url")
+                val encodedFileName = URLEncoder.encode(fileName, "UTF-8")
 
-                val request = Request.Builder().url(url).build()
+                // 构建正确的章节 URL
+                val chaptersUrl = "$baseUrl/chapters/$encodedFileName"
+
+                Log.d("TextPreview", "请求章节列表: $chaptersUrl")
+
+                val request = Request.Builder()
+                    .url(chaptersUrl)
+                    .addHeader("Accept", "application/json")
+                    .build()
+
                 val response = client.newCall(request).execute()
 
                 if (!response.isSuccessful) {
-                    throw IOException("HTTP ${response.code}: ${response.message}")
+                    val errorBody = response.body?.string() ?: "No error body"
+                    Log.e("TextPreview", "章节请求失败: HTTP ${response.code}, Body: $errorBody")
+                    throw IOException("HTTP ${response.code}: $errorBody")
                 }
 
-                val textData = response.body?.string() ?: throw IOException("响应体为空")
-                val jsonObject = JSONObject(textData)
-                val content = jsonObject.optString("content", "")
+                val jsonData = response.body?.string() ?: throw IOException("响应体为空")
+                Log.d("TextPreview", "章节响应: $jsonData")
 
-                fullText.append(content).append("\n")
+                val jsonObject = JSONObject(jsonData)
 
-                withContext(Dispatchers.Main) {
-                    val progress = (page * 100 / totalServerPages)
-                    statusLabel.text = "正在加载文本: $progress%"
+                // 检查响应结构 - 支持两种可能的响应格式
+                if (jsonObject.has("chapters")) {
+                    // 格式1: 直接包含chapters数组
+                    return@withContext parseChaptersFromJson(jsonObject)
+                } else if (jsonObject.has("data") && jsonObject.getJSONObject("data").has("chapters")) {
+                    // 格式2: chapters在data对象内
+                    return@withContext parseChaptersFromJson(jsonObject.getJSONObject("data"))
+                } else {
+                    Log.w("TextPreview", "章节响应格式未知，尝试直接解析为章节数组")
+                    // 尝试直接解析为章节数组
+                    return@withContext try {
+                        parseChaptersFromJson(jsonObject)
+                    } catch (e: Exception) {
+                        Log.e("TextPreview", "无法解析章节数据", e)
+                        emptyList()
+                    }
                 }
+
+            } catch (e: Exception) {
+                Log.e("TextPreview", "从服务器加载章节失败", e)
+                throw e
             }
-
-            Log.d("TextPreview", "完整文本内容加载完成，总长度: ${fullText.length}")
-            fullText.toString()
         }
     }
 
-    private fun detectChapters(fullText: String): List<ChapterInfo> {
+    private fun parseChaptersFromJson(jsonObject: JSONObject): List<ChapterInfo> {
+        val chaptersArray = jsonObject.getJSONArray("chapters")
         val chapters = mutableListOf<ChapterInfo>()
-        val lines = fullText.split("\n")
 
-        Log.d("TextPreview", "开始检测章节，总行数: ${lines.size}")
+        for (i in 0 until chaptersArray.length()) {
+            try {
+                val chapterObj = chaptersArray.getJSONObject(i)
+                val title = chapterObj.optString("title", "未知章节")
+                val serverPage = chapterObj.optInt("page", 1)
+                val lineNumber = chapterObj.optInt("lineNumber", 0)
 
-        // 更健壮的章节模式匹配
-        val chapterPatterns = listOf(
-            // 中文数字章节: 第一章, 第一百章, 第零章
-            Pattern.compile("^第[零一二三四五六七八九十百千]+章[\\s\\S]*"),
-            Pattern.compile("^第[零一二三四五六七八九十百千]+节[\\s\\S]*"),
-            Pattern.compile("^第[零一二三四五六七八九十百千]+回[\\s\\S]*"),
+                // 计算客户端页码
+                val clientPage = calculateClientPageFromLineNumber(lineNumber)
 
-            // 阿拉伯数字章节: 第1章, 第123章, 第2节
-            Pattern.compile("^第\\d+章[\\s\\S]*"),
-            Pattern.compile("^第\\d+节[\\s\\S]*"),
-            Pattern.compile("^第\\d+回[\\s\\S]*"),
+                chapters.add(ChapterInfo(title, serverPage, clientPage, lineNumber))
 
-            // 混合数字章节: 第1章, 第2节等
-            Pattern.compile("^第\\d+[章节回][\\s\\S]*"),
-
-            // 数字序号: 1., 1.1, 1.1.1, 01.
-            Pattern.compile("^\\d+\\.[\\s\\S]*"),
-            Pattern.compile("^\\d+\\.\\d+[\\s\\S]*"),
-            Pattern.compile("^\\d+\\.\\d+\\.\\d+[\\s\\S]*"),
-            Pattern.compile("^\\d{2,}\\.[\\s\\S]*"),
-
-            // 中文序号: 一、, 二、, 第一章, 第一节
-            Pattern.compile("^[一二三四五六七八九十百千]+、[\\s\\S]*"),
-            Pattern.compile("^[一二三四五六七八九十百千]+\\.[\\s\\S]*"),
-
-            // 括号数字: (1), (2), (一), (二)
-            Pattern.compile("^[(（][一二三四五六七八九十百千]+[)）][\\s\\S]*"),
-            Pattern.compile("^[(（]\\d+[)）][\\s\\S]*"),
-
-            // 英文章节: Chapter 1, CHAPTER 1, Section 1
-            Pattern.compile("^[Cc]hapter\\s+\\d+[\\s\\S]*"),
-            Pattern.compile("^[Cc]hapter\\s+[IVXLCDM]+[\\s\\S]*"),
-            Pattern.compile("^[Ss]ection\\s+\\d+[\\s\\S]*"),
-            Pattern.compile("^[Pp]art\\s+\\d+[\\s\\S]*"),
-
-            // 特殊章节标记
-            Pattern.compile("^[卷集部篇][\\s\\S]*[一二三四五六七八九十百千\\d]+[\\s\\S]*"),
-            Pattern.compile("^[前序后末终][记述言][\\s\\S]*"),
-            Pattern.compile("^[引子楔子尾声结局][\\s\\S]*"),
-
-            // 新增：处理特殊符号包裹的章节标题
-            // ###第四章 标题###
-            Pattern.compile("^###.*第[零一二三四五六七八九十百千]+章.*###"),
-            Pattern.compile("^###.*第\\d+章.*###"),
-
-            // ***第四章 标题***
-            Pattern.compile("^\\*{3,}.*第[零一二三四五六七八九十百千]+章.*\\*{3,}"),
-            Pattern.compile("^\\*{3,}.*第\\d+章.*\\*{3,}"),
-
-            // ---第四章 标题---
-            Pattern.compile("^-{3,}.*第[零一二三四五六七八九十百千]+章.*-{3,}"),
-            Pattern.compile("^-{3,}.*第\\d+章.*-{3,}"),
-
-            // ===第四章 标题===
-            Pattern.compile("^={3,}.*第[零一二三四五六七八九十百千]+章.*={3,}"),
-            Pattern.compile("^={3,}.*第\\d+章.*={3,}"),
-
-            // 《《第四章 标题》》
-            Pattern.compile("^《+.*第[零一二三四五六七八九十百千]+章.*》+"),
-            Pattern.compile("^《+.*第\\d+章.*》+"),
-
-            // 【第四章 标题】
-            Pattern.compile("^【.*第[零一二三四五六七八九十百千]+章.*】"),
-            Pattern.compile("^【.*第\\d+章.*】"),
-
-            // [[第四章 标题]]
-            Pattern.compile("^\\[+.*第[零一二三四五六七八九十百千]+章.*\\]+"),
-            Pattern.compile("^\\[+.*第\\d+章.*\\]+"),
-
-            // 通用符号包裹模式：任意重复符号包裹的章节
-            Pattern.compile("^(.)\\1{2,}.*第[零一二三四五六七八九十百千]+章.*\\1{2,}"),
-            Pattern.compile("^(.)\\1{2,}.*第\\d+章.*\\1{2,}")
-        )
-
-        // 章节关键词，用于进一步验证
-        val chapterKeywords = listOf(
-            "章", "节", "回", "卷", "集", "部", "篇",
-            "chapter", "Chapter", "section", "Section", "part", "Part",
-            "序", "前言", "后记", "楔子", "引子", "尾声", "结局"
-        )
-
-        // 特殊符号前缀模式（用于快速检测可能被符号包裹的章节行）
-        val symbolPrefixPatterns = listOf(
-            Pattern.compile("^###.*"),
-            Pattern.compile("^\\*{3,}.*"),
-            Pattern.compile("^-{3,}.*"),
-            Pattern.compile("^={3,}.*"),
-            Pattern.compile("^《+.*"),
-            Pattern.compile("^【.*"),
-            Pattern.compile("^\\[+.*"),
-            Pattern.compile("^#+.*"), // Markdown 标题
-            Pattern.compile("^~{3,}.*") // 其他符号
-        )
-
-        var currentServerPage = 1
-        var currentClientPage = 1
-        var linesInCurrentPage = 0
-
-        for ((lineIndex, line) in lines.withIndex()) {
-            val trimmedLine = line.trim()
-
-            // 跳过空行和过短的行
-            if (trimmedLine.isEmpty() || trimmedLine.length < 2) {
-                continue
+                Log.d("TextPreview", "解析章节: $title, 页: $serverPage, 行: $lineNumber")
+            } catch (e: Exception) {
+                Log.e("TextPreview", "解析单个章节失败", e)
             }
+        }
 
-            var isChapter = false
-            var chapterTitle = trimmedLine
+        Log.d("TextPreview", "成功解析 ${chapters.size} 个章节")
+        return chapters
+    }
 
-            // 1. 首先使用正则表达式匹配
-            for (pattern in chapterPatterns) {
-                val matcher = pattern.matcher(trimmedLine)
-                if (matcher.matches()) {
-                    isChapter = true
+    private fun calculateClientPageFromLineNumber(lineNumber: Int): Int {
+        // 基于行号计算客户端页码
+        // 服务器页大小为1000行，我们需要计算在服务器页内的相对行号
+        val relativeLineNumber = lineNumber % 1000
+        val calculatedPage = (relativeLineNumber / linesPerPage) + 1
 
-                    // 对于符号包裹的章节，清理符号提取纯文本标题
-                    chapterTitle = extractCleanChapterTitle(trimmedLine)
-                    break
+        // 确保页码至少为1
+        return calculatedPage.coerceAtLeast(1)
+    }
+
+    private fun showChapterErrorState(message: String) {
+        // 专门用于章节加载错误的显示状态
+        loadingProgress.isVisible = false
+        textContentTextView.isVisible = true
+        pageIndicator.isVisible = true
+        errorTextView.isVisible = true
+        errorTextView.text = message
+        chapterButton.isVisible = true
+        statusLabel.isVisible = false
+    }
+
+    private fun showNoChaptersDialog() {
+        AlertDialog.Builder(this@TextPreviewActivity)
+            .setTitle("未发现章节")
+            .setMessage("该文件可能没有章节标记，或者章节索引尚未构建。是否尝试构建章节索引？")
+            .setPositiveButton("构建索引") { _, _ ->
+                rebuildChapterIndexFromServer()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showRetryDialog(errorMessage: String) {
+        AlertDialog.Builder(this@TextPreviewActivity)
+            .setTitle("章节加载失败")
+            .setMessage("错误: $errorMessage\n是否重新尝试加载章节？")
+            .setPositiveButton("重试") { _, _ ->
+                showChapterDialog()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun rebuildChapterIndexFromServer() {
+        coroutineScope.launch {
+            showLoadingState()
+            statusLabel.isVisible = true
+            statusLabel.text = "正在重建章节索引..."
+
+            try {
+                val success = rebuildChapterIndex()
+                if (success) {
+                    // 重建成功后重新加载章节
+                    showChapterDialog()
+                    Toast.makeText(this@TextPreviewActivity, "章节索引重建完成", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@TextPreviewActivity, "章节索引重建失败", Toast.LENGTH_SHORT).show()
                 }
+            } catch (e: Exception) {
+                Log.e("TextPreview", "重建章节索引失败", e)
+                Toast.makeText(this@TextPreviewActivity, "重建失败: ${e.message}", Toast.LENGTH_LONG).show()
+            } finally {
+                showContentState()
             }
+        }
+    }
 
-            // 2. 如果正则匹配失败，检查是否是符号包裹的行，然后提取内容再匹配
-            if (!isChapter && hasSymbolWrapping(trimmedLine, symbolPrefixPatterns)) {
-                val cleanContent = extractContentFromWrapping(trimmedLine)
-                if (cleanContent.isNotEmpty()) {
-                    // 对清理后的内容再次进行章节匹配
-                    for (pattern in chapterPatterns.subList(0, 20)) { // 使用基础模式匹配
-                        val matcher = pattern.matcher(cleanContent)
-                        if (matcher.matches()) {
-                            isChapter = true
-                            chapterTitle = extractCleanChapterTitle(cleanContent)
-                            break
-                        }
-                    }
+    private suspend fun rebuildChapterIndex(): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val baseUrl = currentFileUrl.substringBefore("/preview/")
+                val fileName = if (currentFileUrl.contains("/preview/")) {
+                    currentFileUrl.substringAfter("/preview/").substringBefore("?")
+                } else {
+                    currentFileName
+                }
+                val encodedPath = URLEncoder.encode(fileName, "UTF-8")
+                // 修复URL：去掉重复的路径
+                val rebuildUrl = "$baseUrl/chapters/rebuild/$encodedPath"
 
-                    // 如果清理后的内容包含章节关键词，也认为是章节
-                    if (!isChapter) {
-                        val hasChapterKeyword = chapterKeywords.any { keyword ->
-                            cleanContent.contains(keyword) &&
-                                    cleanContent.substring(0, minOf(20, cleanContent.length)).contains(keyword)
-                        }
+                Log.d("TextPreview", "请求重建章节索引: $rebuildUrl")
 
-                        if (hasChapterKeyword && cleanContent.length <= 50) {
-                            isChapter = true
-                            chapterTitle = cleanContent
+                val request = Request.Builder()
+                    .url(rebuildUrl)
+                    .post(RequestBody.create(null, ""))
+                    .build()
+
+                val response = client.newCall(request).execute()
+
+                if (response.isSuccessful) {
+                    val jsonData = response.body?.string()
+                    if (jsonData != null) {
+                        val jsonObject = JSONObject(jsonData)
+                        val success = jsonObject.optBoolean("success", false)
+
+                        if (success) {
+                            Log.d("TextPreview", "章节索引重建成功")
+                            return@withContext true
                         }
                     }
                 }
-            }
 
-            // 3. 如果正则匹配失败，使用关键词匹配
-            if (!isChapter) {
-                isChapter = chapterKeywords.any { keyword ->
-                    trimmedLine.contains(keyword) &&
-                            // 确保关键词不是出现在行中间（大概率是章节标题）
-                            (trimmedLine.startsWith(keyword) ||
-                                    trimmedLine.substring(0, minOf(20, trimmedLine.length)).contains(keyword))
-                }
-            }
-
-            // 4. 进一步验证：检查行长度和内容特征
-            if (isChapter) {
-                // 章节标题通常不会太长（排除可能是正文的情况）
-                if (trimmedLine.length > 100 && !hasSymbolWrapping(trimmedLine, symbolPrefixPatterns)) {
-                    isChapter = false
-                }
-
-                // 章节标题通常不会包含太多标点符号（排除对话等）
-                val punctuationCount = trimmedLine.count { it in listOf('，', '。', '！', '？', '；', '：', '、') }
-                if (punctuationCount > 3 && !hasSymbolWrapping(trimmedLine, symbolPrefixPatterns)) {
-                    isChapter = false
-                }
-
-                // 检查是否包含明显的非章节词汇
-                val excludeWords = listOf("说道", "心想", "看着", "然后", "但是", "因为", "所以", "突然", "不过")
-                if (excludeWords.any { trimmedLine.contains(it) } && !hasSymbolWrapping(trimmedLine, symbolPrefixPatterns)) {
-                    isChapter = false
-                }
-            }
-
-            // 5. 数字序列检测（备用方案）
-            if (!isChapter && lineIndex > 0) {
-                isChapter = detectNumberSequence(lines, lineIndex, trimmedLine)
-            }
-
-            if (isChapter) {
-                val serverPage = currentServerPage
-                val clientPage = currentClientPage
-
-                chapters.add(ChapterInfo(chapterTitle, serverPage, clientPage, lineIndex))
-                Log.d("TextPreview", "发现章节: $chapterTitle, 服务器页: $serverPage, 客户端页: $clientPage, 行号: $lineIndex")
-            }
-
-            // 更新分页状态
-            linesInCurrentPage++
-            if (linesInCurrentPage >= linesPerPage) {
-                linesInCurrentPage = 0
-                currentClientPage++
-
-                if (currentClientPage > totalClientPages) {
-                    currentClientPage = 1
-                    currentServerPage++
-                }
-            }
-        }
-
-        Log.d("TextPreview", "章节检测完成，共发现 ${chapters.size} 个章节")
-
-        // 后处理：过滤掉过于密集的"章节"（可能是误识别）
-        return filterDenseChapters(chapters)
-    }
-
-    /**
-     * 检查行是否被特殊符号包裹
-     */
-    private fun hasSymbolWrapping(line: String, patterns: List<Pattern>): Boolean {
-        return patterns.any { pattern ->
-            pattern.matcher(line).matches()
-        }
-    }
-
-    /**
-     * 从符号包裹的行中提取内容
-     */
-    private fun extractContentFromWrapping(line: String): String {
-        var content = line.trim()
-
-        // 移除常见的包裹符号
-        val wrappingPatterns = listOf(
-            Pattern.compile("^###(.*)###$"),
-            Pattern.compile("^\\*{3,}(.*)\\*{3,}$"),
-            Pattern.compile("^-{3,}(.*)-{3,}$"),
-            Pattern.compile("^={3,}(.*)={3,}$"),
-            Pattern.compile("^《+(.*)》+$"),
-            Pattern.compile("^【(.*)】$"),
-            Pattern.compile("^\\[+(.*)\\]$"),
-            Pattern.compile("^#+(.*)$"), // Markdown 标题
-            Pattern.compile("^~{3,}(.*)~{3,}$")
-        )
-
-        for (pattern in wrappingPatterns) {
-            val matcher = pattern.matcher(content)
-            if (matcher.matches()) {
-                content = matcher.group(1)?.trim() ?: content
-                break
-            }
-        }
-
-        return content
-    }
-
-    /**
-     * 提取清理后的章节标题（移除多余的符号）
-     */
-    private fun extractCleanChapterTitle(line: String): String {
-        var title = line.trim()
-
-        // 移除常见的包裹符号
-        title = extractContentFromWrapping(title)
-
-        // 移除行首行尾的标点符号
-        title = title.trimStart(' ', '#', '*', '-', '=', '~', '《', '【', '[', '（', '(')
-            .trimEnd(' ', '#', '*', '-', '=', '~', '》', '】', ']', '）', ')')
-
-        return title
-    }
-
-    /**
-     * 检测数字序列，用于识别类似"1" "2" "3"这样的简单章节编号
-     */
-    private fun detectNumberSequence(lines: List<String>, currentIndex: Int, currentLine: String): Boolean {
-        if (currentIndex < 2) return false
-
-        val currentTrimmed = currentLine.trim()
-        val prev1Trimmed = lines[currentIndex - 1].trim()
-        val prev2Trimmed = lines[currentIndex - 2].trim()
-
-        // 检查当前行是否是纯数字
-        val isCurrentNumber = currentTrimmed.matches(Regex("^\\d+$"))
-        val isPrev1Number = prev1Trimmed.matches(Regex("^\\d+$"))
-        val isPrev2Number = prev2Trimmed.matches(Regex("^\\d+$"))
-
-        // 如果连续三行都是数字，且是递增的，则认为是章节编号
-        if (isCurrentNumber && isPrev1Number && isPrev2Number) {
-            val currentNum = currentTrimmed.toIntOrNull()
-            val prev1Num = prev1Trimmed.toIntOrNull()
-            val prev2Num = prev2Trimmed.toIntOrNull()
-
-            if (currentNum != null && prev1Num != null && prev2Num != null) {
-                return currentNum == prev1Num + 1 && prev1Num == prev2Num + 1
-            }
-        }
-
-        return false
-    }
-
-    /**
-     * 过滤过于密集的章节识别结果
-     */
-    private fun filterDenseChapters(chapters: List<ChapterInfo>): List<ChapterInfo> {
-        if (chapters.size < 3) return chapters
-
-        val filtered = mutableListOf<ChapterInfo>()
-        filtered.add(chapters[0])
-
-        for (i in 1 until chapters.size) {
-            val current = chapters[i]
-            val previous = filtered.last()
-
-            // 如果两个相邻章节行号差距太小（小于10行），可能是误识别，跳过
-            if (current.lineNumber - previous.lineNumber > 10) {
-                filtered.add(current)
-            } else {
-                Log.d("TextPreview", "过滤密集章节: ${current.title} (行号: ${current.lineNumber})")
-            }
-        }
-
-        return filtered
-    }
-
-    private fun saveChapterIndex() {
-        coroutineScope.launch(Dispatchers.IO) {
-            try {
-                ObjectOutputStream(FileOutputStream(chapterIndexFile)).use { oos ->
-                    oos.writeObject(ArrayList(chapterList))
-                }
-                Log.d("TextPreview", "章节索引保存成功: ${chapterIndexFile.absolutePath}, 章节数: ${chapterList.size}")
+                Log.w("TextPreview", "章节索引重建失败: HTTP ${response.code}")
+                return@withContext false
             } catch (e: Exception) {
-                Log.e("TextPreview", "保存章节索引失败", e)
+                Log.e("TextPreview", "重建章节索引失败", e)
+                return@withContext false
             }
-        }
-    }
-
-    private fun loadChapterIndex(): Boolean {
-        Log.d("TextPreview", "尝试加载章节索引: ${chapterIndexFile.absolutePath}")
-
-        return if (chapterIndexFile.exists()) {
-            try {
-                ObjectInputStream(FileInputStream(chapterIndexFile)).use { ois ->
-                    val loadedChapters = ois.readObject() as ArrayList<ChapterInfo>
-                    chapterList.clear()
-                    chapterList.addAll(loadedChapters)
-                    isChapterIndexBuilt = true
-                    Log.d("TextPreview", "章节索引加载成功，共 ${chapterList.size} 个章节")
-                    true
-                }
-            } catch (e: Exception) {
-                Log.e("TextPreview", "加载章节索引失败", e)
-                false
-            }
-        } else {
-            Log.d("TextPreview", "章节索引文件不存在")
-            false
         }
     }
 
