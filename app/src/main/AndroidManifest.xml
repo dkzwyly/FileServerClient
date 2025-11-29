@@ -40,6 +40,12 @@
             android:label="文本预览"
             android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
 
+        <activity
+            android:name=".ImageGalleryActivity"
+            android:label="图片库"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:screenOrientation="portrait" />
+
     </application>
 
 </manifest>

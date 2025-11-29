@@ -14,7 +14,6 @@ import androidx.cardview.widget.CardView
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
-import java.util.*
 
 class MainActivity : AppCompatActivity() {
 
@@ -24,6 +23,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var quickActionsCard: CardView
     private lateinit var browseFilesButton: Button
     private lateinit var historyListView: ListView
+
+    // 新增的库按钮
+    private lateinit var mediaLibraryButton: Button
+    private lateinit var textLibraryButton: Button
+    private lateinit var videoLibraryButton: Button
+    private lateinit var audioLibraryButton: Button
 
     private val fileServerService by lazy { FileServerService(this) }
     private val connectionHistory = mutableListOf<ConnectionHistory>()
@@ -58,7 +63,7 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "onCreate completed successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Error in onCreate: ${e.message}", e)
-            throw e // 重新抛出以便看到堆栈跟踪
+            throw e
         }
     }
 
@@ -73,6 +78,12 @@ class MainActivity : AppCompatActivity() {
             browseFilesButton = findViewById(R.id.browseFilesButton)
             historyListView = findViewById(R.id.historyListView)
 
+            // 初始化库按钮
+            mediaLibraryButton = findViewById(R.id.mediaLibraryButton)
+            textLibraryButton = findViewById(R.id.textLibraryButton)
+            videoLibraryButton = findViewById(R.id.videoLibraryButton)
+            audioLibraryButton = findViewById(R.id.audioLibraryButton)
+
             Log.d(TAG, "All views found successfully")
 
             connectButton.setOnClickListener {
@@ -82,21 +93,60 @@ class MainActivity : AppCompatActivity() {
 
             browseFilesButton.setOnClickListener {
                 Log.d(TAG, "Browse files button clicked")
-                if (isConnected) {
-                    val intent = Intent(this, FileListActivity::class.java).apply {
-                        putExtra("SERVER_URL", currentServerUrl)
-                    }
-                    startActivity(intent)
-                    overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
-                } else {
-                    showToast("请先连接到服务器")
-                }
+                openFileList("all")
+            }
+
+            // 设置库按钮点击事件
+            mediaLibraryButton.setOnClickListener {
+                Log.d(TAG, "Media library button clicked")
+                openImageGallery()
+            }
+
+
+
+            textLibraryButton.setOnClickListener {
+                Log.d(TAG, "Text library button clicked")
+                openFileList("text")
+            }
+
+            videoLibraryButton.setOnClickListener {
+                Log.d(TAG, "Video library button clicked")
+                openFileList("video")
+            }
+
+            audioLibraryButton.setOnClickListener {
+                Log.d(TAG, "Audio library button clicked")
+                openFileList("audio")
             }
 
             Log.d(TAG, "initViews completed")
         } catch (e: Exception) {
             Log.e(TAG, "Error in initViews: ${e.message}", e)
             throw e
+        }
+    }
+    // 添加打开图片库的方法
+    private fun openImageGallery() {
+        if (isConnected) {
+            val intent = Intent(this, ImageGalleryActivity::class.java).apply {
+                putExtra("SERVER_URL", currentServerUrl)
+            }
+            startActivity(intent)
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+        } else {
+            showToast("请先连接到服务器")
+        }
+    }
+    private fun openFileList(fileType: String) {
+        if (isConnected) {
+            val intent = Intent(this, FileListActivity::class.java).apply {
+                putExtra("SERVER_URL", currentServerUrl)
+                putExtra("FILE_TYPE", fileType)
+            }
+            startActivity(intent)
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+        } else {
+            showToast("请先连接到服务器")
         }
     }
 
@@ -278,4 +328,3 @@ class MainActivity : AppCompatActivity() {
         coroutineScope.cancel()
     }
 }
-
