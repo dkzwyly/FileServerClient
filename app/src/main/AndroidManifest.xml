@@ -46,6 +46,18 @@
             android:theme="@style/Theme.AppCompat.Light.NoActionBar"
             android:screenOrientation="portrait" />
 
+        <activity
+            android:name=".TextLibraryActivity"
+            android:label="文本库"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".TextLibraryDetailActivity"
+            android:label="文本详情"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:screenOrientation="portrait" />
+
     </application>
 
 </manifest>

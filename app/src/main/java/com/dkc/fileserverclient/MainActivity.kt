@@ -106,7 +106,7 @@ class MainActivity : AppCompatActivity() {
 
             textLibraryButton.setOnClickListener {
                 Log.d(TAG, "Text library button clicked")
-                openFileList("text")
+                openTextLibrary()
             }
 
             videoLibraryButton.setOnClickListener {
@@ -137,6 +137,20 @@ class MainActivity : AppCompatActivity() {
             showToast("请先连接到服务器")
         }
     }
+
+    // 添加打开文本库的方法
+    private fun openTextLibrary() {
+        if (isConnected) {
+            val intent = Intent(this, TextLibraryActivity::class.java).apply {
+                putExtra("SERVER_URL", currentServerUrl)
+            }
+            startActivity(intent)
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+        } else {
+            showToast("请先连接到服务器")
+        }
+    }
+
     private fun openFileList(fileType: String) {
         if (isConnected) {
             val intent = Intent(this, FileListActivity::class.java).apply {
