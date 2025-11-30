@@ -111,7 +111,7 @@ class MainActivity : AppCompatActivity() {
 
             videoLibraryButton.setOnClickListener {
                 Log.d(TAG, "Video library button clicked")
-                openFileList("video")
+                openVideoLibrary()
             }
 
             audioLibraryButton.setOnClickListener {
@@ -142,6 +142,19 @@ class MainActivity : AppCompatActivity() {
     private fun openTextLibrary() {
         if (isConnected) {
             val intent = Intent(this, TextLibraryActivity::class.java).apply {
+                putExtra("SERVER_URL", currentServerUrl)
+            }
+            startActivity(intent)
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+        } else {
+            showToast("请先连接到服务器")
+        }
+    }
+
+    // 添加打开视频库的方法
+    private fun openVideoLibrary() {
+        if (isConnected) {
+            val intent = Intent(this, VideoLibraryActivity::class.java).apply {
                 putExtra("SERVER_URL", currentServerUrl)
             }
             startActivity(intent)
