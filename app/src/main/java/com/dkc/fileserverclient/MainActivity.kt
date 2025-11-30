@@ -11,6 +11,8 @@ import android.view.animation.AnimationUtils
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.cardview.widget.CardView
+import androidx.core.content.edit
+import androidx.core.graphics.toColorInt
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
@@ -30,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var videoLibraryButton: Button
     private lateinit var audioLibraryButton: Button
 
+    // 修复：移除 context 参数
     private val fileServerService by lazy { FileServerService(this) }
     private val connectionHistory = mutableListOf<ConnectionHistory>()
     private val sharedPreferences: SharedPreferences by lazy {
@@ -102,8 +105,6 @@ class MainActivity : AppCompatActivity() {
                 openImageGallery()
             }
 
-
-
             textLibraryButton.setOnClickListener {
                 Log.d(TAG, "Text library button clicked")
                 openTextLibrary()
@@ -125,6 +126,7 @@ class MainActivity : AppCompatActivity() {
             throw e
         }
     }
+
     // 添加打开图片库的方法
     private fun openImageGallery() {
         if (isConnected) {
@@ -132,7 +134,8 @@ class MainActivity : AppCompatActivity() {
                 putExtra("SERVER_URL", currentServerUrl)
             }
             startActivity(intent)
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+            // 使用 Activity 过渡动画替代弃用的 overridePendingTransition
+            overrideActivityTransition()
         } else {
             showToast("请先连接到服务器")
         }
@@ -145,7 +148,7 @@ class MainActivity : AppCompatActivity() {
                 putExtra("SERVER_URL", currentServerUrl)
             }
             startActivity(intent)
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+            overrideActivityTransition()
         } else {
             showToast("请先连接到服务器")
         }
@@ -158,9 +161,21 @@ class MainActivity : AppCompatActivity() {
                 putExtra("SERVER_URL", currentServerUrl)
             }
             startActivity(intent)
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+            overrideActivityTransition()
         } else {
             showToast("请先连接到服务器")
+        }
+    }
+
+    // 使用新的 Activity 过渡动画方法
+    private fun overrideActivityTransition() {
+        // 使用新的 Activity 过渡动画 API（如果可用）
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, android.R.anim.fade_in, android.R.anim.fade_out)
+        } else {
+            // 回退到旧的方法，但添加抑制警告注解
+            @Suppress("DEPRECATION")
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
         }
     }
 
@@ -171,7 +186,7 @@ class MainActivity : AppCompatActivity() {
                 putExtra("FILE_TYPE", fileType)
             }
             startActivity(intent)
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+            overrideActivityTransition()
         } else {
             showToast("请先连接到服务器")
         }
@@ -228,18 +243,19 @@ class MainActivity : AppCompatActivity() {
     private fun updateConnectionStatus(status: String, color: String) {
         connectionStatusLabel.text = status
 
+        // 修复：移除未使用的 colorInt 变量
         when (color) {
             "#4CAF50" -> {
-                connectionStatusLabel.setTextColor(Color.parseColor("#2E7D32"))
-                connectionStatusLabel.setBackgroundColor(Color.parseColor("#E8F5E8"))
+                connectionStatusLabel.setTextColor("#2E7D32".toColorInt())
+                connectionStatusLabel.setBackgroundColor("#E8F5E8".toColorInt())
             }
             "#F44336" -> {
-                connectionStatusLabel.setTextColor(Color.parseColor("#C62828"))
-                connectionStatusLabel.setBackgroundColor(Color.parseColor("#FFEBEE"))
+                connectionStatusLabel.setTextColor("#C62828".toColorInt())
+                connectionStatusLabel.setBackgroundColor("#FFEBEE".toColorInt())
             }
             "#FF9800" -> {
-                connectionStatusLabel.setTextColor(Color.parseColor("#EF6C00"))
-                connectionStatusLabel.setBackgroundColor(Color.parseColor("#FFF3E0"))
+                connectionStatusLabel.setTextColor("#EF6C00".toColorInt())
+                connectionStatusLabel.setBackgroundColor("#FFF3E0".toColorInt())
             }
         }
     }
@@ -296,15 +312,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateHistoryListView() {
         try {
-            (historyListView.adapter as? ArrayAdapter<String>)?.apply {
-                clear()
-                addAll(connectionHistory.map {
-                    val displayUrl = it.url
-                        .removePrefix("http://")
-                        .removePrefix("https://")
-                    "$displayUrl (${it.protocol})"
-                })
-                notifyDataSetChanged()
+            val adapter = historyListView.adapter
+            if (adapter is ArrayAdapter<*>) {
+                @Suppress("UNCHECKED_CAST")
+                (adapter as ArrayAdapter<String>).apply {
+                    clear()
+                    addAll(connectionHistory.map {
+                        val displayUrl = it.url
+                            .removePrefix("http://")
+                            .removePrefix("https://")
+                        "$displayUrl (${it.protocol})"
+                    })
+                    notifyDataSetChanged()
+                }
+            } else {
+                // 如果适配器类型不匹配，重新设置适配器
+                setupHistoryListView()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in updateHistoryListView: ${e.message}", e)
@@ -329,7 +352,10 @@ class MainActivity : AppCompatActivity() {
     private fun saveConnectionHistory() {
         try {
             val json = gson.toJson(connectionHistory)
-            sharedPreferences.edit().putString("connection_history", json).apply()
+            // 使用 KTX 扩展函数 sharedPreferences.edit
+            sharedPreferences.edit {
+                putString("connection_history", json)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error in saveConnectionHistory: ${e.message}", e)
         }

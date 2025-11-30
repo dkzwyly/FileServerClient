@@ -31,14 +31,8 @@ data class FileSystemItem(
         }
 
     val displayName: String
-        get() = if (name.isEmpty()) {
-            if (path.isNotEmpty()) {
-                path.substringAfterLast('/').ifEmpty { "未命名文件" }
-            } else {
-                "未命名文件"
-            }
-        } else {
-            name
+        get() = name.ifEmpty {
+            path.substringAfterLast('/').ifEmpty { "未命名文件" }
         }
 }
 

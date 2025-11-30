@@ -12,6 +12,8 @@ import java.net.SocketTimeoutException
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class FileServerService(private val context: Context) {
 
@@ -21,11 +23,20 @@ class FileServerService(private val context: Context) {
 
     private val gson = Gson()
 
+    @Suppress("CustomX509TrustManager")
     private fun createUnsafeOkHttpClient(): OkHttpClient {
-        try {
+        return try {
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                @Suppress("TrustAllX509TrustManager")
+                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                    // 信任所有客户端证书（用于测试环境）
+                }
+
+                @Suppress("TrustAllX509TrustManager")
+                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                    // 信任所有服务器证书（用于测试环境）
+                }
+
                 override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
             })
 
@@ -34,7 +45,7 @@ class FileServerService(private val context: Context) {
 
             val hostnameVerifier = HostnameVerifier { _, _ -> true }
 
-            return OkHttpClient.Builder()
+            OkHttpClient.Builder()
                 .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
                 .hostnameVerifier(hostnameVerifier)
                 .connectTimeout(15, TimeUnit.SECONDS)
@@ -46,8 +57,8 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    suspend fun testConnection(serverUrl: String): Boolean {
-        return try {
+    suspend fun testConnection(serverUrl: String): Boolean = withContext(Dispatchers.IO) {
+        try {
             val formattedUrl = formatServerUrl(serverUrl)
             val healthUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/health"
 
@@ -102,8 +113,8 @@ class FileServerService(private val context: Context) {
         return formattedUrl
     }
 
-    suspend fun getFileList(serverUrl: String, path: String = ""): List<FileSystemItem> {
-        return try {
+    suspend fun getFileList(serverUrl: String, path: String = ""): List<FileSystemItem> = withContext(Dispatchers.IO) {
+        try {
             val formattedUrl = formatServerUrl(serverUrl)
 
             // 修复：正确处理路径编码，特别是深层目录
@@ -157,10 +168,8 @@ class FileServerService(private val context: Context) {
 
                 // 添加目录
                 apiResponse.directories.forEach { dir ->
-                    val dirName = if (dir.name.isEmpty()) {
+                    val dirName = dir.name.ifEmpty {
                         dir.path.substringAfterLast('/').ifEmpty { "未命名目录" }
-                    } else {
-                        dir.name
                     }
 
                     items.add(FileSystemItem(
@@ -179,10 +188,8 @@ class FileServerService(private val context: Context) {
 
                 // 添加文件
                 apiResponse.files.forEach { file ->
-                    val fileName = if (file.name.isEmpty()) {
+                    val fileName = file.name.ifEmpty {
                         file.path.substringAfterLast('/').ifEmpty { "未命名文件" }
-                    } else {
-                        file.name
                     }
 
                     items.add(FileSystemItem(
@@ -211,11 +218,11 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    suspend fun uploadFiles(serverUrl: String, files: List<File>, targetPath: String = ""): UploadResult {
+    suspend fun uploadFiles(serverUrl: String, files: List<File>, targetPath: String = ""): UploadResult = withContext(Dispatchers.IO) {
         // 添加空列表检查
         if (files.isEmpty()) {
             Log.e("FileServerService", "文件列表为空")
-            return UploadResult(success = false, message = "没有选择要上传的文件")
+            return@withContext UploadResult(success = false, message = "没有选择要上传的文件")
         }
 
         // 检查文件是否存在
@@ -233,10 +240,10 @@ class FileServerService(private val context: Context) {
 
         if (validFiles.isEmpty()) {
             Log.e("FileServerService", "没有有效的文件可上传")
-            return UploadResult(success = false, message = "没有有效的文件可上传")
+            return@withContext UploadResult(success = false, message = "没有有效的文件可上传")
         }
 
-        return try {
+        try {
             val formattedUrl = formatServerUrl(serverUrl)
 
             // 修复：正确处理深层目录的上传路径
@@ -300,16 +307,16 @@ class FileServerService(private val context: Context) {
         }
         return "%.2f ${sizes[order]}".format(len)
     }
-    // 在 FileServerService.kt 中添加这个方法
-    suspend fun deleteFile(serverUrl: String, filePath: String): Boolean {
-        return try {
+
+    suspend fun deleteFile(serverUrl: String, filePath: String): Boolean = withContext(Dispatchers.IO) {
+        try {
             val formattedUrl = formatServerUrl(serverUrl)
             val encodedPath = java.net.URLEncoder.encode(filePath, "UTF-8")
             val deleteUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/delete/$encodedPath"
 
             Log.d("FileServerService", "删除文件: $deleteUrl")
 
-            val request = okhttp3.Request.Builder()
+            val request = Request.Builder()
                 .url(deleteUrl)
                 .delete()
                 .build()

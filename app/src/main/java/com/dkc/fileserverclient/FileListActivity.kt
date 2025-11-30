@@ -10,6 +10,8 @@ import android.provider.OpenableColumns
 import android.util.Log
 import android.view.View
 import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.cardview.widget.CardView
@@ -45,15 +47,23 @@ class FileListActivity : AppCompatActivity() {
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private lateinit var adapter: FileListAdapter
 
+    // Activity Result Launchers
+    private val pickFilesLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (it.resultCode == Activity.RESULT_OK) {
+            handleFileSelection(it.data)
+        }
+    }
+
+    private val previewLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            handlePreviewResult(result.data)
+        }
+    }
+
     // 自动连播相关变量
     private var autoPlayEnabled = false
     private var currentPlayingIndex = -1
     private var mediaFileList = mutableListOf<FileSystemItem>()
-
-    companion object {
-        private const val PICK_FILES_REQUEST = 1001
-        private const val REQUEST_PREVIEW = 1002
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,6 +76,7 @@ class FileListActivity : AppCompatActivity() {
         }
 
         initViews()
+        setupBackPressedHandler()
         loadCurrentDirectory("")
     }
 
@@ -99,7 +110,7 @@ class FileListActivity : AppCompatActivity() {
         }
 
         backButton.setOnClickListener {
-            onBackPressed()
+            handleBackNavigation()
         }
 
         selectFilesButton.setOnClickListener {
@@ -117,6 +128,23 @@ class FileListActivity : AppCompatActivity() {
         uploadButton.isEnabled = false
         selectedFilesLabel.text = "未选择文件"
         uploadStatusCard.visibility = View.GONE
+    }
+
+    private fun setupBackPressedHandler() {
+        val onBackPressedCallback = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                handleBackNavigation()
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, onBackPressedCallback)
+    }
+
+    private fun handleBackNavigation() {
+        if (pathHistory.isNotEmpty()) {
+            navigateBack()
+        } else {
+            finish()
+        }
     }
 
     private fun onFileItemClicked(item: FileSystemItem) {
@@ -205,7 +233,7 @@ class FileListActivity : AppCompatActivity() {
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             addCategory(Intent.CATEGORY_OPENABLE)
         }
-        startActivityForResult(Intent.createChooser(intent, "选择文件"), PICK_FILES_REQUEST)
+        pickFilesLauncher.launch(Intent.createChooser(intent, "选择文件"))
     }
 
     private fun uploadFiles() {
@@ -299,7 +327,7 @@ class FileListActivity : AppCompatActivity() {
                 putExtra("SERVER_URL", currentServerUrl)
                 putExtra("CURRENT_PATH", currentPath)
             }
-            startActivityForResult(intent, REQUEST_PREVIEW)
+            previewLauncher.launch(intent)
         } catch (e: Exception) {
             Log.e("FileListActivity", "预览文件失败", e)
             showToast("预览失败: ${e.message}")
@@ -381,28 +409,26 @@ class FileListActivity : AppCompatActivity() {
         return when {
             item.isVideo -> "video"
             item.isAudio -> "audio"
-            item.extension in listOf(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp") -> "image"
-            item.extension in listOf(".txt", ".log", ".json", ".xml", ".csv", ".md",
-                ".html", ".htm", ".css", ".js", ".java", ".kt", ".py") -> "text"
+            item.extension in listOf("jpg", "jpeg", "png", "gif", "bmp", "webp") -> "image"
+            item.extension in listOf("txt", "log", "json", "xml", "csv", "md",
+                "html", "htm", "css", "js", "java", "kt", "py") -> "text"
             else -> "general"
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == PICK_FILES_REQUEST && resultCode == Activity.RESULT_OK) {
+    private fun handleFileSelection(data: Intent?) {
+        data?.let { intent ->
             selectedFiles.clear()
 
             val uris = mutableListOf<Uri>()
-            if (data?.clipData != null) {
-                val count = data.clipData!!.itemCount
+            if (intent.clipData != null) {
+                val count = intent.clipData!!.itemCount
                 for (i in 0 until count) {
-                    val uri = data.clipData!!.getItemAt(i).uri
+                    val uri = intent.clipData!!.getItemAt(i).uri
                     uris.add(uri)
                 }
-            } else if (data?.data != null) {
-                uris.add(data.data!!)
+            } else if (intent.data != null) {
+                uris.add(intent.data!!)
             }
 
             Log.d("FileListActivity", "选择了 ${uris.size} 个文件")
@@ -428,9 +454,6 @@ class FileListActivity : AppCompatActivity() {
                 }
                 statusLabel.text = "文件选择完成"
             }
-        } else if (requestCode == REQUEST_PREVIEW && resultCode == Activity.RESULT_OK) {
-            // 处理从PreviewActivity返回的结果
-            handlePreviewResult(data)
         }
     }
 
@@ -565,14 +588,6 @@ class FileListActivity : AppCompatActivity() {
         }
 
         return result
-    }
-
-    override fun onBackPressed() {
-        if (pathHistory.isNotEmpty()) {
-            navigateBack()
-        } else {
-            super.onBackPressed()
-        }
     }
 
     private fun showToast(message: String) {

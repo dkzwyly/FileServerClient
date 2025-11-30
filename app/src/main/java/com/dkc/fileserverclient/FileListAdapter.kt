@@ -39,7 +39,7 @@ class FileListAdapter(
     }
 
     abstract class BaseViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-        abstract fun bind(item: FileSystemItem, position: Int)
+        abstract fun bind(item: FileSystemItem)
     }
 
     class DirectoryViewHolder(view: View) : BaseViewHolder(view) {
@@ -50,7 +50,7 @@ class FileListAdapter(
         val downloadButton: ImageButton = view.findViewById(R.id.downloadButton)
         val deleteButton: ImageButton = view.findViewById(R.id.deleteButton)
 
-        override fun bind(item: FileSystemItem, position: Int) {
+        override fun bind(item: FileSystemItem) {
             // 文件夹处理 - 强制使用文件夹图标，不加载任何缩略图
             fileName.text = item.displayName
             fileInfo.text = "目录"
@@ -87,7 +87,7 @@ class FileListAdapter(
         // 添加标识来跟踪当前加载的路径
         var currentLoadPath: String? = null
 
-        override fun bind(item: FileSystemItem, position: Int) {
+        override fun bind(item: FileSystemItem) {
             // 重置当前状态
             currentLoadPath = null
 
@@ -107,7 +107,7 @@ class FileListAdapter(
             // 处理图片文件缩略图
             if (item.isImage) {
                 // 只有图片文件才加载缩略图
-                loadImageThumbnail(item, position)
+                loadImageThumbnail(item)
             } else {
                 // 非图片文件使用文件类型图标 - 立即设置，不异步
                 fileIcon.setImageResource(getFileIconRes(item))
@@ -210,14 +210,11 @@ class FileListAdapter(
         }
 
         private fun formatDate(dateString: String): String {
-            return if (dateString.length > 10) {
-                dateString.substring(0, 10)
-            } else {
-                dateString
-            }
+            // 修复：使用 take() 替代 substring()
+            return dateString.take(10)
         }
 
-        private fun loadImageThumbnail(item: FileSystemItem, position: Int) {
+        private fun loadImageThumbnail(item: FileSystemItem) {
             try {
                 // 构建缩略图URL
                 val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
@@ -276,11 +273,11 @@ class FileListAdapter(
 
         when (holder) {
             is DirectoryViewHolder -> {
-                holder.bind(item, position)
+                holder.bind(item)
                 // 设置文件夹点击事件
                 holder.itemView.setOnClickListener { onItemClick(item) }
             }
-            is FileViewHolder -> holder.bind(item, position)
+            is FileViewHolder -> holder.bind(item)
         }
     }
 
