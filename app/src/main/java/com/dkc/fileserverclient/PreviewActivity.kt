@@ -1029,6 +1029,11 @@ class PreviewActivity : AppCompatActivity() {
     private fun setupLyricsForAudio() {
         if (currentFileType != "audio") return
 
+        // 重置歌词显示状态
+        currentLyricsLine.text = "正在加载歌词..."
+        nextLyricsLine.text = ""
+        lyricsTitle.text = "歌词"
+
         // 显示歌词容器
         lyricsContainer.visibility = View.VISIBLE
         isLyricsVisible = true
@@ -1036,8 +1041,10 @@ class PreviewActivity : AppCompatActivity() {
         // 加载歌词
         loadLyricsForCurrentSong()
     }
-
     private fun loadLyricsForCurrentSong() {
+        // 确保停止之前的歌词更新
+        stopLyricsUpdates()
+
         coroutineScope.launch {
             try {
                 val fileServerService = FileServerService(this@PreviewActivity)
@@ -1050,7 +1057,7 @@ class PreviewActivity : AppCompatActivity() {
                     currentLyricsLine.text = "此歌曲无歌词"
                     nextLyricsLine.text = ""
                     lyricsTitle.text = "无歌词"
-                    showToast("此歌曲已标记为无歌词")
+                    // 不需要显示Toast，避免频繁提示
                     return@launch
                 }
 
@@ -1062,7 +1069,7 @@ class PreviewActivity : AppCompatActivity() {
                         lyricsResponse.content?.let { content ->
                             parseLyricsContent(content)
                             startLyricsUpdates()
-                            showToast("歌词加载成功")
+                            // 不需要显示Toast，避免频繁提示
                         }
                     }
                     "available_files" -> {
@@ -1071,18 +1078,24 @@ class PreviewActivity : AppCompatActivity() {
                             showLyricsFileSelectionDialog(files)
                         }
                     }
+                    "no_lyrics" -> {
+                        // 服务器明确返回无歌词
+                        currentLyricsLine.text = "此歌曲无歌词"
+                        nextLyricsLine.text = ""
+                        lyricsTitle.text = "无歌词"
+                    }
                     else -> {
                         // 没有找到歌词
                         currentLyricsLine.text = "未找到歌词文件"
                         nextLyricsLine.text = ""
-                        showToast("未找到歌词文件")
+                        // 不需要显示Toast，避免频繁提示
                     }
                 }
             } catch (e: Exception) {
                 Log.e("PreviewActivity", "加载歌词失败", e)
                 currentLyricsLine.text = "歌词加载失败"
                 nextLyricsLine.text = ""
-                showToast("歌词加载失败: ${e.message}")
+                // 不需要显示Toast，避免频繁提示
             }
         }
     }
@@ -1344,9 +1357,6 @@ class PreviewActivity : AppCompatActivity() {
             }
         }
         exoPlayer?.addListener(autoPlayListener!!)
-
-        // 显示自动连播提示
-        showToast("自动连播已启用 (${currentMediaIndex + 1}/${mediaFileList?.size ?: 0})")
     }
 
     private fun playNextMedia() {
@@ -1355,6 +1365,8 @@ class PreviewActivity : AppCompatActivity() {
         val nextIndex = currentMediaIndex + 1
         if (nextIndex < mediaFileList!!.size) {
             val nextItem = mediaFileList!![nextIndex]
+            // 停止当前播放
+            exoPlayer?.stop()
             loadMediaFile(nextItem, nextIndex)
         } else {
             // 已经是最后一个，显示提示
@@ -1370,6 +1382,8 @@ class PreviewActivity : AppCompatActivity() {
         val prevIndex = currentMediaIndex - 1
         if (prevIndex >= 0) {
             val prevItem = mediaFileList!![prevIndex]
+            // 停止当前播放
+            exoPlayer?.stop()
             loadMediaFile(prevItem, prevIndex)
         } else {
             showToast("已经是第一个文件")
@@ -1381,6 +1395,13 @@ class PreviewActivity : AppCompatActivity() {
             val fileType = getFileType(item)
             val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
             val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+
+            // 停止并重置当前歌词状态
+            stopLyricsUpdates()
+            lyricsData = null
+            currentLyricsLine.text = "正在加载歌词..."
+            nextLyricsLine.text = ""
+            lyricsTitle.text = "歌词"
 
             // 更新当前文件信息
             currentFileName = item.name
@@ -1401,9 +1422,12 @@ class PreviewActivity : AppCompatActivity() {
             // 重新加载预览
             loadPreview()
 
-            // 重新加载歌词（如果有）
-            if (isLyricsVisible) {
-                loadLyricsForCurrentSong()
+            // 如果是音频文件，确保歌词正确加载
+            if (fileType == "audio" && isLyricsVisible) {
+                // 延迟一点确保播放器准备好后再加载歌词
+                handler.postDelayed({
+                    loadLyricsForCurrentSong()
+                }, 500)
             }
 
             // 显示提示
@@ -1606,6 +1630,10 @@ class PreviewActivity : AppCompatActivity() {
         playerView.visibility = View.GONE // 隐藏视频视图
         videoControls.visibility = View.VISIBLE // 显示控制条
 
+        // 重置歌词状态
+        stopLyricsUpdates()
+        lyricsData = null
+
         try {
             val mediaSourceFactory = ProgressiveMediaSource.Factory(createUnsafeDataSourceFactory())
             val mediaItem = MediaItem.fromUri(currentFileUrl)
@@ -1618,8 +1646,10 @@ class PreviewActivity : AppCompatActivity() {
             isPlaying = true
             updatePlayPauseButton()
 
-            // 设置歌词显示
-            setupLyricsForAudio()
+            // 设置歌词显示 - 延迟一点确保播放器准备好
+            handler.postDelayed({
+                setupLyricsForAudio()
+            }, 300)
 
         } catch (e: Exception) {
             showError("音频加载失败: ${e.message}")
