@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class FileServerService(private val context: Context) {
 
@@ -335,6 +336,204 @@ class FileServerService(private val context: Context) {
         } catch (e: Exception) {
             Log.e("FileServerService", "删除文件异常: ${e.message}")
             false
+        }
+    }
+
+    // ==================== 歌词相关方法 ====================
+
+    // 歌词相关数据类
+    data class LyricsMappingRequest(
+        val songPath: String,
+        val lyricsPath: String
+    )
+
+    data class LyricsFileInfo(
+        val path: String,
+        val name: String,
+        val size: Long,
+        val sizeFormatted: String,
+        val modifiedTime: String
+    )
+
+    data class LyricsResponse(
+        val type: String, // "lyrics_content" 或 "available_files"
+        val lyricsPath: String? = null,
+        val fileName: String? = null,
+        val content: String? = null,
+        val encoding: String? = null,
+        val files: List<LyricsFileInfo>? = null,
+        val message: String? = null
+    )
+
+    data class LyricsMappingResponse(
+        val songPath: String,
+        val lyricsPath: String,
+        val lyricsFileName: String,
+        val exists: Boolean
+    )
+
+    suspend fun getLyrics(serverUrl: String, songPath: String): LyricsResponse = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedSongPath = java.net.URLEncoder.encode(songPath, "UTF-8")
+            val lyricsUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/$encodedSongPath"
+
+            Log.d("FileServerService", "获取歌词: $lyricsUrl")
+
+            val request = Request.Builder()
+                .url(lyricsUrl)
+                .header("User-Agent", "FileServerClient/1.0")
+                .build()
+
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: ""
+                Log.d("FileServerService", "歌词响应: $json")
+                gson.fromJson(json, LyricsResponse::class.java)
+            } else {
+                val errorBody = response.body?.string() ?: "未知错误"
+                Log.e("FileServerService", "获取歌词失败: ${response.code} - $errorBody")
+                LyricsResponse(type = "error", message = "获取歌词失败: ${response.code}")
+            }
+        } catch (e: Exception) {
+            Log.e("FileServerService", "获取歌词异常: ${e.message}")
+            LyricsResponse(type = "error", message = "获取歌词异常: ${e.message}")
+        }
+    }
+
+    suspend fun saveLyricsMapping(serverUrl: String, songPath: String, lyricsPath: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val mappingUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/mapping"
+
+            Log.d("FileServerService", "保存歌词映射: $mappingUrl")
+
+            val requestBody = gson.toJson(LyricsMappingRequest(songPath, lyricsPath))
+                .toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url(mappingUrl)
+                .post(requestBody)
+                .header("User-Agent", "FileServerClient/1.0")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val isSuccessful = response.isSuccessful
+
+            if (isSuccessful) {
+                Log.d("FileServerService", "歌词映射保存成功")
+            } else {
+                val errorBody = response.body?.string() ?: "未知错误"
+                Log.e("FileServerService", "保存歌词映射失败: ${response.code} - $errorBody")
+            }
+
+            response.close()
+            isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "保存歌词映射异常: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun getLyricsMapping(serverUrl: String, songPath: String): LyricsMappingResponse? = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedSongPath = java.net.URLEncoder.encode(songPath, "UTF-8")
+            val mappingUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/mapping/$encodedSongPath"
+
+            Log.d("FileServerService", "获取歌词映射: $mappingUrl")
+
+            val request = Request.Builder()
+                .url(mappingUrl)
+                .header("User-Agent", "FileServerClient/1.0")
+                .build()
+
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: ""
+                gson.fromJson(json, LyricsMappingResponse::class.java)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("FileServerService", "获取歌词映射异常: ${e.message}")
+            null
+        }
+    }
+
+    // 在 FileServerService 类中添加
+    suspend fun markNoLyrics(serverUrl: String, songPath: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val mappingUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/mapping"
+
+            Log.d("FileServerService", "标记无歌词: $mappingUrl")
+
+            // 使用特殊的路径来标记无歌词
+            val requestBody = gson.toJson(LyricsMappingRequest(songPath, "NO_LYRICS"))
+                .toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url(mappingUrl)
+                .post(requestBody)
+                .header("User-Agent", "FileServerClient/1.0")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val isSuccessful = response.isSuccessful
+
+            if (isSuccessful) {
+                Log.d("FileServerService", "标记无歌词成功")
+            } else {
+                val errorBody = response.body?.string() ?: "未知错误"
+                Log.e("FileServerService", "标记无歌词失败: ${response.code} - $errorBody")
+            }
+
+            response.close()
+            isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "标记无歌词异常: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun getLyricsFiles(serverUrl: String, directory: String): List<LyricsFileInfo> = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedDirectory = java.net.URLEncoder.encode(directory, "UTF-8")
+            val filesUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/files/$encodedDirectory"
+
+            Log.d("FileServerService", "获取歌词文件列表: $filesUrl")
+
+            val request = Request.Builder()
+                .url(filesUrl)
+                .header("User-Agent", "FileServerClient/1.0")
+                .build()
+
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: ""
+                val apiResponse = gson.fromJson(json, Map::class.java)
+                val filesList = apiResponse["lyricsFiles"] as? List<Map<String, Any>> ?: emptyList()
+
+                filesList.map { fileMap ->
+                    LyricsFileInfo(
+                        path = fileMap["path"] as? String ?: "",
+                        name = fileMap["name"] as? String ?: "",
+                        size = (fileMap["size"] as? Double ?: 0.0).toLong(),
+                        sizeFormatted = fileMap["sizeFormatted"] as? String ?: "",
+                        modifiedTime = fileMap["modifiedTime"] as? String ?: ""
+                    )
+                }
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e("FileServerService", "获取歌词文件列表异常: ${e.message}")
+            emptyList()
         }
     }
 }

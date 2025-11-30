@@ -109,6 +109,61 @@
             android:layout_gravity="center"
             android:indeterminate="true" />
 
+        <!-- 歌词显示容器 -->
+        <LinearLayout
+            android:id="@+id/lyricsContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="16dp"
+            android:visibility="gone"
+            android:background="#80000000">
+
+            <TextView
+                android:id="@+id/lyricsTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="歌词"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:padding="4dp" />
+
+            <TextView
+                android:id="@+id/currentLyricsLine"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="正在加载歌词..."
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:padding="8dp" />
+
+            <TextView
+                android:id="@+id/nextLyricsLine"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="#CCCCCC"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:padding="4dp" />
+
+            <Button
+                android:id="@+id/lyricsSettingsButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="歌词设置"
+                android:textSize="12sp"
+                android:background="@android:color/transparent"
+                android:textColor="#AAAAAA"
+                android:layout_marginTop="8dp" />
+
+        </LinearLayout>
+
         <!-- 底部控制栏 - 完全透明背景 -->
         <LinearLayout
             android:id="@+id/videoControls"
@@ -126,12 +181,30 @@
             android:layout_marginEnd="16dp">
 
             <ImageButton
+                android:id="@+id/previousButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@android:drawable/ic_media_previous"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="上一个"
+                app:tint="#FFFFFF" />
+
+            <ImageButton
                 android:id="@+id/playPauseButton"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:src="@android:drawable/ic_media_play"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="播放/暂停"
+                app:tint="#FFFFFF" />
+
+            <ImageButton
+                android:id="@+id/nextButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@android:drawable/ic_media_next"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="下一个"
                 app:tint="#FFFFFF" />
 
             <TextView

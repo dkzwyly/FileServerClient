@@ -19,6 +19,7 @@ import android.view.WindowManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -27,6 +28,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
@@ -34,8 +37,22 @@ import coil.ImageLoader
 import coil.request.ImageRequest
 import coil.transform.RoundedCornersTransformation
 import kotlinx.coroutines.*
+import java.nio.file.Paths
 import java.util.*
 import kotlin.math.abs
+
+// 歌词相关数据类
+data class LyricsLine(
+    val time: Long, // 时间戳（毫秒）
+    val text: String // 歌词文本
+)
+
+data class LyricsData(
+    val lines: List<LyricsLine>,
+    val title: String = "",
+    val artist: String = "",
+    val album: String = ""
+)
 
 @UnstableApi
 class PreviewActivity : AppCompatActivity() {
@@ -63,11 +80,20 @@ class PreviewActivity : AppCompatActivity() {
     private lateinit var videoLoadingProgress: ProgressBar
     private lateinit var videoControls: LinearLayout
     private lateinit var playPauseButton: ImageButton
+    private lateinit var previousButton: ImageButton
+    private lateinit var nextButton: ImageButton
     private lateinit var fullscreenToggleButton: ImageButton
     private lateinit var seekBar: SeekBar
     private lateinit var currentTimeTextView: TextView
     private lateinit var durationTextView: TextView
     private lateinit var speedIndicator: TextView
+
+    // 歌词显示组件
+    private lateinit var lyricsContainer: LinearLayout
+    private lateinit var lyricsTitle: TextView
+    private lateinit var currentLyricsLine: TextView
+    private lateinit var nextLyricsLine: TextView
+    private lateinit var lyricsSettingsButton: Button
 
     // 文本预览组件
     private lateinit var textPreview: TextView
@@ -160,6 +186,12 @@ class PreviewActivity : AppCompatActivity() {
     private var controlsVisible = true
     private var controlsAutoHideEnabled = true
 
+    // 歌词相关变量
+    private var lyricsData: LyricsData? = null
+    private var isLyricsVisible = false
+    private val lyricsUpdateRunnable = Runnable { updateLyricsDisplay() }
+    private var lyricsDialog: AlertDialog? = null
+
     // 缩放模式常量
     companion object {
         private const val NONE = 0
@@ -195,7 +227,6 @@ class PreviewActivity : AppCompatActivity() {
         // 设置自动连播监听
         if (autoPlayEnabled && mediaFileList != null && currentMediaIndex != -1) {
             setupAutoPlayListener()
-            addAutoPlayControls()
         }
     }
 
@@ -280,11 +311,20 @@ class PreviewActivity : AppCompatActivity() {
         videoLoadingProgress = findViewById(R.id.videoLoadingProgress)
         videoControls = findViewById(R.id.videoControls)
         playPauseButton = findViewById(R.id.playPauseButton)
+        previousButton = findViewById(R.id.previousButton)
+        nextButton = findViewById(R.id.nextButton)
         fullscreenToggleButton = findViewById(R.id.fullscreenToggleButton)
         seekBar = findViewById(R.id.seekBar)
         currentTimeTextView = findViewById(R.id.currentTimeTextView)
         durationTextView = findViewById(R.id.durationTextView)
         speedIndicator = findViewById(R.id.speedIndicator)
+
+        // 初始化歌词组件
+        lyricsContainer = findViewById(R.id.lyricsContainer)
+        lyricsTitle = findViewById(R.id.lyricsTitle)
+        currentLyricsLine = findViewById(R.id.currentLyricsLine)
+        nextLyricsLine = findViewById(R.id.nextLyricsLine)
+        lyricsSettingsButton = findViewById(R.id.lyricsSettingsButton)
 
         textPreview = findViewById(R.id.textPreview)
         textLoadingProgress = findViewById(R.id.textLoadingProgress)
@@ -312,6 +352,11 @@ class PreviewActivity : AppCompatActivity() {
         // 计算区域宽度
         val displayMetrics = resources.displayMetrics
         regionWidth = displayMetrics.widthPixels / 3
+
+        // 设置歌词设置按钮点击事件
+        lyricsSettingsButton.setOnClickListener {
+            showLyricsSettingsDialog()
+        }
     }
 
     private fun setupAudioManager() {
@@ -454,7 +499,17 @@ class PreviewActivity : AppCompatActivity() {
         // 创建使用不安全 SSL 的数据源工厂
         val dataSourceFactory = createUnsafeDataSourceFactory()
 
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(30000, 60000, 1500, 2000) // 优化缓冲区
+            .setTargetBufferBytes(-1) // 不限制缓冲区大小
+            .build()
+
+        val renderersFactory = DefaultRenderersFactory(this)
+            .setEnableDecoderFallback(true) // 启用解码器回退
+
         exoPlayer = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
+            .setRenderersFactory(renderersFactory)
             .setSeekBackIncrementMs(5000)
             .setSeekForwardIncrementMs(5000)
             .build().apply {
@@ -468,6 +523,11 @@ class PreviewActivity : AppCompatActivity() {
                                 updateDuration()
                                 startProgressUpdates()
                                 updateControlsVisibility()
+
+                                // 如果是音频文件，设置歌词
+                                if (currentFileType == "audio") {
+                                    setupLyricsForAudio()
+                                }
                             }
                             Player.STATE_BUFFERING -> {
                                 videoLoadingProgress.visibility = View.VISIBLE
@@ -478,6 +538,9 @@ class PreviewActivity : AppCompatActivity() {
                                 if (isFullscreen) {
                                     showControlsPersistent() // 播放结束时显示控制栏
                                 }
+
+                                // 停止歌词更新
+                                stopLyricsUpdates()
 
                                 // 自动连播：播放结束后播放下一个
                                 if (autoPlayEnabled && this@apply.isPlaying) {
@@ -493,6 +556,9 @@ class PreviewActivity : AppCompatActivity() {
                         videoLoadingProgress.visibility = View.GONE
                         showError("播放错误: ${error.message}")
 
+                        // 停止歌词更新
+                        stopLyricsUpdates()
+
                         // 自动连播：播放错误时也尝试播放下一个
                         if (autoPlayEnabled) {
                             handler.postDelayed({
@@ -505,6 +571,13 @@ class PreviewActivity : AppCompatActivity() {
                         this@PreviewActivity.isPlaying = isPlaying
                         updatePlayPauseButton()
                         updateControlsVisibility() // 播放状态变化时更新控制栏
+
+                        // 播放状态变化时更新歌词
+                        if (isPlaying) {
+                            startLyricsUpdates()
+                        } else {
+                            // 暂停时不停止歌词更新，但降低更新频率
+                        }
                     }
                 })
             }
@@ -951,7 +1024,315 @@ class PreviewActivity : AppCompatActivity() {
         }
     }
 
-    // 自动连播相关方法
+    // ==================== 歌词相关方法 ====================
+
+    private fun setupLyricsForAudio() {
+        if (currentFileType != "audio") return
+
+        // 显示歌词容器
+        lyricsContainer.visibility = View.VISIBLE
+        isLyricsVisible = true
+
+        // 加载歌词
+        loadLyricsForCurrentSong()
+    }
+
+    private fun loadLyricsForCurrentSong() {
+        coroutineScope.launch {
+            try {
+                val fileServerService = FileServerService(this@PreviewActivity)
+
+                // 首先检查是否有映射关系
+                val mapping = fileServerService.getLyricsMapping(currentServerUrl, getCurrentSongPath())
+
+                if (mapping != null && mapping.lyricsPath == "NO_LYRICS") {
+                    // 已标记为无歌词
+                    currentLyricsLine.text = "此歌曲无歌词"
+                    nextLyricsLine.text = ""
+                    lyricsTitle.text = "无歌词"
+                    showToast("此歌曲已标记为无歌词")
+                    return@launch
+                }
+
+                val lyricsResponse = fileServerService.getLyrics(currentServerUrl, getCurrentSongPath())
+
+                when (lyricsResponse.type) {
+                    "lyrics_content" -> {
+                        // 直接获取到歌词内容
+                        lyricsResponse.content?.let { content ->
+                            parseLyricsContent(content)
+                            startLyricsUpdates()
+                            showToast("歌词加载成功")
+                        }
+                    }
+                    "available_files" -> {
+                        // 显示歌词文件选择对话框
+                        lyricsResponse.files?.let { files ->
+                            showLyricsFileSelectionDialog(files)
+                        }
+                    }
+                    else -> {
+                        // 没有找到歌词
+                        currentLyricsLine.text = "未找到歌词文件"
+                        nextLyricsLine.text = ""
+                        showToast("未找到歌词文件")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("PreviewActivity", "加载歌词失败", e)
+                currentLyricsLine.text = "歌词加载失败"
+                nextLyricsLine.text = ""
+                showToast("歌词加载失败: ${e.message}")
+            }
+        }
+    }
+
+    private fun getCurrentSongPath(): String {
+        // 根据当前播放的文件信息构建歌曲路径
+        return if (autoPlayEnabled && mediaFileList != null && currentMediaIndex != -1) {
+            mediaFileList!![currentMediaIndex].path
+        } else {
+            // 从Intent中提取路径信息
+            intent.getStringExtra("FILE_PATH") ?: currentFileName
+        }
+    }
+
+    private fun parseLyricsContent(content: String) {
+        val lines = mutableListOf<LyricsLine>()
+        var title = ""
+        var artist = ""
+        var album = ""
+
+        content.split("\n").forEach { line ->
+            when {
+                line.startsWith("[ti:") -> {
+                    title = line.substring(4, line.length - 1).trim()
+                }
+                line.startsWith("[ar:") -> {
+                    artist = line.substring(4, line.length - 1).trim()
+                }
+                line.startsWith("[al:") -> {
+                    album = line.substring(4, line.length - 1).trim()
+                }
+                line.matches(Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\].+")) -> {
+                    // 解析时间戳和歌词文本
+                    val timeMatch = Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\]").find(line)
+                    if (timeMatch != null) {
+                        val (minutes, seconds, milliseconds) = timeMatch.destructured
+                        val time = minutes.toLong() * 60000 +
+                                seconds.toLong() * 1000 +
+                                milliseconds.padEnd(3, '0').take(3).toLong()
+
+                        val text = line.substring(timeMatch.range.last + 1).trim()
+                        if (text.isNotEmpty()) {
+                            lines.add(LyricsLine(time, text))
+                        }
+                    }
+                }
+                line.matches(Regex("\\[\\d{2}:\\d{2}:\\d{2}\\.\\d{2,3}\\].+")) -> {
+                    // 解析带小时的时间戳
+                    val timeMatch = Regex("\\[(\\d{2}):(\\d{2}):(\\d{2})\\.(\\d{2,3})\\]").find(line)
+                    if (timeMatch != null) {
+                        val (hours, minutes, seconds, milliseconds) = timeMatch.destructured
+                        val time = hours.toLong() * 3600000 +
+                                minutes.toLong() * 60000 +
+                                seconds.toLong() * 1000 +
+                                milliseconds.padEnd(3, '0').take(3).toLong()
+
+                        val text = line.substring(timeMatch.range.last + 1).trim()
+                        if (text.isNotEmpty()) {
+                            lines.add(LyricsLine(time, text))
+                        }
+                    }
+                }
+            }
+        }
+
+        // 按时间排序
+        lines.sortBy { it.time }
+
+        lyricsData = LyricsData(lines, title, artist, album)
+
+        // 更新歌词标题
+        val titleText = buildString {
+            if (title.isNotEmpty()) append(title)
+            if (artist.isNotEmpty()) {
+                if (isNotEmpty()) append(" - ")
+                append(artist)
+            }
+            if (album.isNotEmpty()) {
+                if (isNotEmpty()) append(" (")
+                append(album)
+                if (isNotEmpty()) append(")")
+            }
+        }
+
+        if (titleText.isNotEmpty()) {
+            lyricsTitle.text = titleText
+        }
+    }
+
+    private fun startLyricsUpdates() {
+        handler.post(lyricsUpdateRunnable)
+    }
+
+    private fun stopLyricsUpdates() {
+        handler.removeCallbacks(lyricsUpdateRunnable)
+    }
+
+    private fun updateLyricsDisplay() {
+        lyricsData?.let { data ->
+            exoPlayer?.let { player ->
+                val currentTime = player.currentPosition
+                val currentLine = findCurrentLyricsLine(data.lines, currentTime)
+
+                // 更新当前歌词行
+                currentLyricsLine.text = currentLine?.text ?: ""
+
+                // 更新下一行歌词
+                val nextLine = findNextLyricsLine(data.lines, currentTime)
+                nextLyricsLine.text = nextLine?.text ?: ""
+
+                // 根据是否在播放决定更新频率
+                val updateDelay = if (player.isPlaying) 100L else 500L
+                handler.postDelayed(lyricsUpdateRunnable, updateDelay)
+            }
+        }
+    }
+
+    private fun findCurrentLyricsLine(lines: List<LyricsLine>, currentTime: Long): LyricsLine? {
+        for (i in lines.indices.reversed()) {
+            if (currentTime >= lines[i].time) {
+                return lines[i]
+            }
+        }
+        return null
+    }
+
+    private fun findNextLyricsLine(lines: List<LyricsLine>, currentTime: Long): LyricsLine? {
+        for (i in lines.indices) {
+            if (currentTime < lines[i].time) {
+                return lines[i]
+            }
+        }
+        return null
+    }
+
+    private fun showLyricsFileSelectionDialog(files: List<FileServerService.LyricsFileInfo>) {
+        val fileNames = files.map { it.name }.toMutableList()
+        fileNames.add("无歌词（如纯音乐）")
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("选择歌词文件")
+            .setItems(fileNames.toTypedArray()) { _, which ->
+                if (which == fileNames.size - 1) {
+                    // 选择了"无歌词"选项
+                    markAsNoLyrics()
+                } else {
+                    val selectedFile = files[which]
+                    coroutineScope.launch {
+                        try {
+                            val fileServerService = FileServerService(this@PreviewActivity)
+                            val success = fileServerService.saveLyricsMapping(
+                                currentServerUrl,
+                                getCurrentSongPath(),
+                                selectedFile.path
+                            )
+
+                            if (success) {
+                                // 重新加载歌词
+                                loadLyricsForCurrentSong()
+                                showToast("歌词映射保存成功")
+                            } else {
+                                showToast("保存歌词映射失败")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("PreviewActivity", "保存歌词映射失败", e)
+                            showToast("保存歌词映射失败: ${e.message}")
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .create()
+
+        dialog.show()
+    }
+
+    private fun showLyricsSettingsDialog() {
+        val options = arrayOf("重新加载歌词", "选择歌词文件", "标记为无歌词", "隐藏歌词")
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("歌词设置")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> loadLyricsForCurrentSong()
+                    1 -> showDirectoryLyricsFiles()
+                    2 -> markAsNoLyrics()
+                    3 -> hideLyrics()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .create()
+
+        dialog.show()
+        lyricsDialog = dialog
+    }
+
+    private fun markAsNoLyrics() {
+        coroutineScope.launch {
+            try {
+                val fileServerService = FileServerService(this@PreviewActivity)
+                val success = fileServerService.markNoLyrics(currentServerUrl, getCurrentSongPath())
+
+                if (success) {
+                    // 更新UI显示无歌词
+                    currentLyricsLine.text = "此歌曲无歌词"
+                    nextLyricsLine.text = ""
+                    lyricsTitle.text = "无歌词"
+                    showToast("已标记为无歌词")
+
+                    // 停止歌词更新
+                    stopLyricsUpdates()
+                } else {
+                    showToast("标记失败")
+                }
+            } catch (e: Exception) {
+                Log.e("PreviewActivity", "标记无歌词失败", e)
+                showToast("标记失败: ${e.message}")
+            }
+        }
+    }
+
+    private fun showDirectoryLyricsFiles() {
+        val songPath = getCurrentSongPath()
+        val directory = java.io.File(songPath).parent ?: ""
+
+        coroutineScope.launch {
+            try {
+                val fileServerService = FileServerService(this@PreviewActivity)
+                val lyricsFiles = fileServerService.getLyricsFiles(currentServerUrl, directory)
+
+                if (lyricsFiles.isNotEmpty()) {
+                    showLyricsFileSelectionDialog(lyricsFiles)
+                } else {
+                    showToast("当前目录下没有找到歌词文件")
+                }
+            } catch (e: Exception) {
+                Log.e("PreviewActivity", "获取歌词文件列表失败", e)
+                showToast("获取歌词文件列表失败: ${e.message}")
+            }
+        }
+    }
+
+    private fun hideLyrics() {
+        lyricsContainer.visibility = View.GONE
+        isLyricsVisible = false
+        stopLyricsUpdates()
+    }
+
+    // ==================== 自动连播相关方法 ====================
+
     private fun setupAutoPlayListener() {
         autoPlayListener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -966,40 +1347,6 @@ class PreviewActivity : AppCompatActivity() {
 
         // 显示自动连播提示
         showToast("自动连播已启用 (${currentMediaIndex + 1}/${mediaFileList?.size ?: 0})")
-    }
-
-    private fun addAutoPlayControls() {
-        // 在控制栏添加上一个/下一个按钮
-        val previousButton = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_media_previous)
-            setBackgroundResource(R.drawable.selectable_item_background)
-            setOnClickListener {
-                playPreviousMedia()
-            }
-            contentDescription = "上一个"
-        }
-
-        val nextButton = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_media_next)
-            setBackgroundResource(R.drawable.selectable_item_background)
-            setOnClickListener {
-                playNextMedia()
-            }
-            contentDescription = "下一个"
-        }
-
-        // 在播放/暂停按钮旁边添加上一个/下一个按钮
-        val params = LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx())
-        params.gravity = android.view.Gravity.CENTER_VERTICAL
-
-        // 找到播放/暂停按钮的位置并插入
-        val playPauseIndex = videoControls.indexOfChild(playPauseButton)
-        videoControls.addView(previousButton, playPauseIndex, params)
-        videoControls.addView(nextButton, playPauseIndex + 2, params) // +2 因为已经插入了一个按钮
-    }
-
-    private fun Int.dpToPx(): Int {
-        return (this * resources.displayMetrics.density).toInt()
     }
 
     private fun playNextMedia() {
@@ -1053,6 +1400,11 @@ class PreviewActivity : AppCompatActivity() {
 
             // 重新加载预览
             loadPreview()
+
+            // 重新加载歌词（如果有）
+            if (isLyricsVisible) {
+                loadLyricsForCurrentSong()
+            }
 
             // 显示提示
             showToast("正在播放: ${item.name} (${index + 1}/${mediaFileList!!.size})")
@@ -1124,6 +1476,18 @@ class PreviewActivity : AppCompatActivity() {
         // 视频控制事件
         playPauseButton.setOnClickListener {
             toggleVideoPlayback()
+        }
+
+        previousButton.setOnClickListener {
+            if (autoPlayEnabled) {
+                playPreviousMedia()
+            }
+        }
+
+        nextButton.setOnClickListener {
+            if (autoPlayEnabled) {
+                playNextMedia()
+            }
         }
 
         fullscreenToggleButton.setOnClickListener {
@@ -1253,6 +1617,9 @@ class PreviewActivity : AppCompatActivity() {
 
             isPlaying = true
             updatePlayPauseButton()
+
+            // 设置歌词显示
+            setupLyricsForAudio()
 
         } catch (e: Exception) {
             showError("音频加载失败: ${e.message}")
@@ -1454,6 +1821,7 @@ class PreviewActivity : AppCompatActivity() {
         // 当Activity进入后台时暂停播放
         exoPlayer?.pause()
         stopProgressUpdates()
+        stopLyricsUpdates()
         // 清理所有手势相关状态
         isLongPressDetected = false
         isSwiping = false
@@ -1463,6 +1831,8 @@ class PreviewActivity : AppCompatActivity() {
         longPressHandler.removeCallbacksAndMessages(null)
         handler.removeCallbacks(hideControlRunnable)
         handler.removeCallbacks(hideControlsRunnable)
+        // 关闭歌词对话框
+        lyricsDialog?.dismiss()
     }
 
     override fun onResume() {
@@ -1472,12 +1842,17 @@ class PreviewActivity : AppCompatActivity() {
         }
         // 重新开始进度更新
         startProgressUpdates()
+        // 重新开始歌词更新
+        if (isLyricsVisible) {
+            startLyricsUpdates()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         coroutineScope.cancel()
         stopProgressUpdates()
+        stopLyricsUpdates()
 
         // 清理所有handler
         doubleTapHandler.removeCallbacksAndMessages(null)
@@ -1489,6 +1864,9 @@ class PreviewActivity : AppCompatActivity() {
         autoPlayListener?.let { listener ->
             exoPlayer?.removeListener(listener)
         }
+
+        // 关闭歌词对话框
+        lyricsDialog?.dismiss()
 
         // 释放播放器资源
         exoPlayer?.release()
