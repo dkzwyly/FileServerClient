@@ -2,6 +2,7 @@
 package com.dkc.fileserverclient
 
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.util.Log
 import android.widget.ImageButton
@@ -9,6 +10,8 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
 
 class VideoLibraryActivity : AppCompatActivity() {
@@ -36,9 +39,13 @@ class VideoLibraryActivity : AppCompatActivity() {
     private lateinit var videosAdapter: VideoFilesAdapter
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
+    private lateinit var sharedPreferences: SharedPreferences
+    private val gson = Gson()
 
     companion object {
         private const val TAG = "VideoLibraryActivity"
+        private const val PREFS_NAME = "video_library_prefs"
+        private const val KEY_RECENT_WATCHED = "recent_watched"
 
         // 视频文件扩展名
         private val VIDEO_EXTENSIONS = listOf(
@@ -56,6 +63,9 @@ class VideoLibraryActivity : AppCompatActivity() {
             finish()
             return
         }
+
+        // 初始化 SharedPreferences
+        sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
         initViews()
         loadRecentWatched()
@@ -106,10 +116,41 @@ class VideoLibraryActivity : AppCompatActivity() {
     }
 
     private fun loadRecentWatched() {
-        // TODO: 从本地存储加载最近观看记录
-        // 这里先模拟一些数据或留空
-        recentWatchedList.clear()
-        recentWatchedAdapter.notifyDataSetChanged()
+        coroutineScope.launch {
+            try {
+                val recentItems = loadRecentWatchedFromStorage()
+                recentWatchedList.clear()
+                recentWatchedList.addAll(recentItems)
+                recentWatchedAdapter.notifyDataSetChanged()
+
+                if (recentWatchedList.isEmpty()) {
+                    Log.d(TAG, "没有找到最近观看记录")
+                } else {
+                    Log.d(TAG, "加载了 ${recentWatchedList.size} 个最近观看记录")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "加载最近观看记录失败", e)
+            }
+        }
+    }
+
+    /**
+     * 从本地存储加载最近观看记录
+     */
+    private suspend fun loadRecentWatchedFromStorage(): List<FileSystemItem> = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val recentWatchedJson = sharedPreferences.getString(KEY_RECENT_WATCHED, null)
+
+            if (recentWatchedJson.isNullOrEmpty()) {
+                emptyList()
+            } else {
+                val type = object : TypeToken<List<FileSystemItem>>() {}.type
+                gson.fromJson(recentWatchedJson, type) ?: emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "解析最近观看记录失败", e)
+            emptyList()
+        }
     }
 
     private fun loadVideoFolders() {
@@ -309,20 +350,43 @@ class VideoLibraryActivity : AppCompatActivity() {
     }
 
     private fun addToRecentWatched(videoItem: FileSystemItem) {
-        // 移除已存在的相同项目
-        recentWatchedList.removeAll { it.path == videoItem.path }
+        coroutineScope.launch {
+            try {
+                // 移除已存在的相同项目
+                recentWatchedList.removeAll { it.path == videoItem.path }
 
-        // 添加到开头
-        recentWatchedList.add(0, videoItem)
+                // 添加到开头
+                recentWatchedList.add(0, videoItem)
 
-        // 限制最近观看数量
-        if (recentWatchedList.size > 10) {
-            recentWatchedList.removeAt(recentWatchedList.size - 1)
+                // 限制最近观看数量
+                if (recentWatchedList.size > 10) {
+                    recentWatchedList.removeAt(recentWatchedList.size - 1)
+                }
+
+                recentWatchedAdapter.notifyDataSetChanged()
+
+                // 保存到本地存储
+                saveRecentWatchedToStorage()
+
+            } catch (e: Exception) {
+                Log.e(TAG, "保存最近观看记录失败", e)
+            }
         }
+    }
 
-        recentWatchedAdapter.notifyDataSetChanged()
+    /**
+     * 保存最近观看记录到本地存储
+     */
+    private suspend fun saveRecentWatchedToStorage() = withContext(Dispatchers.IO) {
+        try {
+            val recentWatchedJson = gson.toJson(recentWatchedList)
+            sharedPreferences.edit().putString(KEY_RECENT_WATCHED, recentWatchedJson).apply()
 
-        // TODO: 保存到本地存储
+            Log.d(TAG, "最近观看记录已保存，共 ${recentWatchedList.size} 个项目")
+        } catch (e: Exception) {
+            Log.e(TAG, "保存最近观看记录失败", e)
+            throw e
+        }
     }
 
     override fun onResume() {
