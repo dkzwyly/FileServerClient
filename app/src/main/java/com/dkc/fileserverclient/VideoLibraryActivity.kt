@@ -166,14 +166,12 @@ class VideoLibraryActivity : AppCompatActivity() {
                 Log.d(TAG, "找到 ${allVideoFolders.size} 个包含视频的文件夹")
 
                 // 更新文件夹列表
-                folderList.clear()
-                folderList.addAll(allVideoFolders)
+                foldersAdapter.updateFolders(allVideoFolders)
 
                 if (folderList.isEmpty()) {
                     statusText.text = "没有找到包含视频的文件夹"
                 } else {
                     statusText.text = "找到 ${folderList.size} 个影视文件夹"
-                    foldersAdapter.notifyDataSetChanged()
 
                     // 默认选择第一个文件夹
                     if (folderList.isNotEmpty()) {
@@ -220,9 +218,12 @@ class VideoLibraryActivity : AppCompatActivity() {
 
             for (item in items) {
                 if (item.isDirectory && item.name != "..") {
-                    // 检查该文件夹是否包含视频文件
-                    if (hasVideoFiles(item.path)) {
+                    // 检查该文件夹是否包含视频文件并统计数量
+                    val videoCount = countVideoFiles(item.path)
+                    if (videoCount > 0) {
                         result.add(item)
+                        // 设置视频数量到适配器
+                        foldersAdapter.setVideoCount(item.path, videoCount)
                     }
 
                     // 如果还有深度，继续递归搜索
@@ -236,16 +237,19 @@ class VideoLibraryActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun hasVideoFiles(folderPath: String): Boolean {
+    /**
+     * 统计文件夹中的视频文件数量
+     */
+    private suspend fun countVideoFiles(folderPath: String): Int {
         return withContext(Dispatchers.IO) {
             try {
                 val folderItems = fileServerService.getFileList(currentServerUrl, folderPath)
-                folderItems.any { item ->
+                folderItems.count { item ->
                     !item.isDirectory && isVideoFile(item)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "检查文件夹 $folderPath 失败", e)
-                false
+                Log.e(TAG, "统计文件夹 $folderPath 视频数量失败", e)
+                0
             }
         }
     }
@@ -392,6 +396,8 @@ class VideoLibraryActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "onResume")
+        // 重新加载最近观看记录，确保数据最新
+        loadRecentWatched()
     }
 
     override fun onDestroy() {

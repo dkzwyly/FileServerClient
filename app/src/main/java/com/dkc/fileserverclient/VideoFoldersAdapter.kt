@@ -9,50 +9,81 @@ import androidx.recyclerview.widget.RecyclerView
 
 class VideoFoldersAdapter(
     private val serverUrl: String,
-    private val items: List<FileSystemItem>,
-    private val onItemClick: (FileSystemItem) -> Unit
-) : RecyclerView.Adapter<VideoFoldersAdapter.VideoFolderViewHolder>() {
+    private val folderList: MutableList<FileSystemItem>,
+    private val onFolderClick: (FileSystemItem) -> Unit
+) : RecyclerView.Adapter<VideoFoldersAdapter.ViewHolder>() {
 
     private var selectedFolder: FileSystemItem? = null
-
-    class VideoFolderViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-        val iconView: ImageView = view.findViewById(R.id.folderIcon)
-        val titleView: TextView = view.findViewById(R.id.folderTitle)
-        val backgroundView: View = view.findViewById(R.id.folderBackground)
-    }
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoFolderViewHolder {
-        val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_video_folder, parent, false)
-        return VideoFolderViewHolder(view)
-    }
-
-    override fun onBindViewHolder(holder: VideoFolderViewHolder, position: Int) {
-        val item = items[position]
-
-        // 设置标题
-        holder.titleView.text = item.name
-
-        // 设置选中状态
-        val isSelected = selectedFolder?.path == item.path
-        if (isSelected) {
-            holder.backgroundView.setBackgroundColor(holder.itemView.context.getColor(android.R.color.holo_blue_light))
-            holder.titleView.setTextColor(holder.itemView.context.getColor(android.R.color.white))
-        } else {
-            holder.backgroundView.setBackgroundColor(holder.itemView.context.getColor(android.R.color.darker_gray))
-            holder.titleView.setTextColor(holder.itemView.context.getColor(android.R.color.black))
-        }
-
-        // 设置点击事件
-        holder.itemView.setOnClickListener {
-            onItemClick(item)
-        }
-    }
-
-    override fun getItemCount(): Int = items.size
+    private val videoCountMap = mutableMapOf<String, Int>()
 
     fun setSelectedFolder(folder: FileSystemItem) {
         selectedFolder = folder
         notifyDataSetChanged()
+    }
+
+    fun setVideoCount(folderPath: String, count: Int) {
+        videoCountMap[folderPath] = count
+        val position = folderList.indexOfFirst { it.path == folderPath }
+        if (position != -1) {
+            notifyItemChanged(position)
+        }
+    }
+
+    fun updateFolders(newFolders: List<FileSystemItem>) {
+        folderList.clear()
+        folderList.addAll(newFolders)
+        notifyDataSetChanged()
+    }
+
+    fun getFolderAtPosition(position: Int): FileSystemItem? {
+        return if (position in 0 until folderList.size) folderList[position] else null
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_video_folder, parent, false)
+        return ViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        val folder = folderList[position]
+        val context = holder.itemView.context
+
+        // 设置文件夹名称
+        holder.folderTitle.text = folder.name
+
+        // 设置视频数量 - 使用字符串资源
+        val videoCount = videoCountMap[folder.path] ?: 0
+        holder.folderVideoCount.text = if (videoCount > 0) {
+            context.getString(R.string.video_count_format, videoCount)
+        } else {
+            context.getString(R.string.empty_folder)
+        }
+
+        // 其余代码保持不变...
+        val isSelected = selectedFolder?.path == folder.path
+        if (isSelected) {
+            holder.itemView.alpha = 1.0f
+            holder.itemView.elevation = 6f
+            holder.itemView.setBackgroundResource(R.drawable.folder_card_bg)
+        } else {
+            holder.itemView.alpha = 0.9f
+            holder.itemView.elevation = 2f
+            holder.itemView.setBackgroundResource(R.drawable.folder_card_bg)
+        }
+
+        holder.itemView.setOnClickListener {
+            onFolderClick(folder)
+        }
+    }
+
+    override fun getItemCount(): Int {
+        return folderList.size
+    }
+
+    inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        val folderIcon: ImageView = itemView.findViewById(R.id.folderIcon)
+        val folderTitle: TextView = itemView.findViewById(R.id.folderTitle)
+        val folderVideoCount: TextView = itemView.findViewById(R.id.folderVideoCount)
     }
 }

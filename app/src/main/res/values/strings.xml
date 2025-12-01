@@ -29,4 +29,6 @@
     <string name="download_started">开始下载</string>
     <string name="preview">预览</string>
     <string name="download">下载</string>
+    <string name="video_count_format">%d个视频</string>
+    <string name="empty_folder">空文件夹</string>
 </resources>

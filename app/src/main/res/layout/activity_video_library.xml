@@ -5,7 +5,7 @@
     android:orientation="vertical"
     android:background="#F5F5F5">
 
-    <!-- 标题栏 -->
+    <!-- 标题栏 - 固定高度 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
@@ -41,7 +41,7 @@
 
     </LinearLayout>
 
-    <!-- 状态提示 -->
+    <!-- 状态提示 - 固定高度 -->
     <TextView
         android:id="@+id/videoLibraryStatusText"
         android:layout_width="match_parent"
@@ -52,7 +52,7 @@
         android:textColor="#666666"
         android:gravity="center" />
 
-    <!-- 主要内容区域，使用权重分配空间 -->
+    <!-- 主要内容区域 - 占据剩余所有空间 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -60,18 +60,21 @@
         android:orientation="vertical"
         android:padding="8dp">
 
-        <!-- 最近观看区域 -->
+        <!-- 最近观看区域 - 占据主要内容区域的1/3 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:background="@android:color/white"
+            android:elevation="2dp"
+            android:padding="8dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="最近观看"
-                android:textSize="16sp"
+                android:textSize="18sp"
                 android:textStyle="bold"
                 android:padding="8dp"
                 android:textColor="@android:color/black" />
@@ -82,60 +85,50 @@
                 android:layout_height="0dp"
                 android:layout_weight="1"
                 android:clipToPadding="false"
-                android:padding="8dp" />
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp" />
 
         </LinearLayout>
 
-        <!-- 影视文件夹区域 -->
-        <LinearLayout
+        <!-- 影视文件夹区域 - 占据主要内容区域的1/3，让内容居中 -->
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="影视"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:padding="8dp"
-                android:textColor="@android:color/black" />
+            android:background="@android:color/white"
+            android:elevation="2dp"
+            android:layout_marginTop="8dp"
+            android:padding="4dp">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/foldersRecyclerView"
                 android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
                 android:clipToPadding="false"
-                android:padding="8dp" />
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp" />
 
-        </LinearLayout>
+        </FrameLayout>
 
-        <!-- 视频文件区域 -->
+        <!-- 视频文件区域 - 占据主要内容区域的1/3 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/selectedFolderTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="视频文件"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:padding="8dp"
-                android:textColor="@android:color/black" />
+            android:orientation="vertical"
+            android:background="@android:color/white"
+            android:elevation="2dp"
+            android:layout_marginTop="8dp"
+            android:padding="4dp">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/videosRecyclerView"
                 android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
+                android:layout_height="match_parent"
                 android:clipToPadding="false"
-                android:padding="8dp" />
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp" />
 
         </LinearLayout>
 

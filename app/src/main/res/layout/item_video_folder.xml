@@ -1,38 +1,66 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="120dp"
-    android:layout_height="80dp"
+    android:layout_width="140dp"
+    android:layout_height="140dp"
     android:orientation="vertical"
-    android:padding="8dp"
+    android:padding="12dp"
+    android:background="@drawable/folder_card_bg"
     android:clickable="true"
     android:focusable="true"
-    android:foreground="?attr/selectableItemBackground">
+    android:foreground="?attr/selectableItemBackground"
+    android:elevation="2dp"
+    android:gravity="center">
 
-    <View
-        android:id="@+id/folderBackground"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@drawable/folder_normal_bg"
-        android:padding="12dp" />
-
-    <ImageView
-        android:id="@+id/folderIcon"
-        android:layout_width="24dp"
-        android:layout_height="24dp"
+    <!-- 文件夹图标容器 -->
+    <FrameLayout
+        android:layout_width="64dp"
+        android:layout_height="64dp"
         android:layout_gravity="center_horizontal"
-        android:src="@drawable/ic_folder"
-        android:contentDescription="文件夹" />
+        android:background="@drawable/folder_icon_bg">
 
-    <TextView
-        android:id="@+id/folderTitle"
+        <ImageView
+            android:id="@+id/folderIcon"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_folder"
+            android:contentDescription="文件夹"
+            android:tint="@android:color/white" />
+
+    </FrameLayout>
+
+    <!-- 文件夹名称和视频数量容器 -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingTop="4dp"
-        android:text="文件夹名称"
-        android:textSize="12sp"
-        android:maxLines="2"
-        android:ellipsize="end"
-        android:gravity="center"
-        android:textColor="@android:color/black" />
+        android:layout_marginTop="8dp"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <!-- 文件夹名称 -->
+        <TextView
+            android:id="@+id/folderTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="文件夹名称"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:textColor="@android:color/black" />
+
+        <!-- 视频数量提示 -->
+        <TextView
+            android:id="@+id/folderVideoCount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="12 videos"
+            android:textSize="10sp"
+            android:textColor="#666666"
+            android:gravity="center" />
+
+    </LinearLayout>
 
 </LinearLayout>

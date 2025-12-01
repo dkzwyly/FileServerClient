@@ -1,13 +1,13 @@
-<?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="120dp"
-    android:layout_height="100dp"
+    android:layout_width="160dp"
+    android:layout_height="140dp"
     android:orientation="vertical"
-    android:padding="8dp"
-    android:background="@android:color/white"
+    android:padding="12dp"
+    android:background="@drawable/video_card_bg"
     android:clickable="true"
     android:focusable="true"
-    android:foreground="?attr/selectableItemBackground">
+    android:foreground="?attr/selectableItemBackground"
+    android:elevation="2dp">
 
     <ImageView
         android:id="@+id/recentThumbnail"
@@ -16,15 +16,17 @@
         android:layout_weight="1"
         android:scaleType="centerCrop"
         android:src="@drawable/ic_video_placeholder"
+        android:background="#E0E0E0"
         android:contentDescription="最近观看" />
 
     <TextView
         android:id="@+id/recentTitle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingTop="4dp"
+        android:paddingTop="8dp"
         android:text="视频名称"
-        android:textSize="12sp"
+        android:textSize="13sp"
+        android:textStyle="bold"
         android:maxLines="1"
         android:ellipsize="end"
         android:gravity="center"
