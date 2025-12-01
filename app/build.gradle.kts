@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("kotlin-parcelize")
+    id("com.google.android.gms.oss-licenses-plugin")
 }
 
 android {
@@ -41,14 +42,9 @@ android {
     }
 
     buildFeatures {
-        compose = false // 如果你不使用 Compose，设为 false
-        viewBinding = true
+        compose = false
+        viewBinding = true  // 启用 ViewBinding
     }
-
-    // 如果你不使用 Compose，移除这些配置
-    // composeOptions {
-    //     kotlinCompilerExtensionVersion = "1.5.4"
-    // }
 
     packaging {
         resources {
@@ -72,17 +68,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
 
-    // 移除 Glide 依赖，我们使用 Coil
-    // implementation("com.github.bumptech.glide:glide:4.16.0")
-    // kapt("com.github.bumptech.glide:compiler:4.16.0")
-
     // 网络相关
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Coil 图片加载 - 使用正确版本
+    // Coil 图片加载
     implementation("io.coil-kt:coil:2.5.0")
     implementation("io.coil-kt:coil-base:2.5.0")
 
@@ -91,9 +83,10 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.2.1")
     implementation("androidx.media3:media3-session:1.2.1")
     implementation("androidx.media3:media3-common:1.2.1")
-
-    // OkHttp DataSource 用于更好的网络支持（包括 SSL）
     implementation("androidx.media3:media3-datasource-okhttp:1.2.1")
+
+    // OSS 许可证支持
+    implementation("com.google.android.gms:play-services-oss-licenses:17.0.1")
 
     // 测试依赖
     testImplementation("junit:junit:4.13.2")

@@ -1,10 +1,20 @@
-// build.gradle.kts (项目级)
-plugins {
-    id("com.android.application") version "8.1.0" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.20" apply false
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.2.1")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.20")
+        classpath("com.google.android.gms:oss-licenses-plugin:0.10.6")
+    }
 }
 
-// 移除所有 repositories 配置，因为它们现在在 settings.gradle.kts 中
+plugins {
+    id("com.android.application") version "8.2.1" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.20" apply false
+}
 
 tasks.register("clean", Delete::class) {
     delete(rootProject.buildDir)

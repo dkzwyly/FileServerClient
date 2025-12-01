@@ -3,9 +3,10 @@ package com.dkc.fileserverclient
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.view.animation.AnimationUtils
 import android.widget.*
@@ -70,6 +71,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 添加菜单
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.menu_main, menu)
+        return true
+    }
+
+    // 处理菜单项点击
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.menu_settings -> {
+                openSettings()
+                true
+            }
+            R.id.menu_about -> {
+                showToast("文件服务器客户端 v1.0")
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun openSettings() {
+        val intent = Intent(this, SettingsActivity::class.java)
+        startActivity(intent)
+        overrideActivityTransition()
+    }
+
     private fun initViews() {
         Log.d(TAG, "initViews started")
 
@@ -115,7 +143,6 @@ class MainActivity : AppCompatActivity() {
                 openVideoLibrary()
             }
 
-            // 在MainActivity.kt中更新音频库按钮点击事件
             audioLibraryButton.setOnClickListener {
                 Log.d(TAG, "Audio library button clicked")
                 if (isConnected) {
@@ -143,7 +170,6 @@ class MainActivity : AppCompatActivity() {
                 putExtra("SERVER_URL", currentServerUrl)
             }
             startActivity(intent)
-            // 使用 Activity 过渡动画替代弃用的 overridePendingTransition
             overrideActivityTransition()
         } else {
             showToast("请先连接到服务器")
@@ -252,7 +278,6 @@ class MainActivity : AppCompatActivity() {
     private fun updateConnectionStatus(status: String, color: String) {
         connectionStatusLabel.text = status
 
-        // 修复：移除未使用的 colorInt 变量
         when (color) {
             "#4CAF50" -> {
                 connectionStatusLabel.setTextColor("#2E7D32".toColorInt())
@@ -361,7 +386,6 @@ class MainActivity : AppCompatActivity() {
     private fun saveConnectionHistory() {
         try {
             val json = gson.toJson(connectionHistory)
-            // 使用 KTX 扩展函数 sharedPreferences.edit
             sharedPreferences.edit {
                 putString("connection_history", json)
             }
