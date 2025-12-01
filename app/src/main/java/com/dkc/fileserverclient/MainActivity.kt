@@ -115,9 +115,18 @@ class MainActivity : AppCompatActivity() {
                 openVideoLibrary()
             }
 
+            // 在MainActivity.kt中更新音频库按钮点击事件
             audioLibraryButton.setOnClickListener {
                 Log.d(TAG, "Audio library button clicked")
-                openFileList("audio")
+                if (isConnected) {
+                    val intent = Intent(this, AudioLibraryActivity::class.java).apply {
+                        putExtra("SERVER_URL", currentServerUrl)
+                    }
+                    startActivity(intent)
+                    overrideActivityTransition()
+                } else {
+                    showToast("请先连接到服务器")
+                }
             }
 
             Log.d(TAG, "initViews completed")

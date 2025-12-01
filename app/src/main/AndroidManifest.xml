@@ -64,6 +64,10 @@
             android:theme="@style/Theme.AppCompat.Light.NoActionBar"
             android:screenOrientation="portrait" />
 
+        <activity
+            android:name=".AudioLibraryActivity"
+            android:label="音频库"
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
     </application>
 
 </manifest>

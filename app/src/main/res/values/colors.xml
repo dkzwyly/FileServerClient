@@ -25,4 +25,7 @@
     <color name="surface_variant">#FFE0E0E0</color>
     <color name="primary">#FF2196F3</color>
     <color name="error">#FFB00020</color>
+    <color name="search_background">#F5F5F5</color>
+    <color name="search_stroke">#E0E0E0</color>
+    <color name="background_color">#F8F9FA</color>
 </resources>
