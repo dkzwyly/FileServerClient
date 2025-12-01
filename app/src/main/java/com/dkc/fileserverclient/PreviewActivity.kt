@@ -192,6 +192,11 @@ class PreviewActivity : AppCompatActivity() {
     private val lyricsUpdateRunnable = Runnable { updateLyricsDisplay() }
     private var lyricsDialog: AlertDialog? = null
 
+    // 添加歌词加载状态控制变量
+    private var isLyricsLoading = false
+    private var lyricsLoadJob: Job? = null
+
+
     // 缩放模式常量
     companion object {
         private const val NONE = 0
@@ -524,9 +529,19 @@ class PreviewActivity : AppCompatActivity() {
                                 startProgressUpdates()
                                 updateControlsVisibility()
 
-                                // 如果是音频文件，设置歌词
+                                // 如果是音频文件，设置歌词 - 简化条件，确保执行
                                 if (currentFileType == "audio") {
-                                    setupLyricsForAudio()
+                                    Log.d("Lyrics", "播放器准备就绪，确保歌词显示")
+                                    // 确保歌词容器可见
+                                    lyricsContainer.visibility = View.VISIBLE
+                                    isLyricsVisible = true
+
+                                    // 如果还没有加载歌词，则加载
+                                    if (lyricsData == null && !isLyricsLoading) {
+                                        handler.post {
+                                            loadLyricsForCurrentSong()
+                                        }
+                                    }
                                 }
                             }
                             Player.STATE_BUFFERING -> {
@@ -1029,6 +1044,8 @@ class PreviewActivity : AppCompatActivity() {
     private fun setupLyricsForAudio() {
         if (currentFileType != "audio") return
 
+        Log.d("Lyrics", "setupLyricsForAudio called, isLyricsLoading: $isLyricsLoading")
+
         // 重置歌词显示状态
         currentLyricsLine.text = "正在加载歌词..."
         nextLyricsLine.text = ""
@@ -1038,64 +1055,92 @@ class PreviewActivity : AppCompatActivity() {
         lyricsContainer.visibility = View.VISIBLE
         isLyricsVisible = true
 
-        // 加载歌词
+        // 加载歌词 - 总是调用，但内部会控制重复
         loadLyricsForCurrentSong()
     }
     private fun loadLyricsForCurrentSong() {
+        Log.d("Lyrics", "loadLyricsForCurrentSong called")
+
         // 确保停止之前的歌词更新
         stopLyricsUpdates()
 
-        coroutineScope.launch {
+        // 取消之前可能正在进行的歌词加载任务
+        lyricsLoadJob?.cancel()
+
+        // 重置加载状态
+        isLyricsLoading = false
+
+        lyricsLoadJob = coroutineScope.launch {
             try {
+                isLyricsLoading = true
+                Log.d("Lyrics", "开始加载歌词...")
+
                 val fileServerService = FileServerService(this@PreviewActivity)
 
                 // 首先检查是否有映射关系
                 val mapping = fileServerService.getLyricsMapping(currentServerUrl, getCurrentSongPath())
+                Log.d("Lyrics", "歌词映射结果: $mapping")
 
                 if (mapping != null && mapping.lyricsPath == "NO_LYRICS") {
                     // 已标记为无歌词
-                    currentLyricsLine.text = "此歌曲无歌词"
-                    nextLyricsLine.text = ""
-                    lyricsTitle.text = "无歌词"
-                    // 不需要显示Toast，避免频繁提示
+                    withContext(Dispatchers.Main) {
+                        currentLyricsLine.text = "此歌曲无歌词"
+                        nextLyricsLine.text = ""
+                        lyricsTitle.text = "无歌词"
+                        isLyricsLoading = false
+                        Log.d("Lyrics", "已标记为无歌词")
+                    }
                     return@launch
                 }
 
                 val lyricsResponse = fileServerService.getLyrics(currentServerUrl, getCurrentSongPath())
+                Log.d("Lyrics", "歌词响应类型: ${lyricsResponse.type}")
 
-                when (lyricsResponse.type) {
-                    "lyrics_content" -> {
-                        // 直接获取到歌词内容
-                        lyricsResponse.content?.let { content ->
-                            parseLyricsContent(content)
-                            startLyricsUpdates()
-                            // 不需要显示Toast，避免频繁提示
+                withContext(Dispatchers.Main) {
+                    when (lyricsResponse.type) {
+                        "lyrics_content" -> {
+                            // 直接获取到歌词内容
+                            lyricsResponse.content?.let { content ->
+                                Log.d("Lyrics", "解析歌词内容，长度: ${content.length}")
+                                parseLyricsContent(content)
+                                startLyricsUpdates()
+                                showToast("歌词加载成功")
+                            } ?: run {
+                                currentLyricsLine.text = "歌词内容为空"
+                                Log.d("Lyrics", "歌词内容为空")
+                            }
+                        }
+                        "available_files" -> {
+                            // 显示歌词文件选择对话框
+                            lyricsResponse.files?.let { files ->
+                                Log.d("Lyrics", "显示歌词文件选择，文件数: ${files.size}")
+                                showLyricsFileSelectionDialog(files)
+                            }
+                        }
+                        "no_lyrics" -> {
+                            // 服务器明确返回无歌词
+                            currentLyricsLine.text = "此歌曲无歌词"
+                            nextLyricsLine.text = ""
+                            lyricsTitle.text = "无歌词"
+                            Log.d("Lyrics", "服务器返回无歌词")
+                        }
+                        else -> {
+                            // 没有找到歌词
+                            currentLyricsLine.text = "未找到歌词文件"
+                            nextLyricsLine.text = ""
+                            Log.d("Lyrics", "未找到歌词文件")
                         }
                     }
-                    "available_files" -> {
-                        // 显示歌词文件选择对话框
-                        lyricsResponse.files?.let { files ->
-                            showLyricsFileSelectionDialog(files)
-                        }
-                    }
-                    "no_lyrics" -> {
-                        // 服务器明确返回无歌词
-                        currentLyricsLine.text = "此歌曲无歌词"
-                        nextLyricsLine.text = ""
-                        lyricsTitle.text = "无歌词"
-                    }
-                    else -> {
-                        // 没有找到歌词
-                        currentLyricsLine.text = "未找到歌词文件"
-                        nextLyricsLine.text = ""
-                        // 不需要显示Toast，避免频繁提示
-                    }
+                    isLyricsLoading = false
                 }
             } catch (e: Exception) {
-                Log.e("PreviewActivity", "加载歌词失败", e)
-                currentLyricsLine.text = "歌词加载失败"
-                nextLyricsLine.text = ""
-                // 不需要显示Toast，避免频繁提示
+                withContext(Dispatchers.Main) {
+                    Log.e("Lyrics", "加载歌词失败", e)
+                    currentLyricsLine.text = "歌词加载失败: ${e.message}"
+                    nextLyricsLine.text = ""
+                    isLyricsLoading = false
+                    showToast("歌词加载失败: ${e.message}")
+                }
             }
         }
     }
@@ -1399,6 +1444,8 @@ class PreviewActivity : AppCompatActivity() {
             // 停止并重置当前歌词状态
             stopLyricsUpdates()
             lyricsData = null
+            // 注意：这里不要重置 isLyricsLoading = false，让新的加载正常进行
+
             currentLyricsLine.text = "正在加载歌词..."
             nextLyricsLine.text = ""
             lyricsTitle.text = "歌词"
@@ -1424,10 +1471,10 @@ class PreviewActivity : AppCompatActivity() {
 
             // 如果是音频文件，确保歌词正确加载
             if (fileType == "audio" && isLyricsVisible) {
-                // 延迟一点确保播放器准备好后再加载歌词
-                handler.postDelayed({
+                // 立即加载歌词，不要延迟
+                handler.post {
                     loadLyricsForCurrentSong()
-                }, 500)
+                }
             }
 
             // 显示提示
@@ -1624,15 +1671,16 @@ class PreviewActivity : AppCompatActivity() {
 
     @UnstableApi
     private fun loadAudioPreview() {
-        showContainer(videoContainer) // 使用视频容器，但不显示视频视图
+        showContainer(videoContainer)
         fileTypeTextView.visibility = View.VISIBLE
 
-        playerView.visibility = View.GONE // 隐藏视频视图
-        videoControls.visibility = View.VISIBLE // 显示控制条
+        playerView.visibility = View.GONE
+        videoControls.visibility = View.VISIBLE
 
         // 重置歌词状态
         stopLyricsUpdates()
         lyricsData = null
+        // 注意：这里不要重置 isLyricsLoading，让歌词正常加载
 
         try {
             val mediaSourceFactory = ProgressiveMediaSource.Factory(createUnsafeDataSourceFactory())
@@ -1646,10 +1694,8 @@ class PreviewActivity : AppCompatActivity() {
             isPlaying = true
             updatePlayPauseButton()
 
-            // 设置歌词显示 - 延迟一点确保播放器准备好
-            handler.postDelayed({
-                setupLyricsForAudio()
-            }, 300)
+            // 立即设置歌词显示，不要延迟
+            setupLyricsForAudio()
 
         } catch (e: Exception) {
             showError("音频加载失败: ${e.message}")
@@ -1852,6 +1898,9 @@ class PreviewActivity : AppCompatActivity() {
         exoPlayer?.pause()
         stopProgressUpdates()
         stopLyricsUpdates()
+        // 取消歌词加载
+        lyricsLoadJob?.cancel()
+        isLyricsLoading = false
         // 清理所有手势相关状态
         isLongPressDetected = false
         isSwiping = false
@@ -1883,6 +1932,10 @@ class PreviewActivity : AppCompatActivity() {
         coroutineScope.cancel()
         stopProgressUpdates()
         stopLyricsUpdates()
+
+        // 取消歌词加载任务
+        lyricsLoadJob?.cancel()
+        lyricsLoadJob = null
 
         // 清理所有handler
         doubleTapHandler.removeCallbacksAndMessages(null)
