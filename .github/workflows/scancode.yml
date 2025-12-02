@@ -14,40 +14,22 @@ jobs:
           rsync -a --exclude='.git/' --exclude='.github/' ./ scancode-inputs/ || cp -r ./* ./scancode-inputs/ 2>/dev/null || true
 
       - name: Run ScanCode Analysis
-        id: scan
         uses: nexb/scancode-action@main
         with:
           pipelines: scan_codebase
-          # 我们已经不相信它的自动输出，这里留空或仅用于触发扫描
+          # 核心：直接使用工具默认的JSON输出
           output-formats: json
-          outputs-archive-name: scan-results
+          # 确保生成一个固定名称的报告，便于后续查找
+          outputs-archive-name: license-scan-results
           project-name: FileServerClient
 
-      - name: 【核心修正】手动导出扫描报告
-        # 扫描完成后，手动调用命令行工具，从数据库生成标准的 ScanCode JSON 报告
+      - name: Find and Upload Generated Report
+        # 此步骤在工具运行后，寻找它生成的报告文件
         run: |
-          echo "正在手动导出扫描结果..."
-          # 1. 进入项目数据目录（由Action创建）
-          PROJECT_DIR="/home/runner/work/FileServerClient/FileServerClient/var/projects/fileserverclient-*"
-          cd $PROJECT_DIR 2>/dev/null || { echo "项目目录未找到，尝试备用路径..."; exit 1; }
-          # 2. 使用 scancode 命令导出整个项目的扫描结果
-          scancode -lpm --license --copyright --json /tmp/manual_scan_result.json ./input/ 2>&1 | tail -20
-          # 3. 检查报告是否生成，并移动到工作目录
-          if [ -f "/tmp/manual_scan_result.json" ]; then
-            mkdir -p ./outputs/
-            mv /tmp/manual_scan_result.json ./outputs/scan-results.json
-            echo "手动报告生成成功！"
-            ls -lh ./outputs/
-          else
-            echo "错误：手动报告生成失败。"
-            # 列出目录结构以供调试
-            echo "当前目录: $(pwd)"
-            find . -type f -name "*.json" | head -10
-          fi
+          echo "正在查找生成的报告..."
+          # 搜索项目目录下新生成的 .json 文件
+          find . -name "*.json" -newer /proc/self -type f 2>/dev/null | head -5
+          echo "报告应已包含在上传的Artifact中。"
 
-      - name: Upload Scan Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: license-scan-report
-          path: outputs/
-          retention-days: 5
+      # 注意：报告已由 `scancode-action` 自动打包并上传，
+      # 其Artifact名称由上面的 `outputs-archive-name` 决定（如 `license-scan-results-*.zip`）。
