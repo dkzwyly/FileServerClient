@@ -9,22 +9,41 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Prepare Input Directory
-        # 核心修复：创建工具期望的输入目录，并将代码复制进去
         run: |
           mkdir -p scancode-inputs
-          # 复制所有文件，但排除.git和.github目录本身，避免循环
           rsync -a --exclude='.git/' --exclude='.github/' ./ scancode-inputs/ || cp -r ./* ./scancode-inputs/ 2>/dev/null || true
 
       - name: Run ScanCode Analysis
+        id: scan
         uses: nexb/scancode-action@main
         with:
           pipelines: scan_codebase
+          # 我们已经不相信它的自动输出，这里留空或仅用于触发扫描
           output-formats: json
           outputs-archive-name: scan-results
           project-name: FileServerClient
-          # 可选：如果您希望扫描完成后自动进行许可证合规检查，可以开启下面两行
-          # check-compliance: true
-          # compliance-fail-level: error
+
+      - name: 【核心修正】手动导出扫描报告
+        # 扫描完成后，手动调用命令行工具，从数据库生成标准的 ScanCode JSON 报告
+        run: |
+          echo "正在手动导出扫描结果..."
+          # 1. 进入项目数据目录（由Action创建）
+          PROJECT_DIR="/home/runner/work/FileServerClient/FileServerClient/var/projects/fileserverclient-*"
+          cd $PROJECT_DIR 2>/dev/null || { echo "项目目录未找到，尝试备用路径..."; exit 1; }
+          # 2. 使用 scancode 命令导出整个项目的扫描结果
+          scancode -lpm --license --copyright --json /tmp/manual_scan_result.json ./input/ 2>&1 | tail -20
+          # 3. 检查报告是否生成，并移动到工作目录
+          if [ -f "/tmp/manual_scan_result.json" ]; then
+            mkdir -p ./outputs/
+            mv /tmp/manual_scan_result.json ./outputs/scan-results.json
+            echo "手动报告生成成功！"
+            ls -lh ./outputs/
+          else
+            echo "错误：手动报告生成失败。"
+            # 列出目录结构以供调试
+            echo "当前目录: $(pwd)"
+            find . -type f -name "*.json" | head -10
+          fi
 
       - name: Upload Scan Report
         uses: actions/upload-artifact@v4
