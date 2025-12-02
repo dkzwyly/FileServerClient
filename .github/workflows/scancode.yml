@@ -8,14 +8,23 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Prepare Input Directory
+        # 核心修复：创建工具期望的输入目录，并将代码复制进去
+        run: |
+          mkdir -p scancode-inputs
+          # 复制所有文件，但排除.git和.github目录本身，避免循环
+          rsync -a --exclude='.git/' --exclude='.github/' ./ scancode-inputs/ || cp -r ./* ./scancode-inputs/ 2>/dev/null || true
+
       - name: Run ScanCode Analysis
         uses: nexb/scancode-action@main
         with:
-          # 关键修改：使用正确的管道名称 'scan_codebase'
           pipelines: scan_codebase
-          output-formats: html, json
+          output-formats: html
           outputs-archive-name: scan-results
           project-name: FileServerClient
+          # 可选：如果您希望扫描完成后自动进行许可证合规检查，可以开启下面两行
+          # check-compliance: true
+          # compliance-fail-level: error
 
       - name: Upload Scan Report
         uses: actions/upload-artifact@v4
