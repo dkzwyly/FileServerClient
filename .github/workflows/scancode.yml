@@ -1,7 +1,27 @@
-name: Test Workflow
+name: ScanCode Scan
 on: [workflow_dispatch]
+
 jobs:
-  test:
+  scan:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Hello, World! GitHub Actions is working."
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run ScanCode (HTML Report)
+        # 使用最稳定、与版本无关的引用方式：`@main`
+        uses: nexb/scancode-action@main
+        with:
+          output: 'scan-results'
+          format: 'html'  # 首次只生成HTML，足够查看GPL问题
+          license: true
+          copyright: true
+          # 忽略无关文件，加快扫描
+          ignore: '.git, .github, build, *.min.js, node_modules'
+
+      - name: Upload Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: scan-results/
+          retention-days: 5
