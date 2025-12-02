@@ -19,7 +19,7 @@ jobs:
         uses: nexb/scancode-action@main
         with:
           pipelines: scan_codebase
-          output-formats: html
+          output-formats: json
           outputs-archive-name: scan-results
           project-name: FileServerClient
           # 可选：如果您希望扫描完成后自动进行许可证合规检查，可以开启下面两行
