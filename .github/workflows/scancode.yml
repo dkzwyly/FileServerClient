@@ -17,7 +17,7 @@ jobs:
 
       - name: Run ScanCode Toolkit
         # 使用官方推荐的Action来运行ScanCode
-        uses: nexB/scancode-action@v1
+        uses: nexB/scancode-action@v3.1.2
         with:
           # 扫描输出格式和路径
           output: 'scan-results'
