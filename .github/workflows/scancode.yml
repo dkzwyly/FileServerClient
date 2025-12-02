@@ -1,27 +1,7 @@
-name: ScanCode License Compliance Scan
-
-on:
-  workflow_dispatch: # 为了方便，先只保留手动触发
-
+name: Test Workflow
+on: [workflow_dispatch]
 jobs:
-  scan:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run ScanCode Toolkit
-        # 核心修改：使用固定的提交哈希 e46d127
-        uses: nexb/scancode-action@e46d127
-        with:
-          output: 'scan-results'
-          format: 'html' # 首次扫描，先只生成HTML报告以加快速度
-          license: true
-          copyright: true
-
-      - name: Upload Scan Results as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: scan-results
-          path: scan-results/
-
+      - run: echo "Hello, World! GitHub Actions is working."
