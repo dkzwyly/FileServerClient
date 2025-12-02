@@ -1,4 +1,4 @@
-name: ScanCode Scan
+name: ScanCode License Scan
 on: [workflow_dispatch]
 
 jobs:
@@ -8,20 +8,25 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run ScanCode (HTML Report)
-        # 使用最稳定、与版本无关的引用方式：`@main`
+      - name: Run ScanCode Analysis
         uses: nexb/scancode-action@main
         with:
-          output: 'scan-results'
-          format: 'html'  # 首次只生成HTML，足够查看GPL问题
-          license: true
-          copyright: true
-          # 忽略无关文件，加快扫描
-          ignore: '.git, .github, build, *.min.js, node_modules'
+          # 核心参数（根据错误提示的有效列表调整）:
+          # 1. 指定要运行的“管道”，license-and-copyright 是扫描许可证和版权的标准管道
+          pipelines: license-and-copyright
+          # 2. 指定输出格式
+          output-formats: html, json
+          # 3. 为输出文件指定一个名字（可选）
+          outputs-archive-name: scan-results
+          # 4. 设置项目名称（可选，会显示在报告里）
+          project-name: FileServerClient
+          # 5. 【可选】如果您希望进行合规性检查并失败，可以配置以下两项：
+          # check-compliance: true
+          # compliance-fail-level: error
 
-      - name: Upload Report
+      - name: Upload Scan Report
         uses: actions/upload-artifact@v4
         with:
-          name: license-report
-          path: scan-results/
+          name: license-scan-report
+          path: outputs/
           retention-days: 5
