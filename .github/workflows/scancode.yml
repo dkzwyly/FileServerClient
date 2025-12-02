@@ -11,18 +11,11 @@ jobs:
       - name: Run ScanCode Analysis
         uses: nexb/scancode-action@main
         with:
-          # 核心参数（根据错误提示的有效列表调整）:
-          # 1. 指定要运行的“管道”，license-and-copyright 是扫描许可证和版权的标准管道
-          pipelines: license-and-copyright
-          # 2. 指定输出格式
+          # 关键修改：使用正确的管道名称 'scan_codebase'
+          pipelines: scan_codebase
           output-formats: html, json
-          # 3. 为输出文件指定一个名字（可选）
           outputs-archive-name: scan-results
-          # 4. 设置项目名称（可选，会显示在报告里）
           project-name: FileServerClient
-          # 5. 【可选】如果您希望进行合规性检查并失败，可以配置以下两项：
-          # check-compliance: true
-          # compliance-fail-level: error
 
       - name: Upload Scan Report
         uses: actions/upload-artifact@v4
