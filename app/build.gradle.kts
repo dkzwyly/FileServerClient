@@ -77,6 +77,7 @@ dependencies {
     // Coil 图片加载
     implementation("io.coil-kt:coil:2.5.0")
     implementation("io.coil-kt:coil-base:2.5.0")
+    implementation("io.coil-kt:coil-gif:2.5.0")
 
     // Media3 ExoPlayer 用于视频和音频播放
     implementation("androidx.media3:media3-exoplayer:1.2.1")

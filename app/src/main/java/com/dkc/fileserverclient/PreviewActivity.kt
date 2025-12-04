@@ -40,6 +40,10 @@ import kotlinx.coroutines.*
 import java.nio.file.Paths
 import java.util.*
 import kotlin.math.abs
+import coil.request.CachePolicy
+import android.graphics.drawable.Animatable
+import coil.decode.GifDecoder
+import coil.decode.ImageDecoderDecoder
 
 // 歌词相关数据类
 data class LyricsLine(
@@ -378,9 +382,15 @@ class PreviewActivity : AppCompatActivity() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupImageZoom() {
-        // 设置图片视图的缩放功能
-        imagePreview.scaleType = ImageView.ScaleType.MATRIX
         imagePreview.setOnTouchListener { _, event ->
+            // 检查是否为GIF，如果是则禁用缩放功能
+            val isGif = currentFileName.endsWith(".gif", ignoreCase = true)
+            if (isGif) {
+                // GIF不处理缩放，交给默认的点击处理
+                return@setOnTouchListener false
+            }
+
+            // 非GIF图片的原有缩放逻辑
             handleImageTouch(event)
         }
     }
@@ -1580,51 +1590,101 @@ class PreviewActivity : AppCompatActivity() {
         showContainer(imageContainer)
         fileTypeTextView.visibility = View.VISIBLE
 
+        // 检查是否为GIF文件
+        val isGif = currentFileName.endsWith(".gif", ignoreCase = true) ||
+                currentFileUrl.endsWith(".gif", ignoreCase = true)
+
         coroutineScope.launch {
             try {
-                // 使用统一的 UnsafeHttpClient 创建 ImageLoader
+                Log.d("PreviewActivity", "加载图片预览，是否为GIF: $isGif, URL: $currentFileUrl")
+
+                // 构建支持GIF的ImageLoader
                 val imageLoader = ImageLoader.Builder(this@PreviewActivity)
-                    .okHttpClient(client) // 使用统一的客户端
+                    .okHttpClient(client)
                     .components {
-                        // 如果需要自定义组件可以在这里添加
+                        // 添加GIF解码器
+
+                        add(GifDecoder.Factory())
                     }
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .respectCacheHeaders(false) // 不严格遵循缓存头，确保能加载
                     .build()
 
-                val request = ImageRequest.Builder(this@PreviewActivity)
+                // 配置请求
+                val requestBuilder = ImageRequest.Builder(this@PreviewActivity)
                     .data(currentFileUrl)
                     .target(imagePreview)
-                    .transformations(RoundedCornersTransformation(8f))
                     .listener(
                         onStart = {
+                            Log.d("PreviewActivity", "开始加载图片")
                             imageLoadingProgress.visibility = View.VISIBLE
                         },
                         onSuccess = { _, _ ->
+                            Log.d("PreviewActivity", "图片加载成功，是否为GIF: $isGif")
                             imageLoadingProgress.visibility = View.GONE
-                            setupInitialImageScale()
+
+                            // 对于GIF，不需要设置缩放矩阵
+                            if (!isGif) {
+                                setupInitialImageScale()
+                            } else {
+                                // GIF使用默认的缩放类型
+                                imagePreview.scaleType = ImageView.ScaleType.FIT_CENTER
+                                // 清除之前的变换矩阵
+                                imagePreview.imageMatrix = Matrix()
+
+                                // 确保GIF动画开始
+                                val drawable = imagePreview.drawable
+                                if (drawable is Animatable) {
+                                    Log.d("PreviewActivity", "开始播放GIF动画")
+                                    (drawable as Animatable).start()
+                                }
+                            }
                         },
                         onError = { _, result ->
                             imageLoadingProgress.visibility = View.GONE
-                            Log.e("PreviewActivity", "图片加载失败: ${result.throwable.message}")
+                            Log.e("PreviewActivity", "图片加载失败: ${result.throwable.message}", result.throwable)
                             showError("图片加载失败: ${result.throwable.message}")
                         }
                     )
-                    .build()
 
+                // 对于非GIF图片添加圆角转换，GIF不添加（避免影响动画）
+                if (!isGif) {
+                    requestBuilder.transformations(RoundedCornersTransformation(8f))
+                } else {
+                    // 对于GIF，设置特殊参数确保动画播放
+                    requestBuilder
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .crossfade(true)
+                        .allowHardware(false) // 禁用硬件加速以确保GIF动画
+                }
+
+                val request = requestBuilder.build()
+
+                // 执行请求
                 imageLoader.enqueue(request)
 
             } catch (e: Exception) {
                 imageLoadingProgress.visibility = View.GONE
-                Log.e("PreviewActivity", "图片加载异常: ${e.message}")
+                Log.e("PreviewActivity", "图片加载异常: ${e.message}", e)
                 showError("图片加载失败: ${e.message}")
             }
         }
     }
 
     private fun setupInitialImageScale() {
-        // 延迟执行以确保图片已完全加载到ImageView中
         handler.postDelayed({
             val drawable = imagePreview.drawable
             if (drawable != null) {
+                val isGif = currentFileName.endsWith(".gif", ignoreCase = true)
+
+                // GIF不需要缩放矩阵，使用默认缩放
+                if (isGif) {
+                    imagePreview.scaleType = ImageView.ScaleType.FIT_CENTER
+                    return@postDelayed
+                }
+
                 val imageWidth = drawable.intrinsicWidth.toFloat()
                 val imageHeight = drawable.intrinsicHeight.toFloat()
                 val viewWidth = imagePreview.width.toFloat()
@@ -1633,7 +1693,7 @@ class PreviewActivity : AppCompatActivity() {
                 // 计算适合屏幕的缩放比例
                 val scaleX = viewWidth / imageWidth
                 val scaleY = viewHeight / imageHeight
-                minScale = minOf(scaleX, scaleY).coerceAtMost(1.0f) // 确保不会放大超过原图
+                minScale = minOf(scaleX, scaleY).coerceAtMost(1.0f)
 
                 // 设置初始矩阵以显示全图
                 matrix.setScale(minScale, minScale)
@@ -1912,6 +1972,9 @@ class PreviewActivity : AppCompatActivity() {
         handler.removeCallbacks(hideControlsRunnable)
         // 关闭歌词对话框
         lyricsDialog?.dismiss()
+
+        // 停止GIF动画
+        stopGifAnimation()
     }
 
     override fun onResume() {
@@ -1925,6 +1988,9 @@ class PreviewActivity : AppCompatActivity() {
         if (isLyricsVisible) {
             startLyricsUpdates()
         }
+
+        // 重新开始GIF动画
+        startGifAnimation()
     }
 
     override fun onDestroy() {
@@ -1954,8 +2020,32 @@ class PreviewActivity : AppCompatActivity() {
         // 释放播放器资源
         exoPlayer?.release()
         exoPlayer = null
+
+        // 停止并清理GIF动画
+        stopGifAnimation()
     }
 
+    private fun stopGifAnimation() {
+        val drawable = imagePreview.drawable
+        if (drawable is Animatable && drawable.isRunning) {
+            Log.d("PreviewActivity", "停止GIF动画")
+            drawable.stop()
+        }
+    }
+
+    private fun startGifAnimation() {
+        // 如果是GIF文件且当前正在显示图片预览
+        if (currentFileType == "image" &&
+            currentFileName.endsWith(".gif", ignoreCase = true) &&
+            imageContainer.visibility == View.VISIBLE) {
+
+            val drawable = imagePreview.drawable
+            if (drawable is Animatable && !drawable.isRunning) {
+                Log.d("PreviewActivity", "重新开始GIF动画")
+                drawable.start()
+            }
+        }
+    }
     private fun showToast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
