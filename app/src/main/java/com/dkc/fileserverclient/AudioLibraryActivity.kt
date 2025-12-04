@@ -14,6 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.*
+import java.io.File
 
 class AudioLibraryActivity : AppCompatActivity() {
 
@@ -189,22 +190,40 @@ class AudioLibraryActivity : AppCompatActivity() {
             val encodedPath = java.net.URLEncoder.encode(audioItem.path, "UTF-8")
             val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
 
-            Log.d(TAG, "播放音频: ${audioItem.name}, URL: $fileUrl")
+            Log.d(TAG, "播放音频: ${audioItem.name}, URL: $fileUrl, Path: ${audioItem.path}")
+
+            // 获取音频文件所在目录
+            val directory = getDirectoryFromPath(audioItem.path)
+            Log.d(TAG, "音频目录: $directory")
 
             // 设置自动连播 - 传递整个音频列表
             val intent = Intent(this, PreviewActivity::class.java).apply {
                 putExtra("FILE_NAME", audioItem.name)
                 putExtra("FILE_URL", fileUrl)
                 putExtra("FILE_TYPE", "audio")
-                putExtra("FILE_PATH", audioItem.path)
+                putExtra("FILE_PATH", audioItem.path)  // 完整路径，用于歌词查找
                 putExtra("AUTO_PLAY_ENABLED", true)
                 putExtra("MEDIA_FILE_LIST", ArrayList(filteredAudioList))
                 putExtra("CURRENT_INDEX", filteredAudioList.indexOf(audioItem))
                 putExtra("SERVER_URL", currentServerUrl)
+                putExtra("CURRENT_PATH", directory)  // 当前目录，用于自动连播时构建路径
             }
             startActivity(intent)
         } catch (e: Exception) {
             Log.e(TAG, "播放音频失败", e)
+        }
+    }
+
+    // 辅助方法：从路径中提取目录
+    private fun getDirectoryFromPath(filePath: String): String {
+        return try {
+            val file = File(filePath)
+            val parent = file.parent ?: ""
+            Log.d(TAG, "从路径 $filePath 提取目录: $parent")
+            parent
+        } catch (e: Exception) {
+            Log.e(TAG, "提取目录失败", e)
+            ""
         }
     }
 
