@@ -70,6 +70,8 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var nextLyricsLine: TextView
     private lateinit var lyricsSettingsButton: Button
 
+
+
     // 通用预览组件
     private lateinit var webViewPreview: WebView
     private lateinit var generalLoadingProgress: ProgressBar
@@ -79,11 +81,14 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var controlIcon: ImageView
     private lateinit var controlContainer: LinearLayout
 
-    // 状态变量
+    // 状态变量（添加以下变量）
     private var currentFileType = ""
     private var currentFileUrl = ""
     private var currentFileName = ""
     private var isLyricsVisible = false
+    private var currentImageIndex = -1
+    private var imageFileList = mutableListOf<FileSystemItem>()
+    private var currentImageDirectoryPath = ""
 
     // 手势检测
     private lateinit var gestureDetector: GestureDetector
@@ -137,16 +142,30 @@ class PreviewActivity : AppCompatActivity(),
         currentServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
         currentDirectoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
 
-        // 设置自动连播
-        autoPlayManager.setupAutoPlay(
-            autoPlayEnabled,
-            mediaFileList,
-            currentMediaIndex,
-            currentServerUrl,
-            currentDirectoryPath
-        )
+        // 获取当前文件类型
+        currentFileType = intent.getStringExtra("FILE_TYPE") ?: "unknown"
 
-        Log.d("PreviewActivity", "初始化完成: autoPlayEnabled=$autoPlayEnabled, serverUrl=$currentServerUrl, currentPath=$currentDirectoryPath")
+        // 只在当前文件不是图片时才设置自动连播
+        if (currentFileType != "image") {
+            autoPlayManager.setupAutoPlay(
+                autoPlayEnabled,
+                mediaFileList,
+                currentMediaIndex,
+                currentServerUrl,
+                currentDirectoryPath
+            )
+        } else {
+            // 如果是图片，禁用自动连播
+            autoPlayManager.setupAutoPlay(
+                false,
+                null,
+                -1,
+                currentServerUrl,
+                currentDirectoryPath
+            )
+        }
+
+        Log.d("PreviewActivity", "初始化完成: fileType=$currentFileType, autoPlayEnabled=${autoPlayManager.isAutoPlayEnabled()}")
     }
 
     private fun initViews() {
@@ -216,7 +235,7 @@ class PreviewActivity : AppCompatActivity(),
         lyricsManager = LyricsManager(this, handler, coroutineScope)
         lyricsManager.setListener(this)
 
-        // 初始化图片管理器 - 这是关键修复
+        // 初始化图片管理器 - 简化版本，移除手势处理
         imageManager = ImagePreviewManager(
             context = this,
             coroutineScope = coroutineScope,
@@ -225,7 +244,7 @@ class PreviewActivity : AppCompatActivity(),
             httpClient = client
         )
         imageManager.setListener(this)
-        imageManager.setTapHandler(doubleTapHandler)
+        // 移除tapHandler设置
 
         // 初始化视频播放管理器
         videoPlayerManager = VideoPlayerManager(
@@ -327,6 +346,7 @@ class PreviewActivity : AppCompatActivity(),
 
         gestureDetector.setIsLongpressEnabled(true)
 
+        // 只为视频播放器设置触摸监听
         playerView.setOnTouchListener { _, event ->
             val handledByGesture = gestureDetector.onTouchEvent(event)
 
@@ -348,6 +368,38 @@ class PreviewActivity : AppCompatActivity(),
             }
             true
         }
+
+        // 为图片容器添加左右滑动手势检测
+        imagePreview.setOnTouchListener(object : View.OnTouchListener {
+            private var startX = 0f
+            private val SWIPE_THRESHOLD = 100f // 滑动阈值
+
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        startX = event.x
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val endX = event.x
+                        val diffX = endX - startX
+
+                        // 判断左右滑动
+                        if (Math.abs(diffX) > SWIPE_THRESHOLD) {
+                            if (diffX > 0) {
+                                // 向右滑动 - 上一张图片
+                                loadPreviousImage()
+                            } else {
+                                // 向左滑动 - 下一张图片
+                                loadNextImage()
+                            }
+                            return true
+                        }
+                    }
+                }
+                return true
+            }
+        })
     }
 
     private fun handleSingleTap() {
@@ -463,8 +515,146 @@ class PreviewActivity : AppCompatActivity(),
         showContainer(imageContainer)
         fileTypeTextView.visibility = View.VISIBLE
 
-        // 使用管理器加载图片 - 管理器会自己设置触摸监听
+        // 使用管理器加载图片
         imageManager.loadImage(currentFileUrl, currentFileName)
+
+        // 加载当前目录下的图片列表（用于左右滑动切换）
+        loadImageFileList()
+    }
+
+    // 加载当前目录下的图片列表
+    private fun loadImageFileList() {
+        coroutineScope.launch {
+            try {
+                // 获取当前图片所在的目录路径
+                currentImageDirectoryPath = getImageDirectoryPath()
+
+                // 获取该目录下的所有文件
+                val allFiles = withContext(Dispatchers.IO) {
+                    FileServerService(this@PreviewActivity)
+                        .getFileList(currentServerUrl, currentImageDirectoryPath)
+                }
+
+                // 过滤出图片文件
+                imageFileList.clear()
+                imageFileList.addAll(allFiles.filter { item ->
+                    !item.isDirectory && isImageFile(item)
+                })
+
+                // 查找当前图片在列表中的索引
+                currentImageIndex = imageFileList.indexOfFirst { item ->
+                    getFullImageUrl(item) == currentFileUrl
+                }
+
+                Log.d("PreviewActivity", "图片列表加载完成: 总数=${imageFileList.size}, 当前索引=$currentImageIndex")
+
+                // 如果没有找到当前图片，可能是从不同路径进入，使用文件名匹配
+                if (currentImageIndex == -1) {
+                    currentImageIndex = imageFileList.indexOfFirst { item ->
+                        item.name == currentFileName
+                    }
+                    Log.d("PreviewActivity", "使用文件名匹配: 索引=$currentImageIndex")
+                }
+
+            } catch (e: Exception) {
+                Log.e("PreviewActivity", "加载图片列表失败", e)
+            }
+        }
+    }
+
+    // 辅助方法：判断是否为图片文件
+    private fun isImageFile(item: FileSystemItem): Boolean {
+        val imageExtensions = listOf(
+            "jpg", "jpeg", "png", "gif", "bmp", "webp",
+            "JPG", "JPEG", "PNG", "GIF", "BMP", "WEBP"
+        )
+        return imageExtensions.any { item.extension.contains(it, true) }
+    }
+
+    // 辅助方法：获取图片完整URL
+    private fun getFullImageUrl(item: FileSystemItem): String {
+        val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
+        return "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+    }
+
+    // 辅助方法：获取当前图片的目录路径
+    private fun getImageDirectoryPath(): String {
+        return try {
+            // 从Intent中获取完整路径
+            val intentPath = intent.getStringExtra("FILE_PATH")
+            if (intentPath != null && intentPath.isNotEmpty()) {
+                // 提取目录部分
+                val file = java.io.File(intentPath)
+                val parent = file.parent ?: ""
+                Log.d("PreviewActivity", "从FILE_PATH获取目录: $parent")
+                return parent
+            }
+
+            // 如果没有FILE_PATH，尝试从当前路径获取
+            if (currentDirectoryPath.isNotEmpty()) {
+                Log.d("PreviewActivity", "使用当前路径作为目录: $currentDirectoryPath")
+                return currentDirectoryPath
+            }
+
+            // 默认返回空路径
+            ""
+        } catch (e: Exception) {
+            Log.e("PreviewActivity", "获取图片目录失败", e)
+            ""
+        }
+    }
+
+    // 加载上一张图片
+    private fun loadPreviousImage() {
+        if (imageFileList.isEmpty() || currentImageIndex <= 0) {
+            Log.d("PreviewActivity", "已经是第一张图片")
+            return
+        }
+
+        val prevIndex = currentImageIndex - 1
+        if (prevIndex >= 0 && prevIndex < imageFileList.size) {
+            val prevItem = imageFileList[prevIndex]
+            loadImageByItem(prevItem, prevIndex)
+        }
+    }
+
+    // 加载下一张图片
+    private fun loadNextImage() {
+        if (imageFileList.isEmpty() || currentImageIndex >= imageFileList.size - 1) {
+            Log.d("PreviewActivity", "已经是最后一张图片")
+            return
+        }
+
+        val nextIndex = currentImageIndex + 1
+        if (nextIndex < imageFileList.size) {
+            val nextItem = imageFileList[nextIndex]
+            loadImageByItem(nextItem, nextIndex)
+        }
+    }
+
+    // 加载指定图片
+    private fun loadImageByItem(item: FileSystemItem, index: Int) {
+        try {
+            val imageUrl = getFullImageUrl(item)
+
+            // 更新当前文件信息
+            currentFileName = item.name
+            currentFileUrl = imageUrl
+            currentImageIndex = index
+
+            // 更新UI
+            fileNameTextView.text = currentFileName
+
+            // 显示加载进度
+            imageLoadingProgress.visibility = View.VISIBLE
+
+            // 加载新图片
+            imageManager.loadImage(imageUrl, currentFileName)
+
+            Log.d("PreviewActivity", "切换到图片: ${item.name}, 索引: $index")
+        } catch (e: Exception) {
+            Log.e("PreviewActivity", "切换图片失败", e)
+        }
     }
 
     private fun loadVideoPreview() {
@@ -693,7 +883,13 @@ class PreviewActivity : AppCompatActivity(),
     override fun onLoadMediaFile(fileName: String, fileUrl: String, fileType: String, index: Int, filePath: String) {
         Log.d("PreviewActivity", "加载媒体文件: $fileName, 类型: $fileType, 索引: $index, 路径: $filePath")
 
-        // 停止当前播放
+        // 如果是图片类型，不执行自动连播逻辑
+        if (fileType == "image") {
+            Log.d("PreviewActivity", "图片类型，跳过自动连播逻辑")
+            return
+        }
+
+        // 停止当前播放（只针对音视频）
         videoPlayerManager.stopProgressUpdates()
         videoPlayerManager.releasePlayer()
 
@@ -730,7 +926,7 @@ class PreviewActivity : AppCompatActivity(),
             handler.postDelayed({
                 Log.d("PreviewActivity", "自动连播延迟加载歌词")
                 loadLyricsForCurrentSong()
-            }, 500) // 延迟500ms确保UI已更新
+            }, 500)
         }
 
         // 显示提示

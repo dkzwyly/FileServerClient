@@ -129,7 +129,12 @@ class ImageGalleryActivity : AppCompatActivity() {
                 putExtra("FILE_NAME", imageItem.name)
                 putExtra("FILE_URL", fileUrl)
                 putExtra("FILE_TYPE", "image")
-                putExtra("FILE_PATH", imageItem.path)
+                putExtra("FILE_PATH", imageItem.path) // 添加完整路径
+                // 图片不设置自动连播
+                putExtra("AUTO_PLAY_ENABLED", false)
+                putExtra("SERVER_URL", currentServerUrl)
+                // 对于图片库，当前路径就是图片目录
+                putExtra("CURRENT_PATH", imageGalleryPath)
             }
             startActivity(intent)
         } catch (e: Exception) {

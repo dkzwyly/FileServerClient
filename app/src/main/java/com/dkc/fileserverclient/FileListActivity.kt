@@ -377,9 +377,12 @@ class FileListActivity : AppCompatActivity() {
         try {
             val fileType = getFileType(item)
 
-            // 如果是媒体文件，设置自动连播
+            // 如果是媒体文件（音视频），设置自动连播
             if (fileType == "video" || fileType == "audio") {
                 setupAutoPlay(item)
+            } else if (fileType == "image") {
+                // 如果是图片，不设置自动连播
+                resetAutoPlay()
             }
 
             val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
@@ -391,6 +394,7 @@ class FileListActivity : AppCompatActivity() {
                 putExtra("FILE_NAME", item.name)
                 putExtra("FILE_URL", fileUrl)
                 putExtra("FILE_TYPE", fileType)
+                putExtra("FILE_PATH", item.path) // 添加完整路径
                 putExtra("AUTO_PLAY_ENABLED", autoPlayEnabled)
                 putExtra("MEDIA_FILE_LIST", ArrayList(mediaFileList))
                 putExtra("CURRENT_INDEX", currentPlayingIndex)
