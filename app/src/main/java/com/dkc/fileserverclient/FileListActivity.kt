@@ -21,8 +21,17 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import android.os.Handler
+import android.os.Looper
 
 class FileListActivity : AppCompatActivity() {
+
+    // 在类的顶部变量声明部分添加：
+    private val thumbnailPollingHandler = Handler(Looper.getMainLooper())
+    private var isPolling = false
+    private var pollingAttempts = 0
+    private val MAX_POLLING_ATTEMPTS = 5 // 最多轮询5次
+    private val POLLING_INTERVAL = 1000L // 每次轮询间隔1秒
 
     private lateinit var pathLabel: TextView
     private lateinit var refreshButton: Button
@@ -39,7 +48,7 @@ class FileListActivity : AppCompatActivity() {
 
     private val fileServerService by lazy { FileServerService(this) }
     private val fileList = mutableListOf<FileSystemItem>()
-    private val selectedFiles = mutableListOf<File>()
+    private val selectedFiles = mutableListOf<Pair<File, String>>()  // (临时文件, 原始文件名)
     private val pathHistory = mutableListOf<String>()
     private var currentServerUrl = ""
     private var currentPath = ""
@@ -166,6 +175,11 @@ class FileListActivity : AppCompatActivity() {
         currentPath = path
         updatePathLabel()
 
+        // 如果正在轮询，更新状态
+        if (isPolling) {
+            statusLabel.text = "正在刷新列表并检查缩略图... (${pollingAttempts}/${MAX_POLLING_ATTEMPTS})"
+        }
+
         coroutineScope.launch {
             statusLabel.text = "正在加载文件列表..."
             refreshButton.isEnabled = false
@@ -182,10 +196,13 @@ class FileListActivity : AppCompatActivity() {
                 // 更新文件计数
                 fileCountText.text = "${items.size} 个项目"
 
-                statusLabel.text = if (path.isEmpty()) {
-                    "根目录 - ${items.size} 个项目"
-                } else {
-                    "当前路径: $path - ${items.size} 个项目"
+                // 如果不是轮询状态，显示正常状态
+                if (!isPolling) {
+                    statusLabel.text = if (path.isEmpty()) {
+                        "根目录 - ${items.size} 个项目"
+                    } else {
+                        "当前路径: $path - ${items.size} 个项目"
+                    }
                 }
 
                 // 重置自动连播状态
@@ -242,6 +259,14 @@ class FileListActivity : AppCompatActivity() {
             return
         }
 
+        // 保存上传的文件名，用于后续轮询
+        val uploadedFileNames = selectedFiles.map { it.second }
+
+        // 添加上传前的调试日志
+        selectedFiles.forEachIndexed { index, (tempFile, originalName) ->
+            Log.d("FileListActivity", "准备上传文件[$index]: 临时文件名='${tempFile.name}', 原始文件名='$originalName'")
+        }
+
         coroutineScope.launch {
             uploadButton.isEnabled = false
             statusLabel.text = "正在上传 ${selectedFiles.size} 个文件..."
@@ -250,30 +275,75 @@ class FileListActivity : AppCompatActivity() {
                 Log.d("FileListActivity", "开始上传 ${selectedFiles.size} 个文件到路径: $currentPath")
 
                 val result = withContext(Dispatchers.IO) {
+                    // 直接传递 selectedFiles（现在是 List<Pair<File, String>>）
                     fileServerService.uploadFiles(currentServerUrl, selectedFiles, currentPath)
                 }
 
                 if (result.success) {
-                    showToast("上传成功")
+                    showToast("上传成功，正在刷新缩略图...")
+
                     // 清空已选文件并隐藏上传状态栏
                     selectedFiles.clear()
                     uploadStatusCard.visibility = View.GONE
                     uploadButton.isEnabled = false
-                    // 刷新文件列表
+
+                    // 立即刷新文件列表
                     loadCurrentDirectory(currentPath)
+
+                    // 启动缩略图轮询
+                    startThumbnailPolling(uploadedFileNames)
+
                 } else {
                     showToast("上传失败: ${result.message}")
+                    uploadButton.isEnabled = true
                 }
             } catch (e: Exception) {
                 showToast("上传异常: ${e.message}")
                 Log.e("FileListActivity", "上传异常", e)
-            } finally {
                 uploadButton.isEnabled = true
+            } finally {
                 statusLabel.text = "上传完成"
             }
         }
     }
+    // 添加在 uploadFiles 方法之后：
+    private fun startThumbnailPolling(uploadedFileNames: List<String>) {
+        pollingAttempts = 0
+        isPolling = true
 
+        Log.d("ThumbnailPolling", "开始缩略图轮询，上传文件: $uploadedFileNames")
+
+        val pollingRunnable = object : Runnable {
+            override fun run() {
+                if (!isPolling || pollingAttempts >= MAX_POLLING_ATTEMPTS) {
+                    isPolling = false
+                    Log.d("ThumbnailPolling", "轮询结束")
+                    showToast("缩略图刷新完成")
+                    return
+                }
+
+                pollingAttempts++
+                Log.d("ThumbnailPolling", "第 ${pollingAttempts} 次轮询，检查缩略图...")
+
+                // 重新加载文件列表（这会强制刷新所有缩略图）
+                loadCurrentDirectory(currentPath)
+
+                // 更新状态提示
+                statusLabel.text = "正在检查缩略图... (${pollingAttempts}/${MAX_POLLING_ATTEMPTS})"
+
+                // 如果还有重试次数，继续轮询
+                if (pollingAttempts < MAX_POLLING_ATTEMPTS) {
+                    thumbnailPollingHandler.postDelayed(this, POLLING_INTERVAL)
+                } else {
+                    statusLabel.text = "缩略图刷新完成"
+                    isPolling = false
+                }
+            }
+        }
+
+        // 延迟500ms开始第一次轮询，给服务器一点处理时间
+        thumbnailPollingHandler.postDelayed(pollingRunnable, 500)
+    }
     private fun searchFiles() {
         val query = searchEditText.text.toString().trim()
         if (query.isEmpty()) {
@@ -435,19 +505,29 @@ class FileListActivity : AppCompatActivity() {
 
             coroutineScope.launch {
                 statusLabel.text = "正在处理选中的文件..."
-                val files = withContext(Dispatchers.IO) {
-                    uris.mapNotNull { uri -> uriToFile(uri) }
+                val filesWithNames = withContext(Dispatchers.IO) {
+                    uris.mapNotNull { uri ->
+                        val originalName = getFileName(uri)
+                        val tempFile = uriToFile(uri)
+                        tempFile?.let { Pair(it, originalName) }
+                    }
                 }
 
-                selectedFiles.addAll(files)
+                selectedFiles.addAll(filesWithNames)
                 if (selectedFiles.isNotEmpty()) {
                     selectedFilesLabel.text = "已选择 ${selectedFiles.size} 个文件"
                     uploadStatusCard.visibility = View.VISIBLE
                     uploadButton.isEnabled = true
 
-                    val fileNames = selectedFiles.joinToString(", ") { it.name }
-                    showToast("已选择: $fileNames")
-                    Log.d("FileListActivity", "成功转换 ${selectedFiles.size} 个文件: $fileNames")
+                    // 显示原始文件名
+                    val originalNames = selectedFiles.joinToString(", ") { it.second }
+                    showToast("已选择: $originalNames")
+                    Log.d("FileListActivity", "成功转换 ${selectedFiles.size} 个文件: $originalNames")
+
+                    // 调试：打印所有文件名
+                    selectedFiles.forEachIndexed { index, (tempFile, originalName) ->
+                        Log.d("FileListActivity", "文件[$index]: 临时文件=${tempFile.name}, 原始文件名=$originalName")
+                    }
                 } else {
                     uploadStatusCard.visibility = View.GONE
                     showToast("没有有效的文件被选择")
@@ -596,8 +676,13 @@ class FileListActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // 停止轮询
+        isPolling = false
+        thumbnailPollingHandler.removeCallbacksAndMessages(null)
         coroutineScope.cancel()
-        selectedFiles.forEach { file ->
+
+        // 清理临时文件
+        selectedFiles.forEach { (file, _) ->
             if (file.exists() && file.name.startsWith("upload_")) {
                 try {
                     file.delete()

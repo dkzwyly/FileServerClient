@@ -64,11 +64,80 @@ data class FileInfoResponse(
     @SerializedName("encoding") val encoding: String = ""
 ) : Parcelable
 
+// ====== 新增：上传文件详细信息 ======
+@Parcelize
+data class UploadedFileInfo(
+    @SerializedName("originalName") val originalName: String = "",
+    @SerializedName("savedName") val savedName: String = "",
+    @SerializedName("path") val path: String = "",
+    @SerializedName("size") val size: Long = 0,
+    @SerializedName("wasRenamed") val wasRenamed: Boolean = false,
+    @SerializedName("renameReason") val renameReason: String = "",
+    @SerializedName("uploadTime") val uploadTime: String = "",
+    @SerializedName("success") val success: Boolean = true,
+    @SerializedName("errorMessage") val errorMessage: String = ""
+) : Parcelable
+
+// ====== 新增：冲突解决信息 ======
+@Parcelize
+data class ConflictResolutionInfo(
+    @SerializedName("originalName") val originalName: String = "",
+    @SerializedName("finalName") val finalName: String = "",
+    @SerializedName("reason") val reason: String = "",
+    @SerializedName("timestamp") val timestamp: String = "",
+    @SerializedName("resolutionStrategy") val resolutionStrategy: String = "",
+    @SerializedName("action") val action: String = "Renamed"
+) : Parcelable
+
+// ====== 修改后的 UploadResult ======
 @Parcelize
 data class UploadResult(
     @SerializedName("success") val success: Boolean = false,
     @SerializedName("message") val message: String = "",
+
+    // 保持向后兼容：原有字段
+    @Deprecated("请使用 uploadedFiles 字段替代")
     @SerializedName("files") val files: List<String> = emptyList(),
+
     @SerializedName("totalSize") val totalSize: Long = 0,
-    @SerializedName("totalSizeFormatted") val totalSizeFormatted: String = ""
-) : Parcelable
+    @SerializedName("totalSizeFormatted") val totalSizeFormatted: String = "",
+
+    // ====== 新增字段 ======
+    @SerializedName("uploadedFiles") val uploadedFiles: List<UploadedFileInfo> = emptyList(),
+    @SerializedName("resolvedConflicts") val resolvedConflicts: List<ConflictResolutionInfo> = emptyList(),
+    @SerializedName("totalFiles") val totalFiles: Int = 0,
+    @SerializedName("successfulUploads") val successfulUploads: Int = 0,
+    @SerializedName("conflictsResolved") val conflictsResolved: Int = 0,
+    @SerializedName("failedUploads") val failedUploads: Int = 0,
+    @SerializedName("uploadTime") val uploadTime: String = "",
+    @SerializedName("requestId") val requestId: String = "",
+    @SerializedName("processingTime") val processingTime: String = ""
+) : Parcelable {
+
+    // 辅助方法：获取成功上传的文件列表
+    val successfulFiles: List<UploadedFileInfo>
+        get() = uploadedFiles.filter { it.success }
+
+    // 辅助方法：获取失败的文件列表
+    val failedFiles: List<UploadedFileInfo>
+        get() = uploadedFiles.filter { !it.success }
+
+    // 辅助方法：获取重命名的文件列表
+    val renamedFiles: List<UploadedFileInfo>
+        get() = uploadedFiles.filter { it.wasRenamed }
+
+    // 辅助方法：获取冲突解决数量
+    fun getConflictResolutionCount(): Int {
+        return resolvedConflicts.size
+    }
+
+    // 辅助方法：格式化显示时间
+    fun getFormattedUploadTime(): String {
+        return uploadTime.ifEmpty { "未知时间" }
+    }
+
+    // 辅助方法：获取处理时间（毫秒）
+    fun getProcessingTimeMillis(): Long {
+        return processingTime.toLongOrNull() ?: 0
+    }
+}

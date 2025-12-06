@@ -219,7 +219,12 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    suspend fun uploadFiles(serverUrl: String, files: List<File>, targetPath: String = ""): UploadResult = withContext(Dispatchers.IO) {
+    // 第155行附近
+    suspend fun uploadFiles(
+        serverUrl: String,
+        files: List<Pair<File, String>>,  // 现在接收 List<Pair<File, String>>
+        targetPath: String = ""
+    ): UploadResult = withContext(Dispatchers.IO) {
         // 添加空列表检查
         if (files.isEmpty()) {
             Log.e("FileServerService", "文件列表为空")
@@ -227,14 +232,16 @@ class FileServerService(private val context: Context) {
         }
 
         // 检查文件是否存在
-        val validFiles = files.filter { file ->
+        val validFiles = files.filter { (file, originalName) ->
             if (!file.exists()) {
-                Log.w("FileServerService", "文件不存在: ${file.absolutePath}")
+                Log.w("FileServerService", "文件不存在: ${file.absolutePath}, 原始文件名: $originalName")
                 false
             } else if (!file.canRead()) {
-                Log.w("FileServerService", "文件不可读: ${file.absolutePath}")
+                Log.w("FileServerService", "文件不可读: ${file.absolutePath}, 原始文件名: $originalName")
                 false
             } else {
+                // 同时记录原始文件名和临时文件名
+                Log.d("FileServerService", "验证文件通过: 临时文件=${file.name}, 原始文件名=$originalName")
                 true
             }
         }
@@ -263,11 +270,11 @@ class FileServerService(private val context: Context) {
             val multipartBuilder = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
 
-            validFiles.forEach { file ->
-                Log.d("FileServerService", "添加文件到multipart: ${file.name} (${file.length()} bytes)")
+            validFiles.forEach { (file, originalName) ->
+                Log.d("FileServerService", "添加文件到multipart: 原始文件名='$originalName', 临时文件='${file.name}' (${file.length()} bytes)")
                 multipartBuilder.addFormDataPart(
                     "files",
-                    file.name,
+                    originalName,  // ← 关键：使用原始文件名而不是临时文件名
                     file.asRequestBody("application/octet-stream".toMediaType())
                 )
             }
