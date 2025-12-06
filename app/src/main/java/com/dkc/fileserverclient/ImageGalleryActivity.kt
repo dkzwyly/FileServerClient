@@ -125,6 +125,8 @@ class ImageGalleryActivity : AppCompatActivity() {
 
             Log.d(TAG, "预览图片: ${imageItem.name}, URL: $fileUrl")
 
+
+
             val intent = Intent(this, PreviewActivity::class.java).apply {
                 putExtra("FILE_NAME", imageItem.name)
                 putExtra("FILE_URL", fileUrl)
