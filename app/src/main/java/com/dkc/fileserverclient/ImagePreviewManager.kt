@@ -9,7 +9,6 @@ import coil.ImageLoader
 import coil.decode.GifDecoder
 import coil.request.CachePolicy
 import coil.request.ImageRequest
-import coil.transform.RoundedCornersTransformation
 import kotlinx.coroutines.CoroutineScope
 
 class ImagePreviewManager(
@@ -38,10 +37,13 @@ class ImagePreviewManager(
     fun loadImage(imageUrl: String, fileName: String) {
         isGif = fileName.endsWith(".gif", ignoreCase = true)
 
+        // 预览时都使用 FIT_CENTER 完整显示图片
+        imageView.scaleType = ImageView.ScaleType.FIT_CENTER
+
         listener?.onImageLoadStart()
         loadingProgress.visibility = View.VISIBLE
 
-        Log.d("ImagePreviewManager", "开始加载图片: $fileName, isGif: $isGif")
+        Log.d("ImagePreviewManager", "开始加载图片: $fileName, isGif: $isGif, scaleType: ${imageView.scaleType}")
 
         val imageLoader = ImageLoader.Builder(context)
             .okHttpClient(httpClient)
@@ -61,7 +63,7 @@ class ImagePreviewManager(
                     listener?.onImageLoadStart()
                 },
                 onSuccess = { _, _ ->
-                    Log.d("ImagePreviewManager", "图片加载成功，isGif: $isGif")
+                    Log.d("ImagePreviewManager", "图片加载成功，isGif: $isGif, scaleType: ${imageView.scaleType}")
                     listener?.onImageLoadSuccess(isGif)
                     loadingProgress.visibility = View.GONE
 
@@ -80,9 +82,6 @@ class ImagePreviewManager(
                     listener?.onImageLoadError("图片加载失败: ${result.throwable.message}")
                 }
             )
-
-        // 移除所有可能会影响图片显示的 transformation
-        // 不添加任何 transformations，保持图片原始比例
 
         if (isGif) {
             requestBuilder
