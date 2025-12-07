@@ -137,7 +137,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         // 使用网格布局，每行3个图片
         recyclerView.layoutManager = GridLayoutManager(this, 3)
 
-        adapter = ImageGalleryAdapter(currentServerUrl, imageList,
+        adapter = ImageGalleryAdapter(currentServerUrl,
             isMultiSelectionMode = { isMultiSelectionMode },
             isItemSelected = { itemPath -> selectedItems.contains(itemPath) },
             onImageClick = { imageItem ->
@@ -174,27 +174,24 @@ class ImageGalleryActivity : AppCompatActivity() {
 
                 Log.d(TAG, "获取到 ${allItems.size} 个项目")
 
-                // 清空列表并重新填充
-                val previousSize = imageList.size
-                imageList.clear()
-                adapter.notifyItemRangeRemoved(0, previousSize)
-
                 // 过滤出图片文件
-                imageList.addAll(allItems.filter { item ->
+                val newImageList = allItems.filter { item ->
                     !item.isDirectory && item.isImage
-                })
+                }
 
-                Log.d(TAG, "过滤后得到 ${imageList.size} 张图片")
+                Log.d(TAG, "过滤后得到 ${newImageList.size} 张图片")
 
-                if (imageList.isEmpty()) {
+                // 使用DiffUtil更新列表，避免UI闪烁
+                adapter.submitList(newImageList)
+
+                if (newImageList.isEmpty()) {
                     statusText.text = "没有找到图片文件"
                 } else {
-                    statusText.text = "共找到 ${imageList.size} 张图片"
-                    adapter.notifyItemRangeInserted(0, imageList.size)
+                    statusText.text = "共找到 ${newImageList.size} 张图片"
 
                     // 显示第一张图片的信息用于调试
-                    if (imageList.isNotEmpty()) {
-                        val firstImage = imageList[0]
+                    if (newImageList.isNotEmpty()) {
+                        val firstImage = newImageList[0]
                         Log.d(TAG, "第一张图片: ${firstImage.name}, 路径: ${firstImage.path}, 有缩略图: ${firstImage.hasThumbnail}")
                     }
                 }
@@ -459,7 +456,13 @@ class ImageGalleryActivity : AppCompatActivity() {
             selectedItems.add(itemPath)
         }
         updateSelectionUI()
-        adapter.notifyDataSetChanged()
+
+        // 找到当前列表中对应的位置并通知更新
+        val currentList = adapter.currentList
+        val position = currentList.indexOfFirst { it.path == itemPath }
+        if (position != -1) {
+            adapter.notifyItemChanged(position, "selection")
+        }
     }
 
     // 全选/取消全选
@@ -533,7 +536,7 @@ class ImageGalleryActivity : AppCompatActivity() {
                 }
             }
 
-            // 完全重新加载图片列表，而不是手动修改
+            // 重新加载图片列表
             loadImages()
 
             // 退出多选模式

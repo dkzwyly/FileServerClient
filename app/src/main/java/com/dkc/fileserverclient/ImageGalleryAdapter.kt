@@ -9,24 +9,24 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.view.isVisible
-import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.ListAdapter
 import coil.ImageLoader
 import coil.load
 import coil.request.CachePolicy
 
 class ImageGalleryAdapter(
     private val serverUrl: String,
-    private val imageItems: List<FileSystemItem>,
     private val isMultiSelectionMode: () -> Boolean,
     private val isItemSelected: (String) -> Boolean,
     private val onImageClick: (FileSystemItem) -> Unit,
     private val onImageLongClick: (FileSystemItem) -> Unit
-) : RecyclerView.Adapter<ImageGalleryAdapter.ImageViewHolder>() {
+) : ListAdapter<FileSystemItem, ImageGalleryAdapter.ImageViewHolder>(ImageItemDiffCallback()) {
 
     // 将ImageLoader的创建移到类内部，但不在属性初始化时使用itemView
     private var unsafeImageLoader: ImageLoader? = null
+    private var currentServerUrl = serverUrl
 
-    class ImageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+    class ImageViewHolder(view: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view) {
         val imageView: ImageView = view.findViewById(R.id.galleryImageView)
         val fileName: TextView = view.findViewById(R.id.galleryFileName)
         val selectionOverlay: View = view.findViewById(R.id.selectionOverlay)
@@ -50,8 +50,44 @@ class ImageGalleryAdapter(
     }
 
     override fun onBindViewHolder(holder: ImageViewHolder, position: Int) {
-        val imageItem = imageItems[position]
+        val imageItem = getItem(position)
+        bindViewHolder(holder, imageItem)
+    }
 
+    override fun onBindViewHolder(
+        holder: ImageViewHolder,
+        position: Int,
+        payloads: List<Any>
+    ) {
+        if (payloads.isNotEmpty()) {
+            // 如果有payload，只更新必要的部分
+            val imageItem = getItem(position)
+
+            // 检查payload中是否包含需要更新的字段
+            when (val payload = payloads.firstOrNull()) {
+                is List<*> -> {
+                    // 如果是字符串列表，表示哪些字段需要更新
+                    if (payload.contains("name") || payload.contains("size") ||
+                        payload.contains("lastModified") || payload.contains("isImage") ||
+                        payload.contains("hasThumbnail")) {
+                        // 这些字段变化可能需要重新加载图片或更新显示
+                        loadImageThumbnail(holder, imageItem)
+                        holder.fileName.text = imageItem.name
+                    }
+                    updateSelectionUI(holder, imageItem)
+                }
+                else -> {
+                    // 默认情况下，只更新选择状态
+                    updateSelectionUI(holder, imageItem)
+                }
+            }
+        } else {
+            // 没有payload，完全绑定
+            super.onBindViewHolder(holder, position, payloads)
+        }
+    }
+
+    private fun bindViewHolder(holder: ImageViewHolder, imageItem: FileSystemItem) {
         // 设置文件名
         holder.fileName.text = imageItem.name
 
@@ -73,12 +109,10 @@ class ImageGalleryAdapter(
         }
     }
 
-    override fun getItemCount(): Int = imageItems.size
-
     private fun loadImageThumbnail(holder: ImageViewHolder, imageItem: FileSystemItem) {
         try {
             val encodedPath = java.net.URLEncoder.encode(imageItem.path, "UTF-8")
-            val thumbnailUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/thumbnail/$encodedPath"
+            val thumbnailUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/thumbnail/$encodedPath"
 
             Log.d("ImageGallery", "加载缩略图: ${imageItem.name}, URL: $thumbnailUrl")
 
@@ -90,7 +124,6 @@ class ImageGalleryAdapter(
                 diskCachePolicy(CachePolicy.ENABLED)
                 size(300, 300) // 限制缩略图大小
                 // Coil会自动处理ViewHolder复用，取消之前的请求
-                // crossfade(true) // 如果需要淡入淡出效果可以添加
             }
 
         } catch (e: Exception) {
@@ -141,5 +174,10 @@ class ImageGalleryAdapter(
     fun dispose() {
         unsafeImageLoader?.shutdown()
         unsafeImageLoader = null
+    }
+
+    // 更新服务器URL
+    fun updateServerUrl(newUrl: String) {
+        currentServerUrl = newUrl
     }
 }
