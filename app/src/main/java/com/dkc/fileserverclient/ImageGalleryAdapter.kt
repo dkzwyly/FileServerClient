@@ -11,7 +11,7 @@ import android.widget.TextView
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
 import coil.ImageLoader
-import coil.request.ImageRequest
+import coil.load
 import coil.request.CachePolicy
 
 class ImageGalleryAdapter(
@@ -31,7 +31,6 @@ class ImageGalleryAdapter(
         val fileName: TextView = view.findViewById(R.id.galleryFileName)
         val selectionOverlay: View = view.findViewById(R.id.selectionOverlay)
         val selectionCheck: ImageView = view.findViewById(R.id.selectionCheck)
-        var currentLoadPath: String? = null
     }
 
     // 获取ImageLoader的辅助方法
@@ -53,16 +52,13 @@ class ImageGalleryAdapter(
     override fun onBindViewHolder(holder: ImageViewHolder, position: Int) {
         val imageItem = imageItems[position]
 
-        // 重置当前状态
-        holder.currentLoadPath = null
-
         // 设置文件名
         holder.fileName.text = imageItem.name
 
         // 更新选择状态
         updateSelectionUI(holder, imageItem)
 
-        // 加载图片缩略图
+        // 重新加载图片缩略图
         loadImageThumbnail(holder, imageItem)
 
         // 设置点击事件
@@ -84,28 +80,22 @@ class ImageGalleryAdapter(
             val encodedPath = java.net.URLEncoder.encode(imageItem.path, "UTF-8")
             val thumbnailUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/thumbnail/$encodedPath"
 
-            holder.currentLoadPath = imageItem.path
-
             Log.d("ImageGallery", "加载缩略图: ${imageItem.name}, URL: $thumbnailUrl")
 
-            // 使用 Coil 加载缩略图
-            val request = ImageRequest.Builder(holder.itemView.context)
-                .data(thumbnailUrl)
-                .target(holder.imageView)
-                .placeholder(R.drawable.ic_image_placeholder)
-                .error(R.drawable.ic_image_placeholder)
-                .memoryCachePolicy(CachePolicy.ENABLED)
-                .diskCachePolicy(CachePolicy.ENABLED)
-                .size(300, 300) // 限制缩略图大小
-                .build()
-
-            getImageLoader(holder.itemView.context).enqueue(request)
+            // 使用Coil的load扩展函数直接加载图片
+            holder.imageView.load(thumbnailUrl, getImageLoader(holder.itemView.context)) {
+                placeholder(R.drawable.ic_image_placeholder)
+                error(R.drawable.ic_image_placeholder)
+                memoryCachePolicy(CachePolicy.ENABLED)
+                diskCachePolicy(CachePolicy.ENABLED)
+                size(300, 300) // 限制缩略图大小
+                // Coil会自动处理ViewHolder复用，取消之前的请求
+                // crossfade(true) // 如果需要淡入淡出效果可以添加
+            }
 
         } catch (e: Exception) {
             Log.e("ImageGallery", "缩略图加载异常: ${e.message}", e)
-            if (holder.currentLoadPath == imageItem.path) {
-                holder.imageView.setImageResource(R.drawable.ic_image_placeholder)
-            }
+            holder.imageView.setImageResource(R.drawable.ic_image_placeholder)
         }
     }
 
@@ -134,13 +124,15 @@ class ImageGalleryAdapter(
         } else {
             holder.selectionOverlay.isVisible = false
             holder.selectionCheck.isVisible = false
+            // 清除选择状态的颜色
+            holder.selectionCheck.clearColorFilter()
         }
     }
 
     override fun onViewRecycled(holder: ImageViewHolder) {
         super.onViewRecycled(holder)
+        // 清除图片，防止复用导致的图片错位
         holder.imageView.setImageDrawable(null)
-        holder.currentLoadPath = null
         // 清除颜色过滤器
         holder.selectionCheck.clearColorFilter()
     }
