@@ -515,6 +515,9 @@ class PreviewActivity : AppCompatActivity(),
         showContainer(imageContainer)
         fileTypeTextView.visibility = View.VISIBLE
 
+        // 确保设置为 centerInside 以完整显示图片
+        imagePreview.scaleType = ImageView.ScaleType.CENTER_INSIDE
+
         // 使用管理器加载图片
         imageManager.loadImage(currentFileUrl, currentFileName)
 

@@ -65,9 +65,6 @@ class ImagePreviewManager(
                     listener?.onImageLoadSuccess(isGif)
                     loadingProgress.visibility = View.GONE
 
-                    // 设置自适应大小显示
-                    imageView.scaleType = ImageView.ScaleType.FIT_CENTER
-
                     if (isGif) {
                         // 确保GIF动画开始
                         val drawable = imageView.drawable
@@ -84,9 +81,10 @@ class ImagePreviewManager(
                 }
             )
 
-        if (!isGif) {
-            requestBuilder.transformations(RoundedCornersTransformation(8f))
-        } else {
+        // 移除所有可能会影响图片显示的 transformation
+        // 不添加任何 transformations，保持图片原始比例
+
+        if (isGif) {
             requestBuilder
                 .memoryCachePolicy(CachePolicy.ENABLED)
                 .diskCachePolicy(CachePolicy.ENABLED)
