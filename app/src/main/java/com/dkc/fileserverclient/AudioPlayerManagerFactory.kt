@@ -24,7 +24,7 @@ object AudioPlayerManagerFactory {
     /**
      * 初始化 AudioPlayerManager
      */
-    fun initialize(context: Context, httpClient: OkHttpClient? = null) {
+    fun initialize(context: Context, httpClient: okhttp3.OkHttpClient? = null) {
         val manager = getInstance(httpClient)
         if (manager is ExoAudioPlayerManager) {
             manager.initialize(context, android.os.Handler(context.mainLooper))

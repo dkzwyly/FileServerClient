@@ -28,4 +28,5 @@
     <color name="search_background">#F5F5F5</color>
     <color name="search_stroke">#E0E0E0</color>
     <color name="background_color">#F8F9FA</color>
+    <color name="notification_icon_color">#FFFFFF</color>
 </resources>
