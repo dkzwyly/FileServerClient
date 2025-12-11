@@ -57,17 +57,7 @@ class AudioLibraryAdapter(
     override fun getItemCount(): Int = audioItems.size
 
     private fun getAudioFormat(item: FileSystemItem): String {
-        return when (item.extension.lowercase()) {
-            ".mp3" -> "MP3"
-            ".wav" -> "WAV"
-            ".ogg" -> "OGG"
-            ".m4a" -> "M4A"
-            ".flac" -> "FLAC"
-            ".aac" -> "AAC"
-            ".wma" -> "WMA"
-            ".amr" -> "AMR"
-            else -> item.extension.uppercase()
-        }
+        return AudioUtils.getAudioFormat(item)
     }
 
     private fun getDurationText(item: FileSystemItem): String {

@@ -10,6 +10,7 @@ class AutoPlayManager(
 ) {
     private var autoPlayEnabled = false
     private var mediaFileList: ArrayList<FileSystemItem>? = null
+    private var audioTrackList: List<AudioTrack>? = null
     private var currentMediaIndex = -1
     private var currentServerUrl = ""
     private var currentDirectoryPath = ""
@@ -17,6 +18,7 @@ class AutoPlayManager(
     // 监听器接口
     interface AutoPlayListener {
         fun onLoadMediaFile(fileName: String, fileUrl: String, fileType: String, index: Int, filePath: String)
+        fun onLoadAudioTrack(track: AudioTrack, index: Int)
         fun onAutoPlayError(message: String)
     }
 
@@ -29,39 +31,65 @@ class AutoPlayManager(
     fun setupAutoPlay(
         enabled: Boolean,
         fileList: ArrayList<FileSystemItem>?,
+        audioTracks: List<AudioTrack>?,
         currentIndex: Int,
         serverUrl: String,
         directoryPath: String
     ) {
         autoPlayEnabled = enabled
         mediaFileList = fileList
+        audioTrackList = audioTracks
         currentMediaIndex = currentIndex
         currentServerUrl = serverUrl
         currentDirectoryPath = directoryPath
     }
 
     fun playNextMedia() {
-        if (!autoPlayEnabled || mediaFileList == null) return
+        if (!autoPlayEnabled) return
+
+        // 优先使用AudioTrack列表
+        if (audioTrackList != null && audioTrackList!!.isNotEmpty()) {
+            val nextIndex = currentMediaIndex + 1
+            if (nextIndex < audioTrackList!!.size) {
+                loadAudioTrack(nextIndex)
+            } else {
+                autoPlayListener?.onAutoPlayError("已经是最后一个音频")
+            }
+            return
+        }
+
+        // 回退到FileSystemItem列表
+        if (mediaFileList == null) return
 
         val nextIndex = currentMediaIndex + 1
         if (nextIndex < mediaFileList!!.size) {
             loadMediaFile(nextIndex)
         } else {
-            // 已经是最后一个，显示提示
             autoPlayListener?.onAutoPlayError("已经是最后一个文件")
-            // 可以选择循环播放
-            // loadMediaFile(0)
         }
     }
 
     fun playPreviousMedia() {
-        if (!autoPlayEnabled || mediaFileList == null) return
+        if (!autoPlayEnabled) return
+
+        // 优先使用AudioTrack列表
+        if (audioTrackList != null && audioTrackList!!.isNotEmpty()) {
+            val prevIndex = currentMediaIndex - 1
+            if (prevIndex >= 0) {
+                loadAudioTrack(prevIndex)
+            } else {
+                autoPlayListener?.onAutoPlayError("已经是第一个音频")
+            }
+            return
+        }
+
+        // 回退到FileSystemItem列表
+        if (mediaFileList == null) return
 
         val prevIndex = currentMediaIndex - 1
         if (prevIndex >= 0) {
             loadMediaFile(prevIndex)
         } else {
-            // 已经是第一个文件
             autoPlayListener?.onAutoPlayError("已经是第一个文件")
         }
     }
@@ -75,12 +103,25 @@ class AutoPlayManager(
 
             currentMediaIndex = index
 
-            // 传递完整路径
             autoPlayListener?.onLoadMediaFile(item.name, fileUrl, fileType, index, item.path)
 
         } catch (e: Exception) {
             autoPlayListener?.onAutoPlayError("加载媒体文件失败: ${e.message}")
-            // 加载失败时尝试播放下一个
+            if (autoPlayEnabled) {
+                handler.postDelayed({
+                    playNextMedia()
+                }, 2000)
+            }
+        }
+    }
+
+    private fun loadAudioTrack(index: Int) {
+        try {
+            val track = audioTrackList!![index]
+            currentMediaIndex = index
+            autoPlayListener?.onLoadAudioTrack(track, index)
+        } catch (e: Exception) {
+            autoPlayListener?.onAutoPlayError("加载音频失败: ${e.message}")
             if (autoPlayEnabled) {
                 handler.postDelayed({
                     playNextMedia()
@@ -108,9 +149,17 @@ class AutoPlayManager(
 
     fun isAutoPlayEnabled(): Boolean = autoPlayEnabled
 
-    fun getMediaListSize(): Int = mediaFileList?.size ?: 0
+    fun getMediaListSize(): Int {
+        return audioTrackList?.size ?: mediaFileList?.size ?: 0
+    }
 
     fun getCurrentFileName(): String {
+        // 优先从AudioTrack获取
+        if (audioTrackList != null && currentMediaIndex >= 0 && currentMediaIndex < audioTrackList!!.size) {
+            return audioTrackList!![currentMediaIndex].name
+        }
+
+        // 回退到FileSystemItem
         return if (mediaFileList != null && currentMediaIndex >= 0 && currentMediaIndex < mediaFileList!!.size) {
             mediaFileList!![currentMediaIndex].name
         } else {
@@ -118,8 +167,14 @@ class AutoPlayManager(
         }
     }
 
-    // 新增方法：获取当前文件的完整路径
+    // 获取当前文件的完整路径
     fun getCurrentFilePath(): String {
+        // 优先从AudioTrack获取
+        if (audioTrackList != null && currentMediaIndex >= 0 && currentMediaIndex < audioTrackList!!.size) {
+            return audioTrackList!![currentMediaIndex].path
+        }
+
+        // 回退到FileSystemItem
         return if (mediaFileList != null && currentMediaIndex >= 0 && currentMediaIndex < mediaFileList!!.size) {
             mediaFileList!![currentMediaIndex].path
         } else {
@@ -131,6 +186,15 @@ class AutoPlayManager(
     fun getCurrentFileItem(): FileSystemItem? {
         return if (mediaFileList != null && currentMediaIndex >= 0 && currentMediaIndex < mediaFileList!!.size) {
             mediaFileList!![currentMediaIndex]
+        } else {
+            null
+        }
+    }
+
+    // 获取当前AudioTrack
+    fun getCurrentAudioTrack(): AudioTrack? {
+        return if (audioTrackList != null && currentMediaIndex >= 0 && currentMediaIndex < audioTrackList!!.size) {
+            audioTrackList!![currentMediaIndex]
         } else {
             null
         }

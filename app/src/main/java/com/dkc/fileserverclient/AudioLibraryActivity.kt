@@ -14,7 +14,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.*
-import java.io.File
 
 class AudioLibraryActivity : AppCompatActivity() {
 
@@ -36,12 +35,6 @@ class AudioLibraryActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "AudioLibraryActivity"
-
-        // 音频文件扩展名
-        private val AUDIO_EXTENSIONS = listOf(
-            ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".wma", ".amr",
-            ".MP3", ".WAV", ".OGG", ".M4A", ".FLAC", ".AAC", ".WMA", ".AMR"
-        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -152,7 +145,7 @@ class AudioLibraryActivity : AppCompatActivity() {
                 // 过滤出音频文件
                 audioList.clear()
                 audioList.addAll(allItems.filter { item ->
-                    !item.isDirectory && isAudioFile(item)
+                    !item.isDirectory && AudioUtils.isAudioFile(item)
                 })
 
                 Log.d(TAG, "过滤后得到 ${audioList.size} 个音频文件")
@@ -181,30 +174,36 @@ class AudioLibraryActivity : AppCompatActivity() {
         }
     }
 
-    private fun isAudioFile(item: FileSystemItem): Boolean {
-        return AUDIO_EXTENSIONS.any { item.name.endsWith(it, ignoreCase = true) }
-    }
-
     private fun playAudio(audioItem: FileSystemItem) {
         try {
-            val encodedPath = java.net.URLEncoder.encode(audioItem.path, "UTF-8")
-            val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+            // 转换为AudioTrack
+            val audioTrack = AudioTrack.fromFileSystemItem(audioItem, currentServerUrl)
 
-            Log.d(TAG, "播放音频: ${audioItem.name}, URL: $fileUrl, Path: ${audioItem.path}")
+            // 获取音频文件列表并转换为AudioTrack列表
+            val audioTracks = AudioUtils.convertToAudioTracks(filteredAudioList, currentServerUrl)
+            val currentIndex = filteredAudioList.indexOf(audioItem)
 
             // 获取音频文件所在目录
             val directory = getDirectoryFromPath(audioItem.path)
             Log.d(TAG, "音频目录: $directory")
 
-            // 设置自动连播 - 传递整个音频列表
+            // 设置自动连播 - 传递AudioTrack列表
             val intent = Intent(this, PreviewActivity::class.java).apply {
                 putExtra("FILE_NAME", audioItem.name)
-                putExtra("FILE_URL", fileUrl)
+                putExtra("FILE_URL", audioTrack.url)
                 putExtra("FILE_TYPE", "audio")
                 putExtra("FILE_PATH", audioItem.path)  // 完整路径，用于歌词查找
-                putExtra("AUTO_PLAY_ENABLED", true)
-                putExtra("MEDIA_FILE_LIST", ArrayList(filteredAudioList))
-                putExtra("CURRENT_INDEX", filteredAudioList.indexOf(audioItem))
+                putExtra("AUTO_PLAY_ENABLED", true)  // 启用自动连播
+
+                // 关键修复：从音乐库进入时添加特殊标志
+                putExtra("SHOULD_AUTO_PLAY", true)  // 自动播放标志
+                putExtra("FROM_MUSIC_LIBRARY", true)  // 新增：标记从音乐库进入
+
+                // 传递AudioTrack对象和列表
+                putExtra("AUDIO_TRACK", audioTrack)
+                putExtra("AUDIO_TRACKS", ArrayList(audioTracks))
+
+                putExtra("CURRENT_INDEX", currentIndex)
                 putExtra("SERVER_URL", currentServerUrl)
                 putExtra("CURRENT_PATH", directory)  // 当前目录，用于自动连播时构建路径
             }
@@ -217,7 +216,7 @@ class AudioLibraryActivity : AppCompatActivity() {
     // 辅助方法：从路径中提取目录
     private fun getDirectoryFromPath(filePath: String): String {
         return try {
-            val file = File(filePath)
+            val file = java.io.File(filePath)
             val parent = file.parent ?: ""
             Log.d(TAG, "从路径 $filePath 提取目录: $parent")
             parent
@@ -226,6 +225,8 @@ class AudioLibraryActivity : AppCompatActivity() {
             ""
         }
     }
+
+
 
     override fun onResume() {
         super.onResume()

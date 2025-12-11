@@ -35,7 +35,7 @@ class VideoPlayerManager(
     private val handler: Handler
 ) {
     private var exoPlayer: ExoPlayer? = null
-    private var isPlayingState = false // 改为可变的变量
+    private var isPlayingState = false
     private var isFastForwarding = false
     private var videoDuration: Long = 0
 
@@ -79,7 +79,7 @@ class VideoPlayerManager(
                         when (playbackState) {
                             Player.STATE_READY -> {
                                 videoLoadingProgress.visibility = View.GONE
-                                isPlayingState = this@apply.isPlaying // 更新可变变量
+                                isPlayingState = this@apply.isPlaying
                                 playerStateListener?.onPlayerStateChanged(isPlayingState)
                                 updateDuration()
                                 startProgressUpdates()
@@ -92,7 +92,7 @@ class VideoPlayerManager(
                             }
                             Player.STATE_ENDED -> {
                                 playPauseButton.setImageResource(android.R.drawable.ic_media_play)
-                                isPlayingState = false // 更新可变变量
+                                isPlayingState = false
                                 playerStateListener?.onPlayerStateChanged(isPlayingState)
                                 playerStateListener?.onPlaybackEnded()
                                 stopProgressUpdates()
@@ -107,7 +107,7 @@ class VideoPlayerManager(
                     }
 
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
-                        this@VideoPlayerManager.isPlayingState = isPlaying // 更新可变变量
+                        this@VideoPlayerManager.isPlayingState = isPlaying
                         playerStateListener?.onPlayerStateChanged(isPlayingState)
                     }
                 })
@@ -115,6 +115,11 @@ class VideoPlayerManager(
 
         playerView.player = exoPlayer
         playerView.useController = false
+
+        // 设置播放/暂停按钮监听器
+        playPauseButton.setOnClickListener {
+            togglePlayback()
+        }
     }
 
     private fun createUnsafeDataSourceFactory(): DataSource.Factory {
@@ -122,6 +127,7 @@ class VideoPlayerManager(
         return DefaultDataSource.Factory(context, okHttpDataSourceFactory)
     }
 
+    // 只保留视频加载方法，移除音频相关方法
     fun loadVideo(videoUrl: String) {
         try {
             val mediaSourceFactory = ProgressiveMediaSource.Factory(createUnsafeDataSourceFactory())
@@ -137,24 +143,6 @@ class VideoPlayerManager(
 
         } catch (e: Exception) {
             playerStateListener?.onPlayerError("视频加载失败: ${e.message}")
-        }
-    }
-
-    fun loadAudio(audioUrl: String) {
-        try {
-            val mediaSourceFactory = ProgressiveMediaSource.Factory(createUnsafeDataSourceFactory())
-            val mediaItem = MediaItem.fromUri(audioUrl)
-            val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
-
-            exoPlayer?.setMediaSource(mediaSource)
-            exoPlayer?.prepare()
-            exoPlayer?.playWhenReady = true
-
-            isPlayingState = true
-            updatePlayPauseButton()
-
-        } catch (e: Exception) {
-            playerStateListener?.onPlayerError("音频加载失败: ${e.message}")
         }
     }
 
@@ -213,6 +201,26 @@ class VideoPlayerManager(
             android.R.drawable.ic_media_play
         }
         playPauseButton.setImageResource(iconRes)
+    }
+
+    // 在 VideoPlayerManager 类中添加 loadAudio 方法（用于向后兼容）
+    fun loadAudio(audioUrl: String) {
+        try {
+            val mediaSourceFactory = ProgressiveMediaSource.Factory(createUnsafeDataSourceFactory())
+            val mediaItem = MediaItem.fromUri(audioUrl)
+            val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
+
+            exoPlayer?.setMediaSource(mediaSource)
+            exoPlayer?.prepare()
+            exoPlayer?.playWhenReady = true
+
+            isPlayingState = true
+            updatePlayPauseButton()
+
+
+        } catch (e: Exception) {
+            playerStateListener?.onPlayerError("音频加载失败: ${e.message}")
+        }
     }
 
     fun startProgressUpdates() {
