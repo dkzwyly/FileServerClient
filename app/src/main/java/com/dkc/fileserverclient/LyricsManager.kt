@@ -194,34 +194,71 @@ class LyricsManager(
     }
 
     fun startLyricsUpdates() {
+        // 如果已经在更新，先停止
+        stopLyricsUpdates()
+
         lyricsUpdateRunnable = Runnable { updateLyricsDisplay() }
+
+        // 立即执行第一次更新
         handler.post(lyricsUpdateRunnable!!)
+
+        Log.d("LyricsManager", "开始歌词更新")
     }
 
     fun stopLyricsUpdates() {
         lyricsUpdateRunnable?.let {
             handler.removeCallbacks(it)
+            lyricsUpdateRunnable = null
         }
+
+        Log.d("LyricsManager", "停止歌词更新")
     }
 
     private fun updateLyricsDisplay() {
         lyricsData?.let { data ->
             listener?.let { listener ->
-                // 获取当前时间（由监听器提供）
-                val currentTime = (listener as? TimeProvider)?.getCurrentTime() ?: 0L
-                val currentLine = findCurrentLyricsLine(data.lines, currentTime)
-                val nextLine = findNextLyricsLine(data.lines, currentTime)
+                try {
+                    // 获取当前时间（由监听器提供）
+                    val currentTime = (listener as? TimeProvider)?.getCurrentTime() ?: 0L
 
-                listener.onLyricsUpdated(
-                    currentLine?.text,
-                    nextLine?.text
-                )
+                    // 检查时间是否有效（不为0）
+                    if (currentTime <= 0L) {
+                        // 如果时间无效，延迟后重试
+                        lyricsUpdateRunnable?.let {
+                            handler.postDelayed(it, 500L)
+                        }
+                        return
+                    }
 
-                // 根据是否在播放决定更新频率（由监听器提供）
-                val isPlaying = (listener as? PlayStateProvider)?.isPlaying() ?: true
-                val updateDelay = if (isPlaying) 100L else 500L
-                handler.postDelayed(lyricsUpdateRunnable!!, updateDelay)
+                    val currentLine = findCurrentLyricsLine(data.lines, currentTime)
+                    val nextLine = findNextLyricsLine(data.lines, currentTime)
+
+                    // 关键：在主线程更新UI
+                    handler.post {
+                        (listener as? LyricsStateListener)?.onLyricsUpdated(
+                            currentLine?.text,
+                            nextLine?.text
+                        )
+                    }
+
+                    // 根据是否在播放决定更新频率（由监听器提供）
+                    val isPlaying = (listener as? PlayStateProvider)?.isPlaying() ?: true
+                    val updateDelay = if (isPlaying) 100L else 500L
+
+                    // 确保Runnable不为null再post
+                    lyricsUpdateRunnable?.let {
+                        handler.postDelayed(it, updateDelay)
+                    }
+                } catch (e: Exception) {
+                    Log.e("LyricsManager", "更新歌词显示异常", e)
+                    // 出现异常时停止更新
+                    stopLyricsUpdates()
+                }
             }
+        } ?: run {
+            // 如果没有歌词数据，停止更新
+            Log.d("LyricsManager", "没有歌词数据，停止更新")
+            stopLyricsUpdates()
         }
     }
 
@@ -248,8 +285,13 @@ class LyricsManager(
     fun clear() {
         lyricsLoadJob?.cancel()
         stopLyricsUpdates()
+
+        // 只在销毁时清空歌词数据
         lyricsData = null
+
         isLyricsLoading = false
+
+        Log.d("LyricsManager", "清理歌词管理器")
     }
 
     // 辅助接口

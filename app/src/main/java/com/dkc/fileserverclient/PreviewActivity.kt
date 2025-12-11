@@ -101,6 +101,9 @@ class PreviewActivity : AppCompatActivity(),
 
     private val doubleTapHandler = Handler(Looper.getMainLooper())
 
+    // 应用状态标志
+    private var isAppInBackground = false
+
     // 网络客户端
     private val client = UnsafeHttpClient.createUnsafeOkHttpClient()
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
@@ -816,7 +819,7 @@ class PreviewActivity : AppCompatActivity(),
         videoControls.visibility = View.VISIBLE
 
         // 重置歌词状态
-        lyricsManager.clear()
+        lyricsManager.clear()  // 先清空旧数据
         currentLyricsLine.text = "正在加载歌词..."
         nextLyricsLine.text = ""
 
@@ -854,10 +857,24 @@ class PreviewActivity : AppCompatActivity(),
                 handler.postDelayed({
                     audioPlayerAdapter.loadAudio(track.url, track)
                     audioPlayerAdapter.resume() // 确保开始播放
+
+                    // 延迟启动歌词更新
+                    handler.postDelayed({
+                        if (lyricsManager.getLyricsData() != null) {
+                            lyricsManager.startLyricsUpdates()
+                        }
+                    }, 500)
                 }, 300)
             } else {
                 // 正常加载但不自动播放
                 audioPlayerAdapter.loadAudio(track.url, track)
+
+                // 启动歌词更新
+                handler.postDelayed({
+                    if (lyricsManager.getLyricsData() != null) {
+                        lyricsManager.startLyricsUpdates()
+                    }
+                }, 500)
             }
         } ?: run {
             // 回退到原来的方式
@@ -1281,6 +1298,13 @@ class PreviewActivity : AppCompatActivity(),
 
         // 重新加载歌词
         loadLyricsForCurrentSong()
+
+        // 关键修复：启动歌词更新
+        handler.postDelayed({
+            if (lyricsManager.getLyricsData() != null) {
+                lyricsManager.startLyricsUpdates()
+            }
+        }, 1500) // 延迟1.5秒确保歌词加载完成
     }
     override fun onPlaybackError(error: String) {
         showError(error)
@@ -1446,6 +1470,38 @@ class PreviewActivity : AppCompatActivity(),
         }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+
+        if (hasFocus && isAppInBackground) {
+            // 应用从后台回到前台
+            Log.d("PreviewActivity", "应用获得焦点，恢复歌词更新")
+            isAppInBackground = false
+
+            // 恢复歌词更新
+            if (isLyricsVisible && lyricsManager.getLyricsData() != null) {
+                handler.postDelayed({
+                    lyricsManager.startLyricsUpdates()
+
+                    // 强制更新一次
+                    val currentTime = getCurrentTime()
+                    lyricsManager.getLyricsData()?.let { data ->
+                        val currentLine = findCurrentLyricsLine(data.lines, currentTime)
+                        val nextLine = findNextLyricsLine(data.lines, currentTime)
+
+                        currentLyricsLine.text = currentLine?.text ?: ""
+                        nextLyricsLine.text = nextLine?.text ?: ""
+                    }
+                }, 200) // 延迟200ms确保UI完全恢复
+            }
+        } else if (!hasFocus && !isAppInBackground) {
+            // 应用失去焦点，进入后台
+            Log.d("PreviewActivity", "应用失去焦点，暂停歌词更新")
+            isAppInBackground = true
+            lyricsManager.stopLyricsUpdates()
+        }
+    }
+
     private fun hideLyrics() {
         lyricsContainer.visibility = View.GONE
         isLyricsVisible = false
@@ -1475,13 +1531,23 @@ class PreviewActivity : AppCompatActivity(),
 
         videoPlayerManager.pause()
         videoPlayerManager.stopProgressUpdates()
+
+        // 关键修复：不要在这里停止歌词更新，只需暂停更新频率
         lyricsManager.stopLyricsUpdates()
-        lyricsManager.clear()
+
+        // 不要清空歌词数据，否则切回时会丢失
+        // lyricsManager.clear()  // 移除这行
+
         imageManager.clear()
         gestureControlManager.clear()
         isLongPressDetected = false
         doubleTapHandler.removeCallbacksAndMessages(null)
         lyricsDialog?.dismiss()
+
+        // 标记应用进入后台
+        isAppInBackground = true
+
+        Log.d("PreviewActivity", "onPause: 应用进入后台")
     }
 
     override fun onResume() {
@@ -1490,7 +1556,51 @@ class PreviewActivity : AppCompatActivity(),
             fullscreenManager.enterFullscreen()
         }
         videoPlayerManager.startProgressUpdates()
-        lyricsManager.startLyricsUpdates()
+
+        // 关键修复：重新启动歌词更新（无论是否正在播放）
+        if (isLyricsVisible && lyricsManager.getLyricsData() != null) {
+            Log.d("PreviewActivity", "onResume: 重新启动歌词更新")
+            lyricsManager.startLyricsUpdates()
+
+            // 强制更新一次当前歌词
+            handler.post {
+                val currentTime = getCurrentTime()
+                lyricsManager.getLyricsData()?.let { data ->
+                    val currentLine = findCurrentLyricsLine(data.lines, currentTime)
+                    val nextLine = findNextLyricsLine(data.lines, currentTime)
+
+                    // 直接更新UI，不通过回调
+                    currentLyricsLine.text = currentLine?.text ?: ""
+                    nextLyricsLine.text = nextLine?.text ?: ""
+
+                    Log.d("PreviewActivity", "onResume: 强制更新歌词，当前时间=$currentTime")
+                }
+            }
+        }
+
+        // 重置后台标志
+        isAppInBackground = false
+
+        Log.d("PreviewActivity", "onResume: 应用回到前台")
+    }
+
+    // 添加辅助方法（复制自 LyricsManager，或者保持原有逻辑）
+    private fun findCurrentLyricsLine(lines: List<LyricsLine>, currentTime: Long): LyricsLine? {
+        for (i in lines.indices.reversed()) {
+            if (currentTime >= lines[i].time) {
+                return lines[i]
+            }
+        }
+        return null
+    }
+
+    private fun findNextLyricsLine(lines: List<LyricsLine>, currentTime: Long): LyricsLine? {
+        for (i in lines.indices) {
+            if (currentTime < lines[i].time) {
+                return lines[i]
+            }
+        }
+        return null
     }
 
     override fun onDestroy() {
@@ -1500,11 +1610,16 @@ class PreviewActivity : AppCompatActivity(),
 
         coroutineScope.cancel()
         videoPlayerManager.releasePlayer()
+
+        // 关键修复：只在销毁时清空歌词数据
         lyricsManager.clear()
+
         imageManager.clear()
         gestureControlManager.clear()
         doubleTapHandler.removeCallbacksAndMessages(null)
         lyricsDialog?.dismiss()
+
+        Log.d("PreviewActivity", "onDestroy: Activity销毁")
     }
 
     override fun onBackPressed() {
