@@ -19,12 +19,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.concurrent.CopyOnWriteArrayList
+import android.os.Looper
+import android.os.Handler
 
 /**
  * 音频后台播放服务
  * 唯一负责音频播放，支持API 23-34
  */
 class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressListener {
+    private lateinit var handler: Handler
 
     companion object {
         private const val TAG = "AudioPlaybackService"
@@ -96,11 +99,14 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         super.onCreate()
         Log.d(TAG, "音频播放服务创建")
 
+        // 初始化 Handler
+        handler = Handler(Looper.getMainLooper())
+
         // 初始化通知管理器
         notificationManager = NotificationManagerCompat.from(this)
         createNotificationChannel()
 
-        // 修复初始化参数 - 传入HttpClient而不是Handler
+        // 修改初始化参数 - 传入 HttpClient 而不是 Handler
         AudioPlayerManagerFactory.initialize(this, UnsafeHttpClient.createUnsafeOkHttpClient())
         audioPlayerManager = AudioPlayerManagerFactory.getInstance()
 
@@ -141,16 +147,37 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
 
             val startIndex = intent.getIntExtra(EXTRA_START_INDEX, 0)
 
-            // 如果有播放列表，设置播放列表
-            if (playlist != null && playlist.isNotEmpty()) {
-                Log.d(TAG, "设置播放列表，大小: ${playlist.size}, 起始索引: $startIndex")
-                audioPlayerManager.setPlaylist(playlist, startIndex)
-            }
+            // 关键修复：确保播放操作顺序执行
+            handler.post {
+                // 如果有播放列表，设置播放列表
+                if (playlist != null && playlist.isNotEmpty()) {
+                    Log.d(TAG, "设置播放列表，大小: ${playlist.size}, 起始索引: $startIndex")
+                    audioPlayerManager.setPlaylist(playlist, startIndex)
 
-            // 如果有指定曲目，播放它
-            track?.let {
-                Log.d(TAG, "播放指定曲目: ${it.name}")
-                audioPlayerManager.play(it)
+                    // 如果有指定曲目，播放指定曲目
+                    track?.let {
+                        Log.d(TAG, "播放指定曲目: ${it.name}")
+                        // 延迟确保播放列表已设置完成
+                        handler.postDelayed({
+                            audioPlayerManager.play(it)
+                        }, 100)
+                    } ?: run {
+                        // 否则播放起始索引的曲目
+                        if (startIndex in playlist.indices) {
+                            handler.postDelayed({
+                                audioPlayerManager.playAtIndex(startIndex)
+                            }, 100)
+                        }
+                    }
+                } else {
+                    // 单个曲目播放
+                    track?.let {
+                        Log.d(TAG, "播放单个曲目: ${it.name}")
+                        handler.postDelayed({
+                            audioPlayerManager.play(it)
+                        }, 100)
+                    }
+                }
             }
         }
 
@@ -213,6 +240,9 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
 
     override fun onDestroy() {
         Log.d(TAG, "服务销毁")
+
+        // 移除所有 handler 回调
+        handler.removeCallbacksAndMessages(null)
 
         // 移除监听器
         audioPlayerManager.removePlaybackListener(this)

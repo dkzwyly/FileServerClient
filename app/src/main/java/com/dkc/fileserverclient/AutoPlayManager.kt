@@ -130,6 +130,8 @@ class AutoPlayManager(
         }
     }
 
+
+
     private fun getFileType(item: FileSystemItem): String {
         return when {
             item.isVideo -> "video"
@@ -167,7 +169,9 @@ class AutoPlayManager(
         }
     }
 
-    // 获取当前文件的完整路径
+    /**
+     * 获取当前文件的完整路径
+     */
     fun getCurrentFilePath(): String {
         // 优先从AudioTrack获取
         if (audioTrackList != null && currentMediaIndex >= 0 && currentMediaIndex < audioTrackList!!.size) {
@@ -199,4 +203,5 @@ class AutoPlayManager(
             null
         }
     }
+
 }

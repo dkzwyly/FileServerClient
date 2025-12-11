@@ -886,8 +886,9 @@ class PreviewActivity : AppCompatActivity(),
         // 检查是否从音乐库进入（需要自动播放）
         val shouldAutoPlay = intent.getBooleanExtra("SHOULD_AUTO_PLAY", false)
         val fromMusicLibrary = intent.getBooleanExtra("FROM_MUSIC_LIBRARY", false)
+        val immediatePlay = intent.getBooleanExtra("IMMEDIATE_PLAY", false)
 
-        Log.d("PreviewActivity", "加载音频预览: shouldAutoPlay=$shouldAutoPlay, fromMusicLibrary=$fromMusicLibrary")
+        Log.d("PreviewActivity", "加载音频预览: shouldAutoPlay=$shouldAutoPlay, fromMusicLibrary=$fromMusicLibrary, immediatePlay=$immediatePlay")
 
         // 使用后台播放服务播放音频
         currentAudioTrack?.let { track ->
@@ -899,26 +900,24 @@ class PreviewActivity : AppCompatActivity(),
 
                 Log.d("PreviewActivity", "启动后台服务，播放列表大小: ${playlist.size}, 起始索引: $startIndex")
 
-                // 关键修复：从音乐库进入时自动播放
-                if (shouldAutoPlay || fromMusicLibrary) {
-                    Log.d("PreviewActivity", "从音乐库进入，触发后台播放: ${track.name}")
+                // 确保后台服务已绑定
+                if (!audioBackgroundManager.isServiceRunning()) {
+                    audioBackgroundManager.bindService()
+                }
 
-                    // 延迟一小段时间确保UI就绪
-                    handler.postDelayed({
-                        // 启动后台服务并播放
-                        audioBackgroundManager.startService(track, playlist, startIndex)
-
-                        // 延迟启动歌词更新
-                        handler.postDelayed({
-                            if (lyricsManager.getLyricsData() != null) {
-                                lyricsManager.startLyricsUpdates()
-                            }
-                        }, 500)
-                    }, 300)
-                } else {
-                    // 正常加载但不自动播放
-                    Log.d("PreviewActivity", "正常加载音频到后台服务: ${track.name}")
+                // 关键修复：使用新的服务启动逻辑
+                val startPlaybackAction = {
+                    // 启动后台服务并播放
                     audioBackgroundManager.startService(track, playlist, startIndex)
+
+                    // 如果是自动播放模式，确保立即开始播放
+                    if (shouldAutoPlay || fromMusicLibrary || immediatePlay) {
+                        Log.d("PreviewActivity", "设置为自动播放模式，立即发送播放命令")
+                        // 延迟确保服务已初始化
+                        handler.postDelayed({
+                            audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
+                        }, 150)
+                    }
 
                     // 启动歌词更新
                     handler.postDelayed({
@@ -927,10 +926,27 @@ class PreviewActivity : AppCompatActivity(),
                         }
                     }, 500)
                 }
+
+                // 如果服务已运行，直接播放；否则等待绑定
+                if (audioBackgroundManager.isServiceRunning()) {
+                    startPlaybackAction()
+                } else {
+                    // 等待服务绑定
+                    handler.postDelayed({
+                        startPlaybackAction()
+                    }, 200)
+                }
             } else {
                 // 没有播放列表，只播放当前曲目
                 Log.d("PreviewActivity", "播放单个曲目: ${track.name}")
                 audioBackgroundManager.startService(track)
+
+                // 如果是自动播放模式
+                if (shouldAutoPlay || fromMusicLibrary || immediatePlay) {
+                    handler.postDelayed({
+                        audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
+                    }, 150)
+                }else{}
             }
         } ?: run {
             // 回退到原来的方式

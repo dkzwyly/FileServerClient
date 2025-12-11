@@ -43,6 +43,10 @@ class ExoAudioPlayerManager(
     private val playlist = mutableListOf<AudioTrack>()
     private var currentIndex: Int = -1
 
+    private val playbackLock = Any()
+    private var isPlayingNext = false
+    private var isPlayingPrevious = false
+
     // 监听器
     private val playbackListeners = CopyOnWriteArrayList<AudioPlaybackListener>()
     private val progressListeners = CopyOnWriteArrayList<AudioProgressListener>()
@@ -257,48 +261,88 @@ class ExoAudioPlayerManager(
     }
 
     override fun playNext() {
-        if (playlist.isEmpty()) return
+        synchronized(playbackLock) {
+            if (isPlayingNext || playlist.isEmpty()) return
+            isPlayingNext = true
 
-        val nextIndex = when {
-            shuffleEnabled -> {
-                // 随机播放逻辑
-                val availableIndices = playlist.indices.toMutableList()
-                availableIndices.remove(currentIndex)
-                if (availableIndices.isEmpty()) currentIndex else availableIndices.random()
+            try {
+                val nextIndex = when {
+                    shuffleEnabled -> {
+                        // 随机播放逻辑
+                        val availableIndices = playlist.indices.toMutableList()
+                        availableIndices.remove(currentIndex)
+                        if (availableIndices.isEmpty()) currentIndex else availableIndices.random()
+                    }
+                    repeatMode == RepeatMode.ONE -> currentIndex
+                    currentIndex < playlist.size - 1 -> currentIndex + 1
+                    repeatMode == RepeatMode.ALL -> 0  // 循环到开头
+                    else -> {
+                        isPlayingNext = false
+                        return  // 没有下一首，不播放
+                    }
+                }
+
+                // 确保索引有效
+                if (nextIndex in playlist.indices) {
+                    currentIndex = nextIndex
+                    play(playlist[nextIndex])
+                }
+            } finally {
+                handler?.postDelayed({
+                    isPlayingNext = false
+                }, 300) // 防止快速连续点击
             }
-            repeatMode == RepeatMode.ONE -> currentIndex
-            currentIndex < playlist.size - 1 -> currentIndex + 1
-            repeatMode == RepeatMode.ALL -> 0  // 循环到开头
-            else -> return  // 没有下一首，不播放
         }
-
-        playAtIndex(nextIndex)
     }
 
     override fun playPrevious() {
-        if (playlist.isEmpty()) return
+        synchronized(playbackLock) {
+            if (isPlayingPrevious || playlist.isEmpty()) return
+            isPlayingPrevious = true
 
-        val prevIndex = when {
-            shuffleEnabled -> {
-                // 随机播放逻辑
-                val availableIndices = playlist.indices.toMutableList()
-                availableIndices.remove(currentIndex)
-                if (availableIndices.isEmpty()) currentIndex else availableIndices.random()
+            try {
+                val prevIndex = when {
+                    shuffleEnabled -> {
+                        // 随机播放逻辑
+                        val availableIndices = playlist.indices.toMutableList()
+                        availableIndices.remove(currentIndex)
+                        if (availableIndices.isEmpty()) currentIndex else availableIndices.random()
+                    }
+                    repeatMode == RepeatMode.ONE -> currentIndex
+                    currentIndex > 0 -> currentIndex - 1
+                    repeatMode == RepeatMode.ALL -> playlist.size - 1  // 循环到最后
+                    else -> {
+                        isPlayingPrevious = false
+                        return  // 没有上一首，不播放
+                    }
+                }
+
+                if (prevIndex in playlist.indices) {
+                    currentIndex = prevIndex
+                    play(playlist[prevIndex])
+                }
+            } finally {
+                handler?.postDelayed({
+                    isPlayingPrevious = false
+                }, 300)
             }
-            repeatMode == RepeatMode.ONE -> currentIndex
-            currentIndex > 0 -> currentIndex - 1
-            repeatMode == RepeatMode.ALL -> playlist.size - 1  // 循环到最后
-            else -> return  // 没有上一首，不播放
         }
-
-        playAtIndex(prevIndex)
     }
 
     override fun playAtIndex(index: Int) {
-        if (index < 0 || index >= playlist.size) return
+        synchronized(playbackLock) {
+            if (isPlayingNext || index < 0 || index >= playlist.size) return
+            isPlayingNext = true
 
-        currentIndex = index
-        play(playlist[index])
+            try {
+                currentIndex = index
+                play(playlist[index])
+            } finally {
+                handler?.postDelayed({
+                    isPlayingNext = false
+                }, 300)
+            }
+        }
     }
 
     override fun getPlaylist(): List<AudioTrack> {

@@ -198,6 +198,7 @@ class AudioLibraryActivity : AppCompatActivity() {
                 // 关键修复：从音乐库进入时添加特殊标志
                 putExtra("SHOULD_AUTO_PLAY", true)  // 自动播放标志
                 putExtra("FROM_MUSIC_LIBRARY", true)  // 新增：标记从音乐库进入
+                putExtra("IMMEDIATE_PLAY", true)  // 新增：立即播放标志
 
                 // 传递AudioTrack对象和列表
                 putExtra("AUDIO_TRACK", audioTrack)

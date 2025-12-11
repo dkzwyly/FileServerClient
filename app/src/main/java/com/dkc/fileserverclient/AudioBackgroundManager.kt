@@ -173,7 +173,6 @@ class AudioBackgroundManager(private val context: Context) {
         return isBound && audioService != null
     }
 
-    // 在AudioBackgroundManager.kt中添加以下方法（添加到类的末尾，在cleanup方法之前）：
     /**
      * 跳转到指定位置
      */
@@ -192,6 +191,51 @@ class AudioBackgroundManager(private val context: Context) {
         }
     }
 
+    /**
+     * 检查并确保服务已准备好
+     */
+    fun ensureServiceReady(callback: (Boolean) -> Unit) {
+        if (isBound && audioService != null) {
+            callback(true)
+        } else {
+            // 尝试绑定服务
+            val bound = bindService()
+            if (bound) {
+                // 等待服务连接
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    callback(isBound && audioService != null)
+                }, 300)
+            } else {
+                callback(false)
+            }
+        }
+    }
+
+    /**
+     * 安全地播放下一首
+     */
+    fun safePlayNext() {
+        ensureServiceReady { isReady ->
+            if (isReady) {
+                sendAction(AudioPlaybackService.ACTION_NEXT)
+            } else {
+                Log.e(TAG, "服务未准备好，无法播放下一首")
+            }
+        }
+    }
+
+    /**
+     * 安全地播放上一首
+     */
+    fun safePlayPrevious() {
+        ensureServiceReady { isReady ->
+            if (isReady) {
+                sendAction(AudioPlaybackService.ACTION_PREVIOUS)
+            } else {
+                Log.e(TAG, "服务未准备好，无法播放上一首")
+            }
+        }
+    }
 
     /**
      * 清理资源
