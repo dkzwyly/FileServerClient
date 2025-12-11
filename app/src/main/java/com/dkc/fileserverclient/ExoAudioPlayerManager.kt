@@ -5,6 +5,7 @@ import android.os.Handler
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.Log
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
@@ -471,24 +472,12 @@ class ExoAudioPlayerManager(
     }
 
     private fun handlePlaybackEnded() {
-        when (repeatMode) {
-            RepeatMode.ONE -> {
-                // 单曲循环：重新播放当前歌曲
-                handler?.postDelayed({
-                    playAtIndex(currentIndex)
-                }, 1000)
-            }
-            RepeatMode.ALL -> {
-                // 列表循环：播放下一首
-                handler?.postDelayed({
-                    playNext()
-                }, 1000)
-            }
-            RepeatMode.NONE -> {
-                // 不重复：播放结束，可以尝试播放下一个（如果需要）
-                // 这里可以根据业务需求决定是否自动播放下一个
-            }
-        }
+        // 如果是音频模式，且播放列表中有多个曲目，则让服务层处理自动连播
+        // 这里不处理自动连播，避免与服务层的逻辑冲突
+        Log.d("ExoAudioPlayerManager", "播放结束，通知服务层处理")
+
+        // 直接通知播放结束事件，由服务层决定如何处理
+        notifyPlaybackEnded()
     }
 
     // ==================== 通知方法 ====================

@@ -215,6 +215,7 @@ class AudioBackgroundManager(private val context: Context) {
      * 安全地播放下一首
      */
     fun safePlayNext() {
+        Log.d(TAG, "安全播放下一首")
         ensureServiceReady { isReady ->
             if (isReady) {
                 sendAction(AudioPlaybackService.ACTION_NEXT)
@@ -228,6 +229,7 @@ class AudioBackgroundManager(private val context: Context) {
      * 安全地播放上一首
      */
     fun safePlayPrevious() {
+        Log.d(TAG, "安全播放上一首")
         ensureServiceReady { isReady ->
             if (isReady) {
                 sendAction(AudioPlaybackService.ACTION_PREVIOUS)

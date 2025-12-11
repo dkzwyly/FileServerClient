@@ -90,6 +90,8 @@ class PreviewActivity : AppCompatActivity(),
     private var imageFileList = mutableListOf<FileSystemItem>()
     private var currentImageDirectoryPath = ""
 
+    private var isAudioAutoPlayHandled = false
+
     // 新增：音频相关变量
     private var currentAudioIndex = -1
     private var audioTracks: List<AudioTrack> = emptyList()
@@ -649,22 +651,24 @@ class PreviewActivity : AppCompatActivity(),
 
         previousButton.setOnClickListener {
             if (currentFileType == "audio") {
-                if (autoPlayManager.isAutoPlayEnabled()) {
-                    autoPlayManager.playPreviousMedia()
+                if (autoPlayManager.isAudioMode()) {
+                    // 音频模式：使用后台服务控制上一首
+                    audioBackgroundManager.safePlayPrevious()
                 } else {
-                    // 使用后台服务控制上一首
-                    audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PREVIOUS)
+                    // 视频模式：使用AutoPlayManager
+                    autoPlayManager.playPreviousMedia()
                 }
             }
         }
 
         nextButton.setOnClickListener {
             if (currentFileType == "audio") {
-                if (autoPlayManager.isAutoPlayEnabled()) {
-                    autoPlayManager.playNextMedia()
+                if (autoPlayManager.isAudioMode()) {
+                    // 音频模式：使用后台服务控制下一首
+                    audioBackgroundManager.safePlayNext()
                 } else {
-                    // 使用后台服务控制下一首
-                    audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_NEXT)
+                    // 视频模式：使用AutoPlayManager
+                    autoPlayManager.playNextMedia()
                 }
             }
         }
@@ -1413,22 +1417,37 @@ class PreviewActivity : AppCompatActivity(),
             handler.removeCallbacks(progressUpdateRunnable)
         }
 
-        // 处理播放结束
+        // 关键修改：分离音频和视频的播放结束处理
         when (status.state) {
             PlaybackState.ENDED -> {
-                // 播放结束，处理自动连播
-                if (autoPlayManager.isAutoPlayEnabled()) {
-                    handler.postDelayed({
-                        autoPlayManager.playNextMedia()
-                    }, 1000)
+                // 根据播放模式处理播放结束
+                if (autoPlayManager.isVideoMode()) {
+                    // 视频模式：使用AutoPlayManager
+                    if (autoPlayManager.isAutoPlayEnabled()) {
+                        handler.postDelayed({
+                            autoPlayManager.playNextMedia()
+                        }, 1000)
+                    }
+                } else if (autoPlayManager.isAudioMode()) {
+                    // 音频模式：由后台服务自动处理下一首
+                    // 这里不需要额外处理，后台服务会根据重复模式自动播放
+                    Log.d("PreviewActivity", "音频播放结束，由后台服务处理自动连播")
+                    isAudioAutoPlayHandled = false // 重置标志
                 }
             }
             PlaybackState.ERROR -> {
-                // 播放错误，处理自动连播
-                if (autoPlayManager.isAutoPlayEnabled()) {
-                    handler.postDelayed({
-                        autoPlayManager.playNextMedia()
-                    }, 2000)
+                // 播放错误处理
+                if (autoPlayManager.isVideoMode()) {
+                    // 视频模式：使用AutoPlayManager
+                    if (autoPlayManager.isAutoPlayEnabled()) {
+                        handler.postDelayed({
+                            autoPlayManager.playNextMedia()
+                        }, 2000)
+                    }
+                } else if (autoPlayManager.isAudioMode()) {
+                    // 音频模式：尝试播放下一个
+                    Log.d("PreviewActivity", "音频播放错误，由后台服务处理")
+                    // 后台服务会处理播放错误，这里不需要额外操作
                 }
             }
             else -> {}
@@ -1454,11 +1473,14 @@ class PreviewActivity : AppCompatActivity(),
             currentLyricsLine.text = "正在加载歌词..."
             nextLyricsLine.text = ""
 
-            // 重新加载歌词
-            loadLyricsForCurrentSong()
-
             // 更新自动播放管理器的当前索引
             autoPlayManager.setCurrentIndex(index)
+
+            // 重置自动播放处理标志
+            isAudioAutoPlayHandled = false
+
+            // 重新加载歌词
+            loadLyricsForCurrentSong()
         }
     }
 

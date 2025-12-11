@@ -34,6 +34,8 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "audio_playback_channel"
         private const val CHANNEL_NAME = "音频播放"
+        private var isAutoPlaying = false
+        private val autoPlayLock = Any()
 
         // 公共常量
         const val ACTION_PLAY_PAUSE = "com.dkc.fileserverclient.ACTION_PLAY_PAUSE"
@@ -524,6 +526,57 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
 
     override fun onPlaybackEnded() {
         Log.d(TAG, "播放结束")
+
+        // 防止重复触发自动连播
+        synchronized(autoPlayLock) {
+            if (isAutoPlaying) {
+                Log.d(TAG, "自动连播已在处理中，跳过")
+                return
+            }
+            isAutoPlaying = true
+        }
+
+        try {
+            // 重要：根据重复模式处理下一首
+            val status = audioPlayerManager.getPlaybackStatus()
+            when (status.repeatMode) {
+                RepeatMode.NONE -> {
+                    // 不重复：如果有下一首，播放下一首（自动连播）
+                    val playlist = audioPlayerManager.getPlaylist()
+                    val currentIndex = audioPlayerManager.getCurrentIndex()
+                    if (playlist.isNotEmpty() && currentIndex < playlist.size - 1) {
+                        Log.d(TAG, "自动连播：播放下一个")
+                        handler.postDelayed({
+                            audioPlayerManager.playNext()
+                        }, 800) // 稍微延迟，确保UI更新完成
+                    } else {
+                        Log.d(TAG, "播放列表结束，停止播放")
+                        // 播放列表结束，可以停止服务或保持状态
+                        // 这里不停止服务，保持通知显示
+                    }
+                }
+                RepeatMode.ONE -> {
+                    // 单曲循环：重新播放当前歌曲
+                    Log.d(TAG, "单曲循环：重新播放当前歌曲")
+                    handler.postDelayed({
+                        audioPlayerManager.playAtIndex(audioPlayerManager.getCurrentIndex())
+                    }, 800)
+                }
+                RepeatMode.ALL -> {
+                    // 列表循环：播放下一首（或第一首）
+                    Log.d(TAG, "列表循环：播放下一个")
+                    handler.postDelayed({
+                        audioPlayerManager.playNext()
+                    }, 800)
+                }
+            }
+        } finally {
+            handler.postDelayed({
+                synchronized(autoPlayLock) {
+                    isAutoPlaying = false
+                }
+            }, 1000)
+        }
 
         // 通知外部监听器
         coroutineScope.launch {
