@@ -16,9 +16,7 @@ class AudioLibraryAdapter(
     class AudioViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val audioIcon: ImageView = view.findViewById(R.id.audioIcon)
         val fileName: TextView = view.findViewById(R.id.audioFileName)
-        val fileInfo: TextView = view.findViewById(R.id.audioFileInfo)
-        val playButton: ImageView = view.findViewById(R.id.playButton)
-        val durationText: TextView = view.findViewById(R.id.durationText)
+        val artistAlbum: TextView = view.findViewById(R.id.audioArtistAlbum) // 重命名为artistAlbum
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): AudioViewHolder {
@@ -30,39 +28,40 @@ class AudioLibraryAdapter(
     override fun onBindViewHolder(holder: AudioViewHolder, position: Int) {
         val audioItem = audioItems[position]
 
-        // 设置文件名
-        holder.fileName.text = audioItem.name
-
-        // 设置文件信息（大小和格式）
-        val fileInfo = "${audioItem.sizeFormatted} • ${getAudioFormat(audioItem)}"
-        holder.fileInfo.text = fileInfo
+        // 移除扩展名，只显示文件名
+        val displayName = removeExtension(audioItem.name)
+        holder.fileName.text = displayName
 
         // 设置音频图标
-        holder.audioIcon.setImageResource(R.drawable.ic_audio)
+        holder.audioIcon.setImageResource(R.drawable.ic_music_image_placeholder)
 
-        // 设置时长信息（如果有的话）
-        holder.durationText.text = getDurationText(audioItem)
+        // 设置艺术家/专辑信息（目前显示未知）
+        holder.artistAlbum.text = "未知艺术家 · 未知专辑"
 
         // 设置点击事件
         holder.itemView.setOnClickListener {
-            onAudioClick(audioItem)
-        }
-
-        // 播放按钮点击事件
-        holder.playButton.setOnClickListener {
             onAudioClick(audioItem)
         }
     }
 
     override fun getItemCount(): Int = audioItems.size
 
-    private fun getAudioFormat(item: FileSystemItem): String {
-        return AudioUtils.getAudioFormat(item)
-    }
-
-    private fun getDurationText(item: FileSystemItem): String {
-        // 这里可以根据需要从文件元数据中获取时长
-        // 目前先返回空字符串，后续可以扩展
-        return ""
+    /**
+     * 从文件名中移除扩展名
+     */
+    private fun removeExtension(fileName: String): String {
+        return try {
+            // 找到最后一个点号的位置
+            val lastDotIndex = fileName.lastIndexOf(".")
+            if (lastDotIndex > 0) {
+                // 移除点号及其后面的内容
+                fileName.substring(0, lastDotIndex)
+            } else {
+                // 如果没有点号，返回原文件名
+                fileName
+            }
+        } catch (e: Exception) {
+            fileName
+        }
     }
 }

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- 灰白色背景方框 -->
+    <path
+        android:fillColor="@color/record_dark"
+        android:pathData="M1,1h22v22h-22z" />
+
+    <!-- 唱片外圈 - 在灰白背景上 -->
+    <path
+        android:fillColor="@color/record_light"
+        android:strokeColor="@color/record_dark"
+        android:strokeWidth="1"
+        android:pathData="M12,2a10,10 0,1 1,0 20a10,10 0,1 1,0 -20z" />
+
+    <!-- 唱片中心 - 蓝色 -->
+    <path
+        android:fillColor="@color/primary_color"
+        android:pathData="M12,12m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+
+    <!-- 唱片中心孔 - 深灰色 -->
+    <path
+        android:fillColor="@color/record_dark"
+        android:pathData="M12,12m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0" />
+
+</vector>

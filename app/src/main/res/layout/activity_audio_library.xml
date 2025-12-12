@@ -6,45 +6,108 @@
     android:orientation="vertical"
     android:background="@color/background_color">
 
-    <!-- 标题栏 -->
+    <!-- 标题栏（已修改为与其他两个一致） -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@android:color/white"
         android:orientation="horizontal"
-        android:background="@color/primary_color"
-        android:padding="16dp"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:elevation="4dp">
 
         <ImageButton
             android:id="@+id/backButton"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@android:drawable/ic_menu_revert"
+            android:src="@drawable/ic_arrow_back"
             android:contentDescription="返回"
-            android:tint="@android:color/white" />
+            app:tint="@android:color/black" />
 
+        <!-- 标题居中 -->
         <TextView
             android:id="@+id/audioTitleText"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="16dp"
             android:text="音频库"
-            android:textColor="@android:color/white"
             android:textSize="20sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:textColor="@android:color/black" />
+
+        <!-- 右侧按钮容器（保持对称） -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <!-- 搜索图标按钮 -->
+            <ImageButton
+                android:id="@+id/searchIconButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_search"
+                android:contentDescription="搜索"
+                app:tint="@android:color/black"
+                android:visibility="visible" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- 选项卡容器 -->
+    <LinearLayout
+        android:id="@+id/tabContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@android:color/transparent"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="8dp">
+
+        <!-- 歌单选项卡 -->
+        <TextView
+            android:id="@+id/playlistTab"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:background="@drawable/tab_background"
+            android:gravity="center"
+            android:text="歌单"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <!-- 歌曲选项卡 -->
+        <TextView
+            android:id="@+id/songsTab"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:background="@drawable/tab_background_selected"
+            android:gravity="center"
+            android:text="歌曲"
+            android:textColor="@color/primary_color"
+            android:textSize="16sp"
             android:textStyle="bold" />
 
     </LinearLayout>
 
-    <!-- 搜索栏 -->
+    <!-- 搜索框（默认隐藏） -->
     <LinearLayout
+        android:id="@+id/searchContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:background="@color/card_background"
         android:padding="12dp"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:visibility="gone">
 
         <LinearLayout
             android:layout_width="0dp"
@@ -58,9 +121,9 @@
             <ImageView
                 android:layout_width="24dp"
                 android:layout_height="24dp"
-                android:src="@android:drawable/ic_menu_search"
+                android:src="@drawable/ic_search"
                 android:contentDescription="搜索"
-                android:tint="@color/text_secondary"
+                app:tint="@color/text_secondary"
                 android:layout_marginStart="8dp"
                 android:layout_marginEnd="8dp" />
 
@@ -69,7 +132,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:hint="搜索音频文件..."
+                android:hint="搜索..."
                 android:background="@null"
                 android:maxLines="1"
                 android:textColor="@color/text_primary"
@@ -79,31 +142,62 @@
                 android:id="@+id/clearSearchButton"
                 android:layout_width="32dp"
                 android:layout_height="32dp"
-                android:src="@android:drawable/ic_delete"
+                android:src="@drawable/ic_close"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="清除搜索"
-                android:tint="@color/text_secondary"
+                app:tint="@color/text_secondary"
                 android:layout_marginStart="8dp" />
 
         </LinearLayout>
 
+        <!-- 关闭搜索按钮 -->
+        <ImageButton
+            android:id="@+id/closeSearchButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_close"
+            android:contentDescription="关闭搜索"
+            app:tint="@color/text_primary" />
+
     </LinearLayout>
 
-    <!-- 状态提示 -->
-    <TextView
-        android:id="@+id/audioStatusText"
+    <!-- 歌单列表（初始隐藏） -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/playlistRecyclerView"
         android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-        android:padding="16dp"
-        android:text="正在加载..."
-        android:textColor="@color/text_secondary"
-        android:textSize="14sp" />
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone" />
 
-    <!-- 音频列表 -->
+    <!-- 音频列表（默认显示） -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/audioRecyclerView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
+
+    <!-- 状态提示 -->
+    <TextView
+        android:id="@+id/audioStatusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="16dp"
+        android:text="正在加载..."
+        android:textColor="@color/text_secondary"
+        android:textSize="14sp" />
+
+    <!-- 新建歌单按钮 -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/addPlaylistButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end|bottom"
+        android:layout_margin="16dp"
+        android:src="@drawable/ic_add"
+        android:contentDescription="新建歌单"
+        app:backgroundTint="@color/primary_color"
+        android:visibility="gone" />
 
 </LinearLayout>

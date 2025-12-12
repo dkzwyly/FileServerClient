@@ -29,4 +29,12 @@
     <color name="search_stroke">#E0E0E0</color>
     <color name="background_color">#F8F9FA</color>
     <color name="notification_icon_color">#FFFFFF</color>
+    <color name="tab_border">#E0E0E0</color>
+    <color name="tab_selected_background">#FFFFFF</color>
+    <color name="search_border">#E0E0E0</color>
+
+    <!-- 唱片图标颜色 -->
+    <color name="record_dark">#424242</color>
+    <color name="record_light">#BDBDBD</color>
+    <color name="record_label">#2196F3</color>
 </resources>

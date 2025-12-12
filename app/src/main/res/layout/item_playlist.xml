@@ -8,15 +8,15 @@
     android:padding="16dp"
     android:gravity="center_vertical">
 
-    <!-- 音频图标 - 使用唱片样式的占位符 -->
+    <!-- 歌单图标 -->
     <ImageView
-        android:id="@+id/audioIcon"
+        android:id="@+id/playlistIcon"
         android:layout_width="56dp"
         android:layout_height="56dp"
         android:scaleType="centerCrop"
         android:src="@drawable/ic_music_image_placeholder" />
 
-    <!-- 文件信息 -->
+    <!-- 歌单信息 -->
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -24,28 +24,33 @@
         android:layout_marginStart="16dp"
         android:orientation="vertical">
 
-        <!-- 主要文件名（不带扩展名） -->
         <TextView
-            android:id="@+id/audioFileName"
+            android:id="@+id/playlistName"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textColor="@color/text_primary"
             android:textSize="16sp"
-            android:maxLines="2"
-            android:ellipsize="end"
-            android:lineSpacingExtra="2dp" />
+            android:maxLines="1"
+            android:ellipsize="end" />
 
-        <!-- 次要信息：艺术家/专辑等 -->
         <TextView
-            android:id="@+id/audioArtistAlbum"
+            android:id="@+id/trackCount"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:textColor="@color/text_secondary"
-            android:textSize="14sp"
-            android:maxLines="1"
-            android:ellipsize="end" />
+            android:textSize="14sp" />
 
     </LinearLayout>
+
+    <!-- 更多按钮 -->
+    <ImageView
+        android:id="@+id/moreButton"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:src="@drawable/ic_more_vert"
+        android:contentDescription="更多选项"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        app:tint="@color/text_secondary" />
 
 </LinearLayout>
