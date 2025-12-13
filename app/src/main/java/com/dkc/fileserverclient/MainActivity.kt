@@ -1,9 +1,15 @@
 package com.dkc.fileserverclient
 
+import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.SharedPreferences
+import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
+import android.provider.Settings
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
@@ -45,8 +51,25 @@ class MainActivity : AppCompatActivity() {
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
 
+    // 添加音频服务相关变量
+    private var audioBackgroundManager: AudioBackgroundManager? = null
+    private var isAudioServiceBound = false
+
     companion object {
         private const val TAG = "MainActivity"
+    }
+
+    // 服务连接
+    private val audioServiceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            Log.d(TAG, "音频服务连接成功")
+            isAudioServiceBound = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            Log.d(TAG, "音频服务断开连接")
+            isAudioServiceBound = false
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,6 +82,9 @@ class MainActivity : AppCompatActivity() {
 
             currentServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
             Log.d(TAG, "Current server URL: $currentServerUrl")
+
+            // 初始化音频后台管理器
+            audioBackgroundManager = AudioBackgroundManager(this)
 
             initViews()
             loadConnectionHistory()
@@ -146,6 +172,12 @@ class MainActivity : AppCompatActivity() {
             audioLibraryButton.setOnClickListener {
                 Log.d(TAG, "Audio library button clicked")
                 if (isConnected) {
+                    // 检查通知权限
+                    if (!checkNotificationPermission()) {
+                        requestNotificationPermission()
+                        return@setOnClickListener
+                    }
+
                     val intent = Intent(this, AudioLibraryActivity::class.java).apply {
                         putExtra("SERVER_URL", currentServerUrl)
                     }
@@ -160,6 +192,27 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error in initViews: ${e.message}", e)
             throw e
+        }
+    }
+
+    // 添加检查通知权限的方法
+    private fun checkNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            return notificationManager.areNotificationsEnabled()
+        }
+        // Android 13以下不需要动态权限
+        return true
+    }
+
+    // 添加请求通知权限的方法
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            }
+            startActivity(intent)
+            showToast("请在设置中开启通知权限，以便在后台控制音频播放")
         }
     }
 
@@ -398,6 +451,36 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
+    // 添加应用退出时关闭音频服务的方法
+    private fun onAppExit() {
+        Log.d(TAG, "应用退出，清理音频服务")
+
+        // 完全关闭音频服务
+        audioBackgroundManager?.shutdownService()
+
+        // 解绑服务
+        if (isAudioServiceBound) {
+            try {
+                unbindService(audioServiceConnection)
+                isAudioServiceBound = false
+            } catch (e: IllegalArgumentException) {
+                // 忽略未绑定的异常
+                Log.d(TAG, "服务未绑定或已解绑: ${e.message}")
+            }
+        }
+    }
+
+    // 添加处理返回键的方法
+    override fun onBackPressed() {
+        // 检查是否在后台播放音频
+        if (audioBackgroundManager?.isServiceRunning() == true) {
+            Log.d(TAG, "音频正在后台播放，返回时保持服务运行")
+        }
+
+        // 调用父类方法
+        super.onBackPressed()
+    }
+
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "onResume")
@@ -411,6 +494,12 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy")
+
+        // 清理音频后台管理器
+        audioBackgroundManager?.cleanup()
+        audioBackgroundManager = null
+
+        // 取消协程
         coroutineScope.cancel()
     }
 }

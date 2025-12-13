@@ -28,11 +28,9 @@ class PreviewActivity : AppCompatActivity(),
     LyricsManager.TimeProvider,
     LyricsManager.PlayStateProvider,
     ImagePreviewManager.ImageStateListener,
-    VideoPlayerManager.PlayerStateListener,
-    GestureControlManager.GestureListener,
     AutoPlayManager.AutoPlayListener,
-    AudioPlaybackListener,
-    AudioProgressListener {
+    MediaPlaybackListener,
+    MediaProgressListener {
 
     // UI 组件
     private lateinit var titleBar: LinearLayout
@@ -43,7 +41,7 @@ class PreviewActivity : AppCompatActivity(),
 
     // 预览容器
     private lateinit var imageContainer: FrameLayout
-    private lateinit var videoContainer: FrameLayout
+    private lateinit var mediaContainer: FrameLayout
     private lateinit var textContainer: FrameLayout
     private lateinit var generalContainer: FrameLayout
     private lateinit var errorTextView: TextView
@@ -52,10 +50,11 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var imagePreview: ImageView
     private lateinit var imageLoadingProgress: ProgressBar
 
-    // 视频预览组件
+    // 媒体播放组件
     private lateinit var playerView: PlayerView
-    private lateinit var videoLoadingProgress: ProgressBar
-    private lateinit var videoControls: LinearLayout
+    private lateinit var audioCoverView: ImageView
+    private lateinit var mediaLoadingProgress: ProgressBar
+    private lateinit var mediaControls: LinearLayout
     private lateinit var playPauseButton: ImageButton
     private lateinit var previousButton: ImageButton
     private lateinit var nextButton: ImageButton
@@ -63,7 +62,6 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var seekBar: SeekBar
     private lateinit var currentTimeTextView: TextView
     private lateinit var durationTextView: TextView
-    private lateinit var speedIndicator: TextView
 
     // 歌词显示组件
     private lateinit var lyricsContainer: LinearLayout
@@ -76,12 +74,7 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var webViewPreview: WebView
     private lateinit var generalLoadingProgress: ProgressBar
 
-    // 控制提示视图
-    private lateinit var controlOverlay: TextView
-    private lateinit var controlIcon: ImageView
-    private lateinit var controlContainer: LinearLayout
-
-    // 状态变量（添加以下变量）
+    // 状态变量
     private var currentFileType = ""
     private var currentFileUrl = ""
     private var currentFileName = ""
@@ -90,9 +83,7 @@ class PreviewActivity : AppCompatActivity(),
     private var imageFileList = mutableListOf<FileSystemItem>()
     private var currentImageDirectoryPath = ""
 
-    private var isAudioAutoPlayHandled = false
-
-    // 新增：音频相关变量
+    // 音频相关变量
     private var currentAudioIndex = -1
     private var audioTracks: List<AudioTrack> = emptyList()
     private var currentAudioTrack: AudioTrack? = null
@@ -101,12 +92,10 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var gestureDetector: GestureDetector
     private var isLongPressDetected = false
 
-    private val doubleTapHandler = Handler(Looper.getMainLooper())
-
     // 应用状态标志
     private var isAppInBackground = false
 
-    // 网络客户端
+    // 网络客户端和协程
     private val client = UnsafeHttpClient.createUnsafeOkHttpClient()
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
@@ -114,16 +103,11 @@ class PreviewActivity : AppCompatActivity(),
     // 管理器实例
     private lateinit var lyricsManager: LyricsManager
     private lateinit var imageManager: ImagePreviewManager
-    private lateinit var videoPlayerManager: VideoPlayerManager
-    private lateinit var gestureControlManager: GestureControlManager
     private lateinit var fullscreenManager: FullscreenManager
     private lateinit var autoPlayManager: AutoPlayManager
 
-    // 音频管理
-    private lateinit var audioManager: AudioManager
-    // 新增：音频播放管理器
-
-    private lateinit var audioBackgroundManager: AudioBackgroundManager
+    // 统一的媒体播放控制器
+    private lateinit var mediaPlaybackController: MediaPlaybackController
 
     // 歌词对话框
     private var lyricsDialog: AlertDialog? = null
@@ -131,6 +115,9 @@ class PreviewActivity : AppCompatActivity(),
     // 服务器信息
     private var currentServerUrl = ""
     private var currentDirectoryPath = ""
+
+    // 当前播放类型
+    private var currentPlaybackType: PlaybackType? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -209,7 +196,7 @@ class PreviewActivity : AppCompatActivity(),
         downloadButton = findViewById(R.id.downloadButton)
 
         imageContainer = findViewById(R.id.imageContainer)
-        videoContainer = findViewById(R.id.videoContainer)
+        mediaContainer = findViewById(R.id.mediaContainer)
         textContainer = findViewById(R.id.textContainer)
         generalContainer = findViewById(R.id.generalContainer)
         errorTextView = findViewById(R.id.errorTextView)
@@ -218,8 +205,9 @@ class PreviewActivity : AppCompatActivity(),
         imageLoadingProgress = findViewById(R.id.imageLoadingProgress)
 
         playerView = findViewById(R.id.playerView)
-        videoLoadingProgress = findViewById(R.id.videoLoadingProgress)
-        videoControls = findViewById(R.id.videoControls)
+        audioCoverView = findViewById(R.id.audioCoverView)
+        mediaLoadingProgress = findViewById(R.id.mediaLoadingProgress)
+        mediaControls = findViewById(R.id.mediaControls)
         playPauseButton = findViewById(R.id.playPauseButton)
         previousButton = findViewById(R.id.previousButton)
         nextButton = findViewById(R.id.nextButton)
@@ -227,7 +215,6 @@ class PreviewActivity : AppCompatActivity(),
         seekBar = findViewById(R.id.seekBar)
         currentTimeTextView = findViewById(R.id.currentTimeTextView)
         durationTextView = findViewById(R.id.durationTextView)
-        speedIndicator = findViewById(R.id.speedIndicator)
 
         lyricsContainer = findViewById(R.id.lyricsContainer)
         lyricsTitle = findViewById(R.id.lyricsTitle)
@@ -237,10 +224,6 @@ class PreviewActivity : AppCompatActivity(),
 
         webViewPreview = findViewById(R.id.webViewPreview)
         generalLoadingProgress = findViewById(R.id.generalLoadingProgress)
-
-        controlOverlay = findViewById(R.id.controlOverlay)
-        controlIcon = findViewById(R.id.controlIcon)
-        controlContainer = findViewById(R.id.controlContainer)
 
         // 初始化WebView
         setupWebView()
@@ -291,8 +274,8 @@ class PreviewActivity : AppCompatActivity(),
         fileTypeTextView.text = when (currentFileType) {
             "image" -> "图片"
             "video" -> "视频"
-            "text" -> "文本"
             "audio" -> "音频"
+            "text" -> "文本"
             else -> "文件"
         }
     }
@@ -302,7 +285,7 @@ class PreviewActivity : AppCompatActivity(),
         lyricsManager = LyricsManager(this, handler, coroutineScope)
         lyricsManager.setListener(this)
 
-        // 初始化图片管理器 - 简化版本，移除手势处理
+        // 初始化图片管理器
         imageManager = ImagePreviewManager(
             context = this,
             coroutineScope = coroutineScope,
@@ -312,38 +295,8 @@ class PreviewActivity : AppCompatActivity(),
         )
         imageManager.setListener(this)
 
-        // 初始化视频播放管理器
-        videoPlayerManager = VideoPlayerManager(
-            context = this,
-            client = client,
-            playerView = playerView,
-            videoLoadingProgress = videoLoadingProgress,
-            playPauseButton = playPauseButton,
-            seekBar = seekBar,
-            currentTimeTextView = currentTimeTextView,
-            durationTextView = durationTextView,
-            speedIndicator = speedIndicator,
-            handler = handler
-        )
-        videoPlayerManager.setPlayerStateListener(this)
-        videoPlayerManager.initializePlayer()
-
-        // 初始化手势控制管理器
-        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-        val displayMetrics = resources.displayMetrics
-        val regionWidth = displayMetrics.widthPixels / 3
-
-        gestureControlManager = GestureControlManager(
-            activity = this,
-            handler = handler,
-            audioManager = audioManager,
-            controlOverlay = controlOverlay,
-            controlIcon = controlIcon,
-            controlContainer = controlContainer,
-            regionWidth = regionWidth
-        )
-        gestureControlManager.setGestureListener(this)
-        gestureControlManager.setupAudioManager()
+        // 初始化媒体播放控制器
+        initMediaPlaybackController()
 
         // 初始化全屏管理器
         fullscreenManager = FullscreenManager(
@@ -357,94 +310,49 @@ class PreviewActivity : AppCompatActivity(),
         autoPlayManager = AutoPlayManager(handler, coroutineScope)
         autoPlayManager.setAutoPlayListener(this)
 
-        // 初始化音频后台管理器（必须先于音频播放器初始化）
-        initAudioBackgroundManager()
-
-        // 初始化音频播放器（简化版本，不再使用本地播放器）
-        initAudioPlayer()
-
         // 设置进度条监听
         setupSeekBar()
     }
 
-    private fun initAudioBackgroundManager() {
-        audioBackgroundManager = AudioBackgroundManager(this)
-
-        // 如果是音频文件，绑定到后台服务
-        if (currentFileType == "audio") {
-            // 绑定服务以获取播放状态
-            val isBound = audioBackgroundManager.bindService()
-            Log.d("PreviewActivity", "音频后台管理器绑定服务: $isBound")
-
-            // 监听播放状态变化
-            audioBackgroundManager.addPlaybackListener(object : AudioPlaybackListener {
-                override fun onPlaybackStateChanged(status: AudioPlaybackStatus) {
-                    this@PreviewActivity.onPlaybackStateChanged(status)
-                }
-
-                override fun onTrackChanged(track: AudioTrack, index: Int) {
-                    this@PreviewActivity.onTrackChanged(track, index)
-                }
-
-                override fun onPlaybackError(error: String) {
-                    this@PreviewActivity.onPlaybackError(error)
-                }
-
-                override fun onPlaybackEnded() {
-                    this@PreviewActivity.onPlaybackEnded()
-                }
-
-                override fun onAudioBuffering(isBuffering: Boolean) {
-                    this@PreviewActivity.onAudioBuffering(isBuffering)
-                }
-            })
-
-            // 监听进度更新
-            audioBackgroundManager.addProgressListener(object : AudioProgressListener {
-                override fun onProgressUpdated(position: Long, duration: Long) {
-                    this@PreviewActivity.onProgressUpdated(position, duration)
-                }
-
-                override fun onBufferingProgress(percent: Int) {
-                    this@PreviewActivity.onBufferingProgress(percent)
-                }
-            })
+    private fun initMediaPlaybackController() {
+        // 根据文件类型创建对应的播放控制器
+        currentPlaybackType = when (currentFileType) {
+            "video" -> PlaybackType.VIDEO
+            "audio" -> PlaybackType.AUDIO
+            else -> null
         }
-    }
 
-    private fun initAudioPlayer() {
-        // 不再初始化AudioPlayerAdapter，所有音频播放都交给后台服务
-        Log.d("PreviewActivity", "初始化音频播放器（使用后台服务）")
-
-        // 重要：检查是否已经有服务在运行并播放
-        if (audioBackgroundManager.isServiceRunning() && audioBackgroundManager.isPlaying()) {
-            Log.d("PreviewActivity", "检测到后台服务正在播放")
-
-            // 获取当前播放状态
-            val status = audioBackgroundManager.getPlaybackStatus()
-            if (status != null) {
-                // 更新UI显示
-                fileNameTextView.text = status.currentTrack?.name ?: currentFileName
-                currentAudioTrack = status.currentTrack
-
-                // 更新播放按钮状态
-                val playPauseIcon = if (status.isPlaying) {
-                    android.R.drawable.ic_media_pause
-                } else {
-                    android.R.drawable.ic_media_play
-                }
-                playPauseButton.setImageResource(playPauseIcon)
-
-                // 更新歌词标题
-                status.currentTrack?.let { track ->
-                    lyricsTitle.text = track.name
-                    // 重新加载歌词
-                    loadLyricsForCurrentSong()
-                }
-
-                // 开始进度更新
-                startProgressUpdates()
+        currentPlaybackType?.let { playbackType ->
+            // 关键修复：根据不同类型创建不同的播放控制器
+            mediaPlaybackController = if (playbackType == PlaybackType.VIDEO) {
+                // 视频播放器需要UI组件
+                MediaPlaybackFactory.createController(
+                    type = playbackType,
+                    httpClient = client,
+                    playerView = playerView,
+                    videoLoadingProgress = mediaLoadingProgress,
+                    playPauseButton = playPauseButton,
+                    seekBar = seekBar,
+                    currentTimeTextView = currentTimeTextView,
+                    durationTextView = durationTextView,
+                    uiHandler = handler
+                )
+            } else {
+                // 音频播放器只需要httpClient
+                MediaPlaybackFactory.createController(
+                    type = playbackType,
+                    httpClient = client
+                )
             }
+
+            // 初始化控制器
+            mediaPlaybackController.initialize(this, handler)
+
+            // 添加监听器
+            mediaPlaybackController.addPlaybackListener(this)
+            mediaPlaybackController.addProgressListener(this)
+
+            Log.d("PreviewActivity", "初始化媒体播放控制器: $playbackType")
         }
     }
 
@@ -454,42 +362,26 @@ class PreviewActivity : AppCompatActivity(),
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
-                    if (currentFileType == "audio") {
-                        // 音频播放通过后台服务控制
-                        val status = audioBackgroundManager.getPlaybackStatus()
-                        val duration = status?.duration ?: 0L
-                        if (duration > 0) {
-                            val newPosition = (duration * progress / 1000).toLong()
-                            // 更新当前时间显示
-                            currentTimeTextView.text = formatTime(newPosition)
-                            // 使用后台服务跳转
-                            audioBackgroundManager.seekTo(newPosition)
-                            Log.d("PreviewActivity", "用户拖动进度条到: $newPosition ms")
-                        }
-                    } else if (currentFileType == "video") {
-                        // 视频播放使用视频管理器
-                        val duration = videoPlayerManager.getDuration()
-                        if (duration > 0) {
-                            val newPosition = (duration * progress / 1000).toLong()
-                            videoPlayerManager.seekTo(newPosition)
-                        }
+                    val duration = mediaPlaybackController.getDuration()
+                    if (duration > 0) {
+                        val newPosition = (duration * progress / 1000).toLong()
+                        currentTimeTextView.text = formatTime(newPosition)
+                        mediaPlaybackController.seekTo(newPosition)
+                        Log.d("PreviewActivity", "用户拖动进度条到: $newPosition ms")
                     }
                 }
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar) {
-                if (currentFileType == "video") {
-                    videoPlayerManager.stopProgressUpdates()
-                }
+                // 暂时不需要特殊处理
             }
 
             override fun onStopTrackingTouch(seekBar: SeekBar) {
-                if (currentFileType == "video") {
-                    videoPlayerManager.startProgressUpdates()
-                }
+                // 暂时不需要特殊处理
             }
         })
     }
+
     private fun setupGestureDetector() {
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean {
@@ -505,7 +397,7 @@ class PreviewActivity : AppCompatActivity(),
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (!isLongPressDetected) {
-                    handleDoubleTapVideo()
+                    handleDoubleTap()
                 }
                 return true
             }
@@ -517,24 +409,18 @@ class PreviewActivity : AppCompatActivity(),
 
         gestureDetector.setIsLongpressEnabled(true)
 
-        // 只为视频播放器设置触摸监听
-        playerView.setOnTouchListener { _, event ->
+        // 为媒体容器设置触摸监听
+        mediaContainer.setOnTouchListener { _, event ->
             val handledByGesture = gestureDetector.onTouchEvent(event)
 
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     isLongPressDetected = false
-                    gestureControlManager.handleTouchEvent(event, resources.displayMetrics.widthPixels)
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    gestureControlManager.handleTouchEvent(event, resources.displayMetrics.widthPixels)
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (isLongPressDetected) {
-                        videoPlayerManager.enableFastForward(false)
                         isLongPressDetected = false
                     }
-                    gestureControlManager.handleTouchEvent(event, resources.displayMetrics.widthPixels)
                 }
             }
             true
@@ -543,7 +429,7 @@ class PreviewActivity : AppCompatActivity(),
         // 为图片容器添加左右滑动手势检测
         imagePreview.setOnTouchListener(object : View.OnTouchListener {
             private var startX = 0f
-            private val SWIPE_THRESHOLD = 100f // 滑动阈值
+            private val SWIPE_THRESHOLD = 100f
 
             override fun onTouch(v: View, event: MotionEvent): Boolean {
                 when (event.action) {
@@ -581,45 +467,33 @@ class PreviewActivity : AppCompatActivity(),
         if (fullscreenManager.isFullscreen()) {
             toggleControlsVisibility()
         } else {
-            if (currentFileType == "video") {
-                videoPlayerManager.togglePlayback()
-            } else if (currentFileType == "audio") {
-                // 使用后台服务控制播放/暂停
-                audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
+            if (currentFileType == "video" || currentFileType == "audio") {
+                mediaPlaybackController.togglePlayback()
             }
         }
     }
 
-    private fun handleDoubleTapVideo() {
+    private fun handleDoubleTap() {
         if (isLongPressDetected) {
             return
         }
 
-        if (currentFileType == "video") {
-            videoPlayerManager.togglePlayback()
-        } else if (currentFileType == "audio") {
-            // 使用后台服务控制播放/暂停
-            audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
+        if (currentFileType == "video" || currentFileType == "audio") {
+            mediaPlaybackController.togglePlayback()
         }
     }
 
     private fun handleLongPress() {
-        if (currentFileType != "video") return
-
+        // 长按处理（如果需要）
         isLongPressDetected = true
-        videoPlayerManager.enableFastForward(true)
     }
 
     private fun toggleControlsVisibility() {
-        if (videoControls.visibility == View.VISIBLE) {
-            videoControls.visibility = View.GONE
+        if (mediaControls.visibility == View.VISIBLE) {
+            mediaControls.visibility = View.GONE
         } else {
-            videoControls.visibility = View.VISIBLE
+            mediaControls.visibility = View.VISIBLE
         }
-    }
-
-    private fun showControlsPersistent() {
-        videoControls.visibility = View.VISIBLE
     }
 
     private fun setupEventListeners() {
@@ -632,44 +506,26 @@ class PreviewActivity : AppCompatActivity(),
         }
 
         playPauseButton.setOnClickListener {
-            if (currentFileType == "video") {
-                videoPlayerManager.togglePlayback()
-            } else if (currentFileType == "audio") {
-                // 使用后台服务控制播放/暂停
-                audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
-
-                // 立即更新UI
-                val isPlaying = audioBackgroundManager.isPlaying()
-                val playPauseIcon = if (isPlaying) {
-                    android.R.drawable.ic_media_pause
-                } else {
-                    android.R.drawable.ic_media_play
-                }
-                playPauseButton.setImageResource(playPauseIcon)
-            }
+            mediaPlaybackController.togglePlayback()
         }
 
         previousButton.setOnClickListener {
-            if (currentFileType == "audio") {
-                if (autoPlayManager.isAudioMode()) {
-                    // 音频模式：使用后台服务控制上一首
-                    audioBackgroundManager.safePlayPrevious()
-                } else {
-                    // 视频模式：使用AutoPlayManager
-                    autoPlayManager.playPreviousMedia()
-                }
+            if (autoPlayManager.isAudioMode()) {
+                // 音频模式由控制器处理
+                mediaPlaybackController.playPrevious()
+            } else {
+                // 视频模式使用AutoPlayManager
+                autoPlayManager.playPreviousMedia()
             }
         }
 
         nextButton.setOnClickListener {
-            if (currentFileType == "audio") {
-                if (autoPlayManager.isAudioMode()) {
-                    // 音频模式：使用后台服务控制下一首
-                    audioBackgroundManager.safePlayNext()
-                } else {
-                    // 视频模式：使用AutoPlayManager
-                    autoPlayManager.playNextMedia()
-                }
+            if (autoPlayManager.isAudioMode()) {
+                // 音频模式由控制器处理
+                mediaPlaybackController.playNext()
+            } else {
+                // 视频模式使用AutoPlayManager
+                autoPlayManager.playNextMedia()
             }
         }
 
@@ -695,8 +551,7 @@ class PreviewActivity : AppCompatActivity(),
 
         when (currentFileType) {
             "image" -> loadImagePreview()
-            "video" -> loadVideoPreview()
-            "audio" -> loadAudioPreview()
+            "video", "audio" -> loadMediaPreview()
             "text" -> loadTextPreview()
             else -> loadGeneralPreview()
         }
@@ -715,7 +570,6 @@ class PreviewActivity : AppCompatActivity(),
         loadImageFileList()
     }
 
-    // 加载当前目录下的图片列表
     private fun loadImageFileList() {
         coroutineScope.launch {
             try {
@@ -755,7 +609,6 @@ class PreviewActivity : AppCompatActivity(),
         }
     }
 
-    // 辅助方法：判断是否为图片文件
     private fun isImageFile(item: FileSystemItem): Boolean {
         val imageExtensions = listOf(
             "jpg", "jpeg", "png", "gif", "bmp", "webp",
@@ -764,13 +617,11 @@ class PreviewActivity : AppCompatActivity(),
         return imageExtensions.any { item.extension.contains(it, true) }
     }
 
-    // 辅助方法：获取图片完整URL
     private fun getFullImageUrl(item: FileSystemItem): String {
         val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
         return "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
     }
 
-    // 辅助方法：获取当前图片的目录路径
     private fun getImageDirectoryPath(): String {
         return try {
             // 从Intent中获取完整路径
@@ -797,7 +648,6 @@ class PreviewActivity : AppCompatActivity(),
         }
     }
 
-    // 加载上一张图片
     private fun loadPreviousImage() {
         if (imageFileList.isEmpty() || currentImageIndex <= 0) {
             Log.d("PreviewActivity", "已经是第一张图片")
@@ -811,7 +661,6 @@ class PreviewActivity : AppCompatActivity(),
         }
     }
 
-    // 加载下一张图片
     private fun loadNextImage() {
         if (imageFileList.isEmpty() || currentImageIndex >= imageFileList.size - 1) {
             Log.d("PreviewActivity", "已经是最后一张图片")
@@ -825,7 +674,6 @@ class PreviewActivity : AppCompatActivity(),
         }
     }
 
-    // 加载指定图片
     private fun loadImageByItem(item: FileSystemItem, index: Int) {
         try {
             val imageUrl = getFullImageUrl(item)
@@ -850,41 +698,37 @@ class PreviewActivity : AppCompatActivity(),
         }
     }
 
-    private fun loadVideoPreview() {
-        showContainer(videoContainer)
+    private fun loadMediaPreview() {
+        showContainer(mediaContainer)
         fileTypeTextView.visibility = View.VISIBLE
 
-        playerView.visibility = View.VISIBLE
-        videoControls.visibility = View.VISIBLE
+        // 显示媒体控制栏
+        mediaControls.visibility = View.VISIBLE
 
-        videoPlayerManager.loadVideo(currentFileUrl)
-    }
+        // 根据文件类型设置UI
+        if (currentFileType == "video") {
+            playerView.visibility = View.VISIBLE
+            audioCoverView.visibility = View.GONE
+            lyricsContainer.visibility = View.GONE
+        } else if (currentFileType == "audio") {
+            playerView.visibility = View.GONE
+            audioCoverView.visibility = View.VISIBLE
+            lyricsContainer.visibility = View.VISIBLE
 
-    private fun loadAudioPreview() {
-        Log.d("PreviewActivity", "加载音频预览，启动后台播放")
+            // 重置歌词状态
+            lyricsManager.clear()
+            currentLyricsLine.text = "正在加载歌词..."
+            nextLyricsLine.text = ""
 
-        showContainer(videoContainer)
-        fileTypeTextView.visibility = View.VISIBLE
+            // 使用正确的音频轨道名称
+            val audioTitle = currentAudioTrack?.name ?: currentFileName
+            lyricsTitle.text = audioTitle
 
-        playerView.visibility = View.GONE
-        videoControls.visibility = View.VISIBLE
-
-        // 重置歌词状态
-        lyricsManager.clear()
-        currentLyricsLine.text = "正在加载歌词..."
-        nextLyricsLine.text = ""
-
-        // 设置歌词标题
-        lyricsTitle.text = currentAudioTrack?.name ?: currentFileName
-
-        // 显示歌词容器
-        lyricsContainer.visibility = View.VISIBLE
-        isLyricsVisible = true
-
-        // 关键：立即加载歌词
-        handler.post {
-            Log.d("PreviewActivity", "音频预览：立即加载歌词")
-            loadLyricsForCurrentSong()
+            // 立即加载歌词
+            handler.post {
+                Log.d("PreviewActivity", "音频预览：立即加载歌词")
+                loadLyricsForCurrentSong()
+            }
         }
 
         // 检查是否从音乐库进入（需要自动播放）
@@ -892,122 +736,42 @@ class PreviewActivity : AppCompatActivity(),
         val fromMusicLibrary = intent.getBooleanExtra("FROM_MUSIC_LIBRARY", false)
         val immediatePlay = intent.getBooleanExtra("IMMEDIATE_PLAY", false)
 
-        Log.d("PreviewActivity", "加载音频预览: shouldAutoPlay=$shouldAutoPlay, fromMusicLibrary=$fromMusicLibrary, immediatePlay=$immediatePlay")
+        Log.d("PreviewActivity", "加载媒体预览: shouldAutoPlay=$shouldAutoPlay, fromMusicLibrary=$fromMusicLibrary, immediatePlay=$immediatePlay")
 
-        // 使用后台播放服务播放音频
-        currentAudioTrack?.let { track ->
-            // 关键：启动后台播放服务
-            if (audioTracks.isNotEmpty()) {
-                // 将播放列表传递给后台服务
-                val playlist = ArrayList(audioTracks)
-                val startIndex = currentAudioIndex.coerceAtLeast(0)
+        // 创建媒体播放项
+        val mediaItem = if (currentFileType == "audio" && currentAudioTrack != null) {
+            // 使用现有的转换方法
+            MediaPlaybackItem.fromAudioTrack(currentAudioTrack!!)
+        } else {
+            MediaPlaybackItem(
+                id = "${currentFileType}_${System.currentTimeMillis()}",
+                name = currentFileName,
+                url = currentFileUrl,
+                path = currentDirectoryPath,
+                type = if (currentFileType == "video") PlaybackType.VIDEO else PlaybackType.AUDIO,
+                duration = 0L,
+                metadata = emptyMap()
+            )
+        }
 
-                Log.d("PreviewActivity", "启动后台服务，播放列表大小: ${playlist.size}, 起始索引: $startIndex")
+        // 关键修复：根据是否有播放列表调用正确的play方法
+        if (audioTracks.isNotEmpty() && currentFileType == "audio") {
+            val playlist = audioTracks.map { MediaPlaybackItem.fromAudioTrack(it) }
+            // 使用带播放列表的方法
+            mediaPlaybackController.play(mediaItem, playlist, currentAudioIndex)
+        } else {
+            // 使用不带播放列表的方法（单文件播放）
+            mediaPlaybackController.play(currentFileUrl, mediaItem)
+        }
 
-                // 确保后台服务已绑定
-                if (!audioBackgroundManager.isServiceRunning()) {
-                    audioBackgroundManager.bindService()
-                }
-
-                // 关键修复：使用新的服务启动逻辑
-                val startPlaybackAction = {
-                    // 启动后台服务并播放
-                    audioBackgroundManager.startService(track, playlist, startIndex)
-
-                    // 如果是自动播放模式，确保立即开始播放
-                    if (shouldAutoPlay || fromMusicLibrary || immediatePlay) {
-                        Log.d("PreviewActivity", "设置为自动播放模式，立即发送播放命令")
-                        // 延迟确保服务已初始化
-                        handler.postDelayed({
-                            audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
-                        }, 150)
-                    }
-
-                    // 启动歌词更新
-                    handler.postDelayed({
-                        if (lyricsManager.getLyricsData() != null) {
-                            lyricsManager.startLyricsUpdates()
-                        }
-                    }, 500)
-                }
-
-                // 如果服务已运行，直接播放；否则等待绑定
-                if (audioBackgroundManager.isServiceRunning()) {
-                    startPlaybackAction()
-                } else {
-                    // 等待服务绑定
-                    handler.postDelayed({
-                        startPlaybackAction()
-                    }, 200)
-                }
-            } else {
-                // 没有播放列表，只播放当前曲目
-                Log.d("PreviewActivity", "播放单个曲目: ${track.name}")
-                audioBackgroundManager.startService(track)
-
-                // 如果是自动播放模式
-                if (shouldAutoPlay || fromMusicLibrary || immediatePlay) {
-                    handler.postDelayed({
-                        audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
-                    }, 150)
-                }else{}
-            }
-        } ?: run {
-            // 回退到原来的方式
-            Log.d("PreviewActivity", "使用VideoPlayerManager加载音频")
-            videoPlayerManager.loadAudio(currentFileUrl)
+        // 如果是自动播放模式
+        if ((shouldAutoPlay || fromMusicLibrary || immediatePlay) && currentFileType == "audio") {
+            handler.postDelayed({
+                mediaPlaybackController.resume()
+            }, 150)
         }
     }
 
-
-    private fun startProgressUpdates() {
-        // 移除之前的更新任务
-        handler.removeCallbacks(progressUpdateRunnable)
-
-        // 开始新的更新任务
-        handler.post(progressUpdateRunnable)
-    }
-
-    private val progressUpdateRunnable = object : Runnable {
-        override fun run() {
-            if (currentFileType == "audio" && !isAppInBackground) {
-                val status = audioBackgroundManager.getPlaybackStatus()
-                if (status != null && status.state == PlaybackState.PLAYING) {
-                    // 更新进度条
-                    val position = status.position
-                    val duration = status.duration
-
-                    if (duration > 0) {
-                        val progress = (position * 1000 / duration).toInt()
-                        seekBar.progress = progress
-                        currentTimeTextView.text = formatTime(position)
-                        durationTextView.text = formatTime(duration)
-                    }
-
-                    // 继续更新
-                    handler.postDelayed(this, 1000)
-                }
-            }
-        }
-    }
-
-    private fun updateLyricsDisplayForTrack(track: AudioTrack) {
-        // 更新歌词标题
-        lyricsTitle.text = track.name
-
-        // 确保歌词容器可见
-        lyricsContainer.visibility = View.VISIBLE
-        isLyricsVisible = true
-
-        // 重置歌词行
-        currentLyricsLine.text = "正在加载歌词..."
-        nextLyricsLine.text = ""
-
-        // 重新加载歌词
-        loadLyricsForCurrentSong()
-
-        Log.d("PreviewActivity", "更新歌词显示: ${track.name}")
-    }
     private fun loadTextPreview() {
         // 启动新的文本预览Activity
         val intent = Intent(this, TextPreviewActivity::class.java).apply {
@@ -1028,7 +792,7 @@ class PreviewActivity : AppCompatActivity(),
     private fun showContainer(container: View) {
         // 隐藏所有容器
         imageContainer.visibility = View.GONE
-        videoContainer.visibility = View.GONE
+        mediaContainer.visibility = View.GONE
         textContainer.visibility = View.GONE
         generalContainer.visibility = View.GONE
         errorTextView.visibility = View.GONE
@@ -1047,71 +811,13 @@ class PreviewActivity : AppCompatActivity(),
     }
 
     // ==================== 接口实现 ====================
-// AutoPlayManager.AutoPlayListener 接口实现
+
+    // AutoPlayManager.AutoPlayListener 接口实现
     override fun onLoadMediaFile(fileName: String, fileUrl: String, fileType: String, index: Int, filePath: String) {
         Log.d("PreviewActivity", "加载媒体文件: $fileName, 类型: $fileType, 索引: $index, 路径: $filePath")
 
-        // 如果是音频文件，使用新的后台服务播放
-        if (fileType == "audio") {
-            // 查找对应的AudioTrack
-            val audioTrack = audioTracks.firstOrNull { it.name == fileName }
-            if (audioTrack != null) {
-                // 使用后台服务播放
-                if (audioTracks.isNotEmpty()) {
-                    val playlist = ArrayList(audioTracks)
-                    audioBackgroundManager.startService(audioTrack, playlist, index)
-                } else {
-                    audioBackgroundManager.startService(audioTrack)
-                }
-
-                // 更新当前音频轨道
-                currentAudioTrack = audioTrack
-
-                // 重置歌词状态 - 重要：更新歌词标题为歌曲名
-                lyricsManager.clear()
-                currentLyricsLine.text = "正在加载歌词..."
-                nextLyricsLine.text = ""
-                lyricsTitle.text = fileName
-
-                // 重要：确保歌词容器可见
-                lyricsContainer.visibility = View.VISIBLE
-                isLyricsVisible = true
-
-                // 加载歌词
-                handler.postDelayed({
-                    Log.d("PreviewActivity", "自动连播延迟加载歌词")
-                    loadLyricsForCurrentSong()
-                }, 500)
-
-                // 更新UI
-                fileNameTextView.text = fileName
-                fileTypeTextView.text = "音频"
-
-                // 显示提示
-                showToast("正在播放: $fileName (${index + 1}/${audioTracks.size})")
-                return
-            }
-        }
-
-        // 其他类型文件使用原来的逻辑（视频、图片等）
-        // 停止当前播放（只针对音视频）
-        if (currentFileType == "video") {
-            videoPlayerManager.stopProgressUpdates()
-            videoPlayerManager.releasePlayer()
-        }
-
-        // 重置歌词状态
-        lyricsManager.clear()
-
-        // 如果是非音频文件，隐藏歌词容器
-        if (fileType != "audio") {
-            lyricsContainer.visibility = View.GONE
-            isLyricsVisible = false
-        } else {
-            currentLyricsLine.text = "正在加载歌词..."
-            nextLyricsLine.text = ""
-            lyricsTitle.text = "歌词"
-        }
+        // 停止当前播放
+        mediaPlaybackController.stop()
 
         // 更新当前文件信息
         currentFileName = fileName
@@ -1123,27 +829,52 @@ class PreviewActivity : AppCompatActivity(),
         fileTypeTextView.text = when (currentFileType) {
             "image" -> "图片"
             "video" -> "视频"
-            "text" -> "文本"
             "audio" -> "音频"
+            "text" -> "文本"
             else -> "文件"
         }
 
-        // 重新初始化播放器
-        videoPlayerManager.initializePlayer()
-
         // 重新加载预览
         loadPreview()
+    }
 
-        // 如果是音频文件，立即加载歌词
-        if (currentFileType == "audio") {
-            handler.postDelayed({
-                Log.d("PreviewActivity", "自动连播延迟加载歌词")
-                loadLyricsForCurrentSong()
-            }, 500)
+    override fun onLoadAudioTrack(track: AudioTrack, index: Int) {
+        Log.d("PreviewActivity", "加载音频轨道: ${track.name}, 索引: $index")
+
+        // 停止当前播放
+        mediaPlaybackController.stop()
+
+        // 更新当前音频轨道
+        currentAudioTrack = track
+
+        // 更新UI
+        fileNameTextView.text = track.name
+        fileTypeTextView.text = "音频"
+
+        // 更新歌词标题
+        lyricsTitle.text = track.name
+
+        // 重置歌词显示
+        currentLyricsLine.text = "正在加载歌词..."
+        nextLyricsLine.text = ""
+
+        // 加载歌词
+        handler.postDelayed({
+            loadLyricsForCurrentSong()
+        }, 500)
+
+        // 播放音频 - 根据是否有播放列表调用正确的play方法
+        val mediaItem = MediaPlaybackItem.fromAudioTrack(track)
+        if (audioTracks.isNotEmpty()) {
+            val playlist = audioTracks.map { MediaPlaybackItem.fromAudioTrack(it) }
+            mediaPlaybackController.play(mediaItem, playlist, index)
+        } else {
+            mediaPlaybackController.play(track.url ?: track.path, mediaItem)
         }
+    }
 
-        // 显示提示
-        showToast("正在播放: $fileName (${index + 1}/${autoPlayManager.getMediaListSize()})")
+    override fun onAutoPlayError(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     // ImagePreviewManager.ImageStateListener
@@ -1172,16 +903,11 @@ class PreviewActivity : AppCompatActivity(),
         Log.d("PreviewActivity", "图片双击事件")
     }
 
-
     // LyricsManager.LyricsStateListener
     override fun onLyricsLoaded(data: LyricsData?, title: String?) {
         Log.d("PreviewActivity", "歌词加载成功: title=$title, 当前歌曲名=${currentAudioTrack?.name}, 歌词标题=${lyricsTitle.text}")
 
-        // 重要：这里不再覆盖歌词标题，只启动歌词更新
         lyricsManager.startLyricsUpdates()
-
-        // 重要：不再设置歌词标题，保持已经设置的歌曲名
-        // 只显示加载成功的提示，不修改标题
         showToast("歌词加载成功")
     }
 
@@ -1209,176 +935,16 @@ class PreviewActivity : AppCompatActivity(),
 
     // LyricsManager.TimeProvider
     override fun getCurrentTime(): Long {
-        return if (currentFileType == "audio") {
-            // 从后台服务获取当前播放位置
-            audioBackgroundManager.getPlaybackStatus()?.position ?: 0L
-        } else {
-            videoPlayerManager.getCurrentPosition()
-        }
+        return mediaPlaybackController.getCurrentPosition()
     }
 
     // LyricsManager.PlayStateProvider
     override fun isPlaying(): Boolean {
-        return if (currentFileType == "audio") {
-            // 从后台服务获取播放状态
-            audioBackgroundManager.isPlaying()
-        } else {
-            videoPlayerManager.isPlayerPlaying()
-        }
+        return mediaPlaybackController.isPlaying()
     }
 
-    // VideoPlayerManager.PlayerStateListener
-    override fun onPlayerStateChanged(isPlaying: Boolean) {
-        // 播放状态变化处理
-    }
-
-    override fun onPlaybackEnded() {
-        if (fullscreenManager.isFullscreen()) {
-            showControlsPersistent()
-        }
-
-        // 自动连播：播放结束后播放下一个
-        if (autoPlayManager.isAutoPlayEnabled()) {
-            handler.postDelayed({
-                autoPlayManager.playNextMedia()
-            }, 1000)
-        }
-    }
-
-    override fun onPlayerError(error: String) {
-        videoLoadingProgress.visibility = View.GONE
-        showError(error)
-
-        // 自动连播：播放错误时也尝试播放下一个
-        if (autoPlayManager.isAutoPlayEnabled()) {
-            handler.postDelayed({
-                autoPlayManager.playNextMedia()
-            }, 2000)
-        }
-    }
-
-    // 修改原来的 onBuffering 方法（只处理视频）
-    override fun onBuffering(isBuffering: Boolean) {
-        // 视频缓冲状态处理
-        if (currentFileType == "video") {
-            if (isBuffering) {
-                videoLoadingProgress.visibility = View.VISIBLE
-            } else {
-                videoLoadingProgress.visibility = View.GONE
-            }
-        }
-    }
-
-    override fun onDurationUpdated(duration: Long) {
-        // 时长更新处理
-    }
-
-    override fun onPlayerReady() {
-        // 如果是音频文件，再次确保歌词显示
-        if (currentFileType == "audio") {
-            Log.d("PreviewActivity", "播放器准备就绪，确保歌词显示")
-            lyricsContainer.visibility = View.VISIBLE
-            isLyricsVisible = true
-
-            // 如果歌词还没加载，再次加载
-            if (currentLyricsLine.text == "正在加载歌词...") {
-                handler.post {
-                    Log.d("PreviewActivity", "播放器就绪后重新加载歌词")
-                    loadLyricsForCurrentSong()
-                }
-            }
-        }
-    }
-
-    // GestureControlManager.GestureListener
-// 在PreviewActivity.kt中找到onProgressControl方法，修改为：
-    override fun onProgressControl(deltaX: Float, displayWidth: Int) {
-        if (currentFileType == "video") {
-            val duration = videoPlayerManager.getDuration()
-            if (duration > 0) {
-                val progressChange = (deltaX / displayWidth) * duration * gestureControlManager.progressSensitivity
-                var newPosition = videoPlayerManager.getCurrentPosition() + progressChange.toLong()
-                newPosition = newPosition.coerceIn(0, duration)
-
-                videoPlayerManager.seekTo(newPosition)
-            }
-        } else if (currentFileType == "audio") {
-            // 使用后台服务进行进度调整
-            val status = audioBackgroundManager.getPlaybackStatus()
-            val duration = status?.duration ?: 0L
-            if (duration > 0) {
-                val progressChange = (deltaX / displayWidth) * duration * gestureControlManager.progressSensitivity
-                val currentPosition = status?.position ?: 0L
-                var newPosition = currentPosition + progressChange.toLong()
-                newPosition = newPosition.coerceIn(0, duration)
-
-                // 使用后台服务跳转
-                audioBackgroundManager.seekTo(newPosition)
-                Log.d("PreviewActivity", "手势调整音频进度: 从$currentPosition 到 $newPosition")
-            }
-        }
-    }
-
-    override fun onControlOverlayShow(text: String, iconRes: Int) {
-        // 控制覆盖层显示
-    }
-
-    override fun onSeekBarProgressUpdate(position: Long, duration: Long) {
-        if (duration > 0) {
-            val progress = (position * 1000 / duration).toInt()
-            seekBar.progress = progress
-            currentTimeTextView.text = formatTime(position)
-        }
-    }
-
-    // AutoPlayManager.AutoPlayListener
-    override fun onLoadAudioTrack(track: AudioTrack, index: Int) {
-        Log.d("PreviewActivity", "加载音频轨道: ${track.name}, 索引: $index")
-
-        // 重要：停止当前播放（如果有）
-        audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_STOP)
-
-        // 延迟一小段时间，然后播放新曲目
-        handler.postDelayed({
-            // 如果有播放列表，使用播放列表
-            if (audioTracks.isNotEmpty()) {
-                val playlist = ArrayList(audioTracks)
-                audioBackgroundManager.startService(track, playlist, index)
-            } else {
-                // 只播放当前曲目
-                audioBackgroundManager.startService(track)
-            }
-
-            // 更新当前音频轨道
-            currentAudioTrack = track
-
-            // 更新UI
-            fileNameTextView.text = track.name
-            fileTypeTextView.text = "音频"
-
-            // 更新歌词标题
-            lyricsTitle.text = track.name
-
-            // 重置歌词显示
-            currentLyricsLine.text = "正在加载歌词..."
-            nextLyricsLine.text = ""
-
-            // 加载歌词
-            handler.postDelayed({
-                loadLyricsForCurrentSong()
-            }, 500)
-
-            // 显示提示
-            showToast("正在播放: ${track.name} (${index + 1}/${audioTracks.size})")
-        }, 300)
-    }
-
-    override fun onAutoPlayError(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-    }
-
-    // AudioPlaybackListener 实现
-    override fun onPlaybackStateChanged(status: AudioPlaybackStatus) {
+    // MediaPlaybackListener 实现
+    override fun onPlaybackStateChanged(status: MediaPlaybackStatus) {
         Log.d("PreviewActivity", "播放状态变化: ${status.state}")
 
         // 更新播放/暂停按钮
@@ -1390,18 +956,20 @@ class PreviewActivity : AppCompatActivity(),
         playPauseButton.setImageResource(playPauseIcon)
 
         // 更新文件名显示
-        status.currentTrack?.let { track ->
-            if (fileNameTextView.text != track.name) {
-                fileNameTextView.text = track.name
+        status.currentItem?.let { item ->
+            if (fileNameTextView.text != item.name) {
+                fileNameTextView.text = item.name
             }
         }
 
         // 更新歌词标题
-        status.currentTrack?.let { track ->
-            if (lyricsTitle.text != track.name) {
-                lyricsTitle.text = track.name
-                // 重新加载歌词
-                loadLyricsForCurrentSong()
+        if (currentFileType == "audio") {
+            status.currentItem?.let { item ->
+                if (lyricsTitle.text != item.name) {
+                    lyricsTitle.text = item.name
+                    // 重新加载歌词
+                    loadLyricsForCurrentSong()
+                }
             }
         }
 
@@ -1410,99 +978,68 @@ class PreviewActivity : AppCompatActivity(),
             durationTextView.text = formatTime(status.duration)
         }
 
-        // 开始或停止进度更新
-        if (status.state == PlaybackState.PLAYING && !isAppInBackground) {
-            startProgressUpdates()
-        } else if (status.state == PlaybackState.ENDED || status.state == PlaybackState.PAUSED) {
-            handler.removeCallbacks(progressUpdateRunnable)
-        }
-
-        // 关键修改：分离音频和视频的播放结束处理
-        when (status.state) {
-            PlaybackState.ENDED -> {
-                // 根据播放模式处理播放结束
-                if (autoPlayManager.isVideoMode()) {
-                    // 视频模式：使用AutoPlayManager
-                    if (autoPlayManager.isAutoPlayEnabled()) {
-                        handler.postDelayed({
-                            autoPlayManager.playNextMedia()
-                        }, 1000)
-                    }
-                } else if (autoPlayManager.isAudioMode()) {
-                    // 音频模式：由后台服务自动处理下一首
-                    // 这里不需要额外处理，后台服务会根据重复模式自动播放
-                    Log.d("PreviewActivity", "音频播放结束，由后台服务处理自动连播")
-                    isAudioAutoPlayHandled = false // 重置标志
-                }
-            }
-            PlaybackState.ERROR -> {
-                // 播放错误处理
-                if (autoPlayManager.isVideoMode()) {
-                    // 视频模式：使用AutoPlayManager
-                    if (autoPlayManager.isAutoPlayEnabled()) {
-                        handler.postDelayed({
-                            autoPlayManager.playNextMedia()
-                        }, 2000)
-                    }
-                } else if (autoPlayManager.isAudioMode()) {
-                    // 音频模式：尝试播放下一个
-                    Log.d("PreviewActivity", "音频播放错误，由后台服务处理")
-                    // 后台服务会处理播放错误，这里不需要额外操作
-                }
-            }
-            else -> {}
+        // 缓冲状态处理
+        if (status.state == PlaybackState.BUFFERING) {
+            mediaLoadingProgress.visibility = View.VISIBLE
+        } else {
+            mediaLoadingProgress.visibility = View.GONE
         }
     }
 
-    override fun onTrackChanged(track: AudioTrack, index: Int) {
-        Log.d("PreviewActivity", "轨道变化: ${track.name}, 索引: $index")
+    override fun onTrackChanged(item: MediaPlaybackItem, index: Int) {
+        Log.d("PreviewActivity", "轨道变化: ${item.name}, 索引: $index")
 
         // 轨道变化时更新UI
         handler.post {
-            fileNameTextView.text = track.name
-            currentAudioTrack = track
+            fileNameTextView.text = item.name
 
-            // 重要：更新歌词标题为当前歌曲名
-            lyricsTitle.text = track.name
+            if (currentFileType == "audio") {
+                currentAudioTrack = item.toAudioTrack()
+                lyricsTitle.text = item.name
 
-            // 重要：确保歌词容器可见
-            lyricsContainer.visibility = View.VISIBLE
-            isLyricsVisible = true
+                // 重要：确保歌词容器可见
+                lyricsContainer.visibility = View.VISIBLE
+                isLyricsVisible = true
 
-            // 重置当前显示的歌词行
-            currentLyricsLine.text = "正在加载歌词..."
-            nextLyricsLine.text = ""
+                // 重置当前显示的歌词行
+                currentLyricsLine.text = "正在加载歌词..."
+                nextLyricsLine.text = ""
 
-            // 更新自动播放管理器的当前索引
-            autoPlayManager.setCurrentIndex(index)
-
-            // 重置自动播放处理标志
-            isAudioAutoPlayHandled = false
-
-            // 重新加载歌词
-            loadLyricsForCurrentSong()
+                // 重新加载歌词
+                loadLyricsForCurrentSong()
+            }
         }
     }
-
 
     override fun onPlaybackError(error: String) {
         showError(error)
     }
 
-    override fun onAudioBuffering(isBuffering: Boolean) {
-        // 音频缓冲状态处理
-        if (currentFileType == "audio") {
-            Log.d("PreviewActivity", "音频缓冲状态: $isBuffering")
-            // 可以根据需要显示/隐藏加载指示器
-            if (isBuffering) {
-                // 显示音频加载指示器（如果没有专门的，可以使用视频的）
-                videoLoadingProgress.visibility = View.VISIBLE
-            } else {
-                videoLoadingProgress.visibility = View.GONE
+    override fun onPlaybackEnded() {
+        // 播放结束处理
+        if (autoPlayManager.isVideoMode()) {
+            // 视频模式：使用AutoPlayManager
+            if (autoPlayManager.isAutoPlayEnabled()) {
+                handler.postDelayed({
+                    autoPlayManager.playNextMedia()
+                }, 1000)
             }
+        } else if (autoPlayManager.isAudioMode()) {
+            // 音频模式：由控制器自动处理下一首
+            Log.d("PreviewActivity", "音频播放结束，由控制器处理自动连播")
         }
     }
 
+    override fun onMediaBuffering(isBuffering: Boolean) {
+        // 缓冲状态处理
+        if (isBuffering) {
+            mediaLoadingProgress.visibility = View.VISIBLE
+        } else {
+            mediaLoadingProgress.visibility = View.GONE
+        }
+    }
+
+    // MediaProgressListener 实现
     override fun onProgressUpdated(position: Long, duration: Long) {
         // 更新进度条
         if (duration > 0 && !isAppInBackground) {
@@ -1517,6 +1054,7 @@ class PreviewActivity : AppCompatActivity(),
 
     override fun onBufferingProgress(percent: Int) {
         // 缓冲进度
+        Log.d("PreviewActivity", "缓冲进度: $percent%")
     }
 
     // ==================== 歌词相关方法 ====================
@@ -1527,7 +1065,6 @@ class PreviewActivity : AppCompatActivity(),
         lyricsManager.loadLyrics(currentServerUrl, songPath, currentFileName)
     }
 
-    // 修改获取当前歌曲路径的方法
     private fun getCurrentSongPath(): String {
         Log.d("PreviewActivity", "getCurrentSongPath调用: autoPlayEnabled=${autoPlayManager.isAutoPlayEnabled()}")
 
@@ -1537,7 +1074,7 @@ class PreviewActivity : AppCompatActivity(),
             return it.path
         }
 
-        // 方法1：尝试从自动连播管理器获取完整路径（新增的方法）
+        // 方法1：尝试从自动连播管理器获取完整路径
         if (autoPlayManager.isAutoPlayEnabled()) {
             val filePath = autoPlayManager.getCurrentFilePath()
             if (filePath.isNotEmpty()) {
@@ -1714,84 +1251,46 @@ class PreviewActivity : AppCompatActivity(),
     override fun onPause() {
         super.onPause()
 
-        // 重要：不要在这里暂停音频播放！
-        // 音频播放由后台服务控制，即使Activity进入后台，音频也应继续播放
-
-        // 只暂停视频播放
-        if (currentFileType == "video") {
-            videoPlayerManager.pause()
-            videoPlayerManager.stopProgressUpdates()
+        // 让播放器自己处理暂停
+        if (currentFileType == "video" || currentFileType == "audio") {
+            mediaPlaybackController.onActivityPause()
         }
 
-        // 停止进度更新
-        handler.removeCallbacks(progressUpdateRunnable)
-
-        // 关键修复：不要在这里停止歌词更新，只需暂停更新频率
+        // 只处理UI相关的暂停
+        handler.removeCallbacksAndMessages(null)
         lyricsManager.stopLyricsUpdates()
-
-        // 不要清空歌词数据，否则切回时会丢失
-        // lyricsManager.clear()  // 移除这行
-
         imageManager.clear()
-        gestureControlManager.clear()
-        isLongPressDetected = false
-        doubleTapHandler.removeCallbacksAndMessages(null)
         lyricsDialog?.dismiss()
-
-        // 标记应用进入后台
+        isLongPressDetected = false
         isAppInBackground = true
 
-        Log.d("PreviewActivity", "onPause: Activity暂停，但音频继续在后台播放")
+        Log.d("PreviewActivity", "onPause: Activity暂停")
     }
 
     override fun onResume() {
         super.onResume()
 
+        // 恢复全屏状态
         if (fullscreenManager.isFullscreen()) {
             fullscreenManager.enterFullscreen()
         }
 
-        // 恢复视频进度更新
-        if (currentFileType == "video") {
-            videoPlayerManager.startProgressUpdates()
+        // 让播放器自己处理恢复
+        if (currentFileType == "video" || currentFileType == "audio") {
+            mediaPlaybackController.onActivityResume()
         }
 
-        // 关键修复：重新启动歌词更新
+        // 恢复歌词更新
         if (isLyricsVisible && lyricsManager.getLyricsData() != null) {
-            Log.d("PreviewActivity", "onResume: 重新启动歌词更新")
+            Log.d("PreviewActivity", "onResume: 恢复歌词更新")
             lyricsManager.startLyricsUpdates()
-
-            // 强制更新一次当前歌词
-            handler.post {
-                val currentTime = getCurrentTime()
-                lyricsManager.getLyricsData()?.let { data ->
-                    val currentLine = findCurrentLyricsLine(data.lines, currentTime)
-                    val nextLine = findNextLyricsLine(data.lines, currentTime)
-
-                    // 直接更新UI，不通过回调
-                    currentLyricsLine.text = currentLine?.text ?: ""
-                    nextLyricsLine.text = nextLine?.text ?: ""
-
-                    Log.d("PreviewActivity", "onResume: 强制更新歌词，当前时间=$currentTime")
-                }
-            }
         }
 
-        // 恢复进度更新
-        if (currentFileType == "audio") {
-            val status = audioBackgroundManager.getPlaybackStatus()
-            if (status != null && status.state == PlaybackState.PLAYING) {
-                startProgressUpdates()
-            }
-        }
-
-        // 重置后台标志
         isAppInBackground = false
-
-        Log.d("PreviewActivity", "onResume: 应用回到前台")
+        Log.d("PreviewActivity", "onResume: Activity恢复")
     }
 
-    // 添加辅助方法（复制自 LyricsManager，或者保持原有逻辑）
+    // 添加辅助方法
     private fun findCurrentLyricsLine(lines: List<LyricsLine>, currentTime: Long): LyricsLine? {
         for (i in lines.indices.reversed()) {
             if (currentTime >= lines[i].time) {
@@ -1810,31 +1309,31 @@ class PreviewActivity : AppCompatActivity(),
         return null
     }
 
+
     override fun onDestroy() {
         super.onDestroy()
 
-        // 清理后台服务管理器（但不要停止服务）
-        if (currentFileType == "audio") {
-            audioBackgroundManager.cleanup()  // 只解绑，不停止服务
+        Log.d("PreviewActivity", "onDestroy: 开始销毁，文件类型: $currentFileType")
+
+        // 让播放器自己决定如何处理销毁
+        if (currentFileType == "video" || currentFileType == "audio") {
+            // 对于音频播放器，它支持后台播放，所以传入true
+            // 对于视频播放器，它会忽略keepAlive参数
+            val keepAlive = currentFileType == "audio"
+            mediaPlaybackController.release(keepAlive)
         }
 
+        // 清理其他资源（这些与播放器无关）
         coroutineScope.cancel()
-        videoPlayerManager.releasePlayer()
-
-        // 关键修复：只在销毁时清空歌词数据
-        lyricsManager.clear()
-
-        // 停止进度更新
-        handler.removeCallbacks(progressUpdateRunnable)
-
+        handler.removeCallbacksAndMessages(null)
         imageManager.clear()
-        gestureControlManager.clear()
-        doubleTapHandler.removeCallbacksAndMessages(null)
+        lyricsManager.clear()
         lyricsDialog?.dismiss()
 
-        Log.d("PreviewActivity", "onDestroy: Activity销毁")
+        Log.d("PreviewActivity", "onDestroy: Activity销毁完成")
     }
 
+    // PreviewActivity.kt - 修改 onBackPressed() 方法
     override fun onBackPressed() {
         val resultIntent = Intent().apply {
             if (autoPlayManager.isAutoPlayEnabled()) {
@@ -1845,6 +1344,14 @@ class PreviewActivity : AppCompatActivity(),
 
         if (fullscreenManager.onBackPressed()) {
             return
+        }
+
+        // 重要：返回时保持音频播放
+        if (currentFileType == "audio") {
+            // 确保音频继续播放
+            if (mediaPlaybackController.isPlaying()) {
+                Log.d("PreviewActivity", "返回时保持音频播放")
+            }
         }
 
         super.onBackPressed()

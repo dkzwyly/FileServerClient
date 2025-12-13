@@ -1,4 +1,3 @@
-// [file name]: AudioPlaybackService.kt
 package com.dkc.fileserverclient
 
 import android.annotation.SuppressLint
@@ -119,7 +118,22 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         Log.d(TAG, "音频播放服务初始化完成")
     }
 
-// 在AudioPlaybackService.kt的公共方法区域添加：
+    // 检查通知权限
+    private fun checkNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                // 检查通知权限
+                return notificationManager.areNotificationsEnabled()
+            } catch (e: SecurityException) {
+                Log.e(TAG, "检查通知权限时出错: ${e.message}")
+                return false
+            }
+        }
+        // Android 13以下默认有权限
+        return true
+    }
+
+    // 在AudioPlaybackService.kt的公共方法区域添加：
     /**
      * 跳转到指定位置
      */
@@ -130,6 +144,20 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "服务启动命令: ${intent?.action}")
+
+        // 检查通知权限
+        if (!checkNotificationPermission()) {
+            Log.w(TAG, "没有通知权限，服务以非前台模式运行")
+            // 如果没有权限，仍然可以运行服务，但不能显示通知
+        } else {
+            // 启动前台服务
+            if (!isForeground) {
+                val notification = buildNotification()
+                startForeground(NOTIFICATION_ID, notification)
+                isForeground = true
+                Log.d(TAG, "启动为前台服务")
+            }
+        }
 
         // 处理初始化参数
         if (intent != null && intent.extras != null) {
@@ -211,14 +239,6 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
             }
         }
 
-        // 启动前台服务
-        if (!isForeground) {
-            val notification = buildNotification()
-            startForeground(NOTIFICATION_ID, notification)
-            isForeground = true
-            Log.d(TAG, "启动为前台服务")
-        }
-
         return START_STICKY
     }
 
@@ -232,12 +252,12 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         Log.d(TAG, "服务解绑")
         isBound = false
 
-        // 如果没有活动绑定且不在播放中，停止服务
-        if (!isPlaying() && !isForeground) {
-            stopSelf()
-        }
+        // 重要：即使Activity解绑，也不停止服务！
+        // 服务应该继续在后台运行，支持通知栏控制
+        // 只有在用户明确停止或播放结束时才停止服务
+        Log.d(TAG, "Activity解绑，但服务继续在后台运行")
 
-        return true
+        return true  // 返回true表示之后可以重新绑定
     }
 
     override fun onDestroy() {
@@ -251,11 +271,15 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         audioPlayerManager.removeProgressListener(this)
 
         // 停止播放
-        stopPlayback()
+        audioPlayerManager.stop()
 
         // 移除通知
         stopForeground(true)
         notificationManager.cancel(NOTIFICATION_ID)
+
+        // 重置状态
+        isForeground = false
+        isBound = false
 
         super.onDestroy()
     }
@@ -271,8 +295,8 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         // 如果有指定曲目，播放它
         track?.let { audioPlayerManager.play(it) }
 
-        // 确保是前台服务
-        if (!isForeground) {
+        // 确保是前台服务（如果有权限）
+        if (!isForeground && checkNotificationPermission()) {
             val notification = buildNotification()
             startForeground(NOTIFICATION_ID, notification)
             isForeground = true
@@ -284,12 +308,17 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
      */
     fun stopPlayback() {
         Log.d(TAG, "停止播放")
+
+        // 停止音频播放
         audioPlayerManager.stop()
 
-        // 如果不在前台模式，停止服务
-        if (!isForeground && !isBound) {
-            stopSelf()
-        }
+        // 重要：即使停止播放，也不立即停止服务
+        // 保持服务运行，允许通知栏重新开始播放
+
+        // 更新通知栏状态
+        updateNotification()
+
+        Log.d(TAG, "播放已停止，但服务仍在运行")
     }
 
     /**
@@ -359,81 +388,83 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
 
     @SuppressLint("UnspecifiedImmutableFlag")
     private fun buildNotification(): Notification {
-        val status = audioPlayerManager.getPlaybackStatus()
-        val track = status.currentTrack
+        try {
+            val status = audioPlayerManager.getPlaybackStatus()
+            val track = status.currentTrack
 
-        // 创建返回应用的Intent
-        val contentIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("navigate_to", "audio")
+            // 创建返回应用的Intent
+            val contentIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("navigate_to", "audio")
+            }
+
+            // 创建PendingIntent（安全处理）
+            val contentPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.getActivity(
+                    this,
+                    0,
+                    contentIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            } else {
+                PendingIntent.getActivity(
+                    this,
+                    0,
+                    contentIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                )
+            }
+
+            // 构建通知
+            val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_audio_notification)
+                .setContentTitle(track?.name ?: "音频播放")
+                .setContentText(track?.artist ?: "未知艺术家")
+                .setContentIntent(contentPendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setOngoing(status.isPlaying)
+                .setShowWhen(false)
+                .setOnlyAlertOnce(true)
+
+            // 添加播放控制按钮（只在有权限时添加）
+            if (checkNotificationPermission()) {
+                val playPauseIcon = if (status.isPlaying) {
+                    R.drawable.ic_pause_notification
+                } else {
+                    R.drawable.ic_play_notification
+                }
+
+                builder
+                    .addAction(
+                        R.drawable.ic_previous_notification,
+                        "上一首",
+                        createPendingIntent(ACTION_PREVIOUS)
+                    )
+                    .addAction(
+                        playPauseIcon,
+                        if (status.isPlaying) "暂停" else "播放",
+                        createPendingIntent(ACTION_PLAY_PAUSE)
+                    )
+                    .addAction(
+                        R.drawable.ic_next_notification,
+                        "下一首",
+                        createPendingIntent(ACTION_NEXT)
+                    )
+            }
+
+            return builder.build()
+        } catch (e: Exception) {
+            Log.e(TAG, "构建通知失败: ${e.message}")
+
+            // 返回一个最小化的通知
+            return NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_audio_notification)
+                .setContentTitle("音频播放")
+                .setContentText("正在播放")
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
         }
-
-        // 创建PendingIntent
-        val contentPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PendingIntent.getActivity(
-                this,
-                0,
-                contentIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-        } else {
-            PendingIntent.getActivity(
-                this,
-                0,
-                contentIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT
-            )
-        }
-
-        // 创建控制按钮的PendingIntent
-        val playPausePendingIntent = createPendingIntent(ACTION_PLAY_PAUSE)
-        val previousPendingIntent = createPendingIntent(ACTION_PREVIOUS)
-        val nextPendingIntent = createPendingIntent(ACTION_NEXT)
-        val stopPendingIntent = createPendingIntent(ACTION_STOP)
-        val closePendingIntent = createPendingIntent(ACTION_CLOSE)
-
-        // 构建通知
-        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_audio_notification)
-            .setContentTitle(track?.name ?: "音频播放")
-            .setContentText(track?.artist ?: "未知艺术家")
-            .setContentIntent(contentPendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_LOW)  // 使用LOW优先级减少干扰
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setOngoing(status.isPlaying)
-            .setShowWhen(false)
-            .setOnlyAlertOnce(true)
-
-        // 添加播放控制按钮
-        val playPauseIcon = if (status.isPlaying) {
-            R.drawable.ic_pause_notification
-        } else {
-            R.drawable.ic_play_notification
-        }
-
-        builder
-            .addAction(
-                R.drawable.ic_previous_notification,
-                "上一首",
-                previousPendingIntent
-            )
-            .addAction(
-                playPauseIcon,
-                if (status.isPlaying) "暂停" else "播放",
-                playPausePendingIntent
-            )
-            .addAction(
-                R.drawable.ic_next_notification,
-                "下一首",
-                nextPendingIntent
-            )
-
-        // 如果Android O以上，设置重要性
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            builder.setChannelId(CHANNEL_ID)
-        }
-
-        return builder.build()
     }
 
     @SuppressLint("UnspecifiedImmutableFlag")
@@ -457,7 +488,7 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                 val channel = NotificationChannel(
                     CHANNEL_ID,
                     CHANNEL_NAME,
-                    NotificationManager.IMPORTANCE_LOW  // 使用LOW重要性避免干扰
+                    NotificationManager.IMPORTANCE_LOW
                 ).apply {
                     description = "音频播放通知"
                     setShowBadge(false)
@@ -476,10 +507,51 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         }
     }
 
+    // 修复后的 updateNotification() 方法
     private fun updateNotification() {
-        if (isForeground) {
-            val notification = buildNotification()
-            notificationManager.notify(NOTIFICATION_ID, notification)
+        try {
+            if (isForeground) {
+                // 检查通知权限
+                if (!checkNotificationPermission()) {
+                    Log.w(TAG, "没有通知权限，无法更新通知")
+                    return
+                }
+
+                val notification = buildNotification()
+                notificationManager.notify(NOTIFICATION_ID, notification)
+                Log.d(TAG, "通知更新成功")
+            }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "更新通知时出现权限错误: ${e.message}")
+
+            // 尝试重新创建通知渠道
+            createNotificationChannel()
+
+            // 再次尝试（延迟一点时间）
+            handler.postDelayed({
+                try {
+                    if (isForeground) {
+                        val notification = buildNotification()
+                        notificationManager.notify(NOTIFICATION_ID, notification)
+                        Log.d(TAG, "重新尝试更新通知成功")
+                    }
+                } catch (e2: Exception) {
+                    Log.e(TAG, "重新尝试更新通知失败: ${e2.message}")
+
+                    // 如果还是失败，降级处理：停止前台服务但不停止服务
+                    if (isForeground) {
+                        try {
+                            stopForeground(false) // false表示不移除通知
+                            isForeground = false
+                            Log.d(TAG, "已停止前台服务（降级处理）")
+                        } catch (e3: Exception) {
+                            Log.e(TAG, "停止前台服务失败: ${e3.message}")
+                        }
+                    }
+                }
+            }, 1000)
+        } catch (e: Exception) {
+            Log.e(TAG, "更新通知时出现其他错误: ${e.message}")
         }
     }
 
@@ -550,9 +622,11 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                             audioPlayerManager.playNext()
                         }, 800) // 稍微延迟，确保UI更新完成
                     } else {
-                        Log.d(TAG, "播放列表结束，停止播放")
-                        // 播放列表结束，可以停止服务或保持状态
-                        // 这里不停止服务，保持通知显示
+                        Log.d(TAG, "播放列表结束，保持服务运行")
+                        // 重要：播放列表结束后，不停止服务
+                        // 保持服务运行，允许用户通过通知栏重新播放
+                        // 更新通知栏显示播放结束状态
+                        updateNotification()
                     }
                 }
                 RepeatMode.ONE -> {

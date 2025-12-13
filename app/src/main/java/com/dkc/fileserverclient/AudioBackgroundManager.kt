@@ -1,4 +1,3 @@
-// [file name]: AudioBackgroundManager.kt
 package com.dkc.fileserverclient
 
 import android.content.ComponentName
@@ -67,14 +66,18 @@ class AudioBackgroundManager(private val context: Context) {
     /**
      * 停止后台播放服务
      */
+    // AudioBackgroundManager.kt - 修改 stopService() 方法
+    /**
+     * 停止后台播放服务
+     */
     fun stopService() {
         Log.d(TAG, "停止后台播放服务")
 
-        // 发送停止命令
+        // 重要：不要发送停止服务的命令，而是发送停止播放的命令
+        // 这允许服务继续运行，支持通知栏控制
         AudioPlaybackService.sendAction(context, AudioPlaybackService.ACTION_STOP)
 
-        // 解绑服务
-        unbindService()
+        Log.d(TAG, "已发送停止播放命令，但服务仍在运行")
     }
 
     /**
@@ -103,6 +106,21 @@ class AudioBackgroundManager(private val context: Context) {
             context.unbindService(serviceConnection)
             isBound = false
             audioService = null
+        }
+    }
+
+    /**
+     * 设置播放列表
+     */
+    fun setPlaylist(tracks: List<AudioTrack>, startIndex: Int = 0) {
+        Log.d(TAG, "设置播放列表: 大小=${tracks.size}, 起始索引=$startIndex")
+
+        if (isBound && audioService != null) {
+            audioService?.setPlaylist(tracks, startIndex)
+        } else {
+            // 如果服务未绑定，启动服务并传递播放列表
+            val trackList = ArrayList(tracks)
+            startService(null, trackList, startIndex)
         }
     }
 
@@ -238,16 +256,100 @@ class AudioBackgroundManager(private val context: Context) {
             }
         }
     }
+// AudioBackgroundManager.kt - 添加关闭服务的方法
+    /**
+     * 完全关闭服务（在应用退出时调用）
+     */
+    fun shutdownService() {
+        Log.d(TAG, "完全关闭音频播放服务")
+
+        // 发送关闭服务的命令
+        AudioPlaybackService.sendAction(context, AudioPlaybackService.ACTION_CLOSE)
+
+        // 清理资源
+        cleanup()
+
+        Log.d(TAG, "音频播放服务已完全关闭")
+    }
+    // AudioBackgroundManager.kt - 添加新方法
+    /**
+     * 保持服务运行但不绑定（用于Activity销毁时）
+     */
+    fun keepServiceAlive() {
+        Log.d(TAG, "保持音频服务运行")
+
+        // 重要：解绑服务但让服务继续在后台运行
+        unbindService()
+
+        // 服务会继续在后台运行，可以通过通知栏控制
+        Log.d(TAG, "服务解绑但继续在后台运行")
+    }
 
     /**
-     * 清理资源
+     * 重新绑定到正在运行的服务
      */
-    fun cleanup() {
+    fun rebindToService(): Boolean {
+        Log.d(TAG, "重新绑定到音频服务")
+
+        if (isBound) {
+            Log.d(TAG, "服务已绑定")
+            return true
+        }
+
+        return bindService()
+    }
+// AudioBackgroundManager.kt - 在类中添加这些方法
+    /**
+     * 检查服务是否已绑定
+     */
+    fun isServiceBound(): Boolean {
+        return isBound
+    }
+
+    /**
+     * 获取服务实例（用于调试和测试）
+     */
+    fun getService(): AudioPlaybackService? {
+        return audioService
+    }
+
+    /**
+     * 检查服务是否准备好
+     */
+    fun isServiceReady(): Boolean {
+        return isBound && audioService != null
+    }
+
+    /**
+     * 清理资源但保持服务运行
+     */
+    fun cleanupLocal() {
+        Log.d(TAG, "清理本地资源，保持服务运行")
+
         // 清理监听器列表
         playbackListeners.clear()
         progressListeners.clear()
 
-        // 解绑服务
+        // 解绑服务但不停止服务
         unbindService()
+
+        Log.d(TAG, "本地资源清理完成，服务仍在后台运行")
     }
+// AudioBackgroundManager.kt - 修改 cleanup() 方法
+    /**
+     * 清理资源
+     */
+    fun cleanup() {
+        Log.d(TAG, "清理音频后台管理器资源")
+
+        // 清理监听器列表
+        playbackListeners.clear()
+        progressListeners.clear()
+
+        // 解绑服务（但不停止服务）
+        unbindService()
+
+        Log.d(TAG, "音频后台管理器清理完成，服务仍在后台运行")
+    }
+
 }
