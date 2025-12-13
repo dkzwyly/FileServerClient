@@ -557,17 +557,20 @@ class PreviewActivity : AppCompatActivity(),
         }
     }
 
+    // 在PreviewActivity.kt中修改loadImagePreview方法
     private fun loadImagePreview() {
-        Log.d("PreviewActivity", "加载图片预览")
+        Log.d("PreviewActivity", "启动ImageActivity预览图片")
 
-        showContainer(imageContainer)
-        fileTypeTextView.visibility = View.VISIBLE
-
-        // 使用管理器加载图片
-        imageManager.loadImage(currentFileUrl, currentFileName)
-
-        // 加载当前目录下的图片列表（用于左右滑动切换）
-        loadImageFileList()
+        val intent = Intent(this, ImageActivity::class.java).apply {
+            putExtra("FILE_NAME", currentFileName)
+            putExtra("FILE_URL", currentFileUrl)
+            putExtra("FILE_TYPE", "image")
+            putExtra("FILE_PATH", intent.getStringExtra("FILE_PATH")) // 传递完整路径
+            putExtra("SERVER_URL", currentServerUrl)
+            putExtra("CURRENT_PATH", currentDirectoryPath)
+        }
+        startActivity(intent)
+        finish()
     }
 
     private fun loadImageFileList() {

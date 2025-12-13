@@ -203,27 +203,27 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
-    @UnstableApi private fun previewImage(imageItem: FileSystemItem) {
+    // 在ImageGalleryActivity.kt中修改previewImage方法
+    @UnstableApi
+    private fun previewImage(imageItem: FileSystemItem) {
         try {
             val encodedPath = java.net.URLEncoder.encode(imageItem.path, "UTF-8")
             val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
 
-            Log.d(TAG, "预览图片: ${imageItem.name}, URL: $fileUrl")
+            Log.d(TAG, "启动ImageActivity预览图片: ${imageItem.name}")
 
-            val intent = Intent(this, PreviewActivity::class.java).apply {
+            val intent = Intent(this, ImageActivity::class.java).apply {
                 putExtra("FILE_NAME", imageItem.name)
                 putExtra("FILE_URL", fileUrl)
-                putExtra("FILE_TYPE", "image")
-                putExtra("FILE_PATH", imageItem.path) // 添加完整路径
-                // 图片不设置自动连播
-                putExtra("AUTO_PLAY_ENABLED", false)
+                putExtra("FILE_PATH", imageItem.path)
                 putExtra("SERVER_URL", currentServerUrl)
                 // 对于图片库，当前路径就是图片目录
                 putExtra("CURRENT_PATH", imageGalleryPath)
             }
             startActivity(intent)
         } catch (e: Exception) {
-            Log.e(TAG, "预览图片失败", e)
+            Log.e(TAG, "启动ImageActivity失败", e)
+            Toast.makeText(this, "预览失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
