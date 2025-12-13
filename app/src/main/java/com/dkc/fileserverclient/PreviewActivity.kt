@@ -764,24 +764,44 @@ class PreviewActivity : AppCompatActivity(),
             mediaPlaybackController.play(currentFileUrl, mediaItem)
         }
 
-        // 如果是自动播放模式
+        // 如果是自动播放模式 - 关键修复：添加状态检查
         if ((shouldAutoPlay || fromMusicLibrary || immediatePlay) && currentFileType == "audio") {
             handler.postDelayed({
-                // 重要：只有当不是同一首歌时才自动播放
-                // 检查当前是否已经在播放同一首歌
-                val currentItem = mediaPlaybackController.getCurrentItem()
-                val isSameTrack = currentItem?.url == currentFileUrl
+                Log.d("PreviewActivity", "从音乐库进入，检查是否需要自动播放")
 
-                if (!isSameTrack) {
-                    // 不是同一首歌，可以自动播放
+                // 关键：检查当前是否已经在播放同一首歌曲
+                val isSameSong = isPlayingSameSong()
+                val isPlaying = mediaPlaybackController.isPlaying()
+
+                Log.d("PreviewActivity", "自动播放检查: isSameSong=$isSameSong, isPlaying=$isPlaying")
+
+                // 只有在歌曲不同且当前没有播放时才自动播放
+                if (!isSameSong && !isPlaying) {
+                    Log.d("PreviewActivity", "从音乐库进入，自动播放新歌曲")
                     mediaPlaybackController.resume()
                 } else {
-                    Log.d("PreviewActivity", "同一首歌正在播放，跳过自动播放")
+                    Log.d("PreviewActivity", "同一首歌已正在播放，跳过自动播放")
                 }
             }, 150)
         }
     }
 
+    // 添加辅助方法：检查是否正在播放同一首歌曲
+    private fun isPlayingSameSong(): Boolean {
+        return try {
+            // 检查音频轨道ID是否相同
+            val currentTrack = mediaPlaybackController.getCurrentItem()
+            val currentAudioTrack = currentAudioTrack
+
+            Log.d("PreviewActivity", "比较歌曲: currentTrack.id=${currentTrack?.id}, currentAudioTrack.id=${currentAudioTrack?.id}")
+
+            // 如果两个都不为空且ID相同，则是同一首歌
+            currentTrack != null && currentAudioTrack != null && currentTrack.id == currentAudioTrack.id
+        } catch (e: Exception) {
+            Log.e("PreviewActivity", "检查是否同一首歌失败", e)
+            false
+        }
+    }
     private fun loadTextPreview() {
         // 启动新的文本预览Activity
         val intent = Intent(this, TextPreviewActivity::class.java).apply {

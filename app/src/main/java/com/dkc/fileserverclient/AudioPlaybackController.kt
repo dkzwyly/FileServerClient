@@ -329,6 +329,8 @@ class AudioPlaybackController(
         val currentTrack = audioBackgroundManager?.getCurrentTrack()
         val isSameTrack = currentTrack?.url == url
 
+        Log.d(TAG, "play() 检查同一首歌: isSameTrack=$isSameTrack, currentUrl=${currentTrack?.url}, newUrl=$url")
+
         if (isSameTrack && audioBackgroundManager?.isServiceRunning() == true) {
             // 同一首歌且服务正在运行
             Log.d(TAG, "点击了正在播放的同一首歌曲")
@@ -352,6 +354,7 @@ class AudioPlaybackController(
                 Log.d(TAG, "已更新UI状态：${status.state}, 位置：${status.position}/${status.duration}")
             }
 
+            // 关键：不发送任何播放/暂停命令，保持当前状态
             return
         }
 
@@ -368,13 +371,8 @@ class AudioPlaybackController(
     override fun resume() {
         Log.d(TAG, "恢复播放")
 
-        // 检查是否已经在播放
-        val isPlaying = audioBackgroundManager?.isPlaying() ?: false
-        if (isPlaying) {
-            Log.d(TAG, "歌曲已在播放，跳过resume")
-            return
-        }
-
+        // 重要：直接发送播放命令，不检查是否已经在播放
+        // 因为从音乐库初次进入时，歌曲可能还没开始播放
         audioBackgroundManager?.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
         updateState(PlaybackState.PLAYING)
     }
