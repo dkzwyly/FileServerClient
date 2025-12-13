@@ -184,23 +184,31 @@ class AudioPlaybackController(
     override fun onActivityResume() {
         Log.d(TAG, "onActivityResume: Activity恢复")
 
-        // 音频播放器回到前台时，更新UI状态
-        // 这里不需要恢复播放，因为音频可能已经在后台播放
-
         // 尝试重新绑定到服务
         if (audioBackgroundManager?.isServiceRunning() == true) {
-            // 使用新添加的方法检查绑定状态
             if (!(audioBackgroundManager?.isServiceBound() ?: false)) {
                 Log.d(TAG, "onActivityResume: 服务运行中但未绑定，尝试重新绑定")
                 audioBackgroundManager?.bindService()
             }
         }
 
-        // 更新UI状态
+        // 同步状态
         val currentStatus = audioBackgroundManager?.getPlaybackStatus()
         currentStatus?.let { status ->
-            updateFromAudioStatus(status)
-            Log.d(TAG, "onActivityResume: 更新UI状态，当前播放状态: ${status.state}")
+            Log.d(TAG, "从后台服务同步状态: ${status.state}, 位置: ${status.position}/${status.duration}")
+
+            // 更新本地状态
+            currentState = status.state
+            currentItem = status.currentTrack?.let { convertToMediaPlaybackItem(it) }
+            currentPosition = status.position
+            currentDuration = status.duration
+            playbackSpeed = status.playbackSpeed
+            repeatMode = status.repeatMode
+            shuffleEnabled = status.shuffleEnabled
+
+            // 通知UI更新
+            notifyPlaybackStateChange()
+            notifyProgressUpdate(currentPosition, currentDuration)
         }
     }
 
@@ -212,9 +220,62 @@ class AudioPlaybackController(
         play(item, null, 0)
     }
 
+    // 修改 play 方法（带播放列表的版本）
     override fun play(item: MediaPlaybackItem, playlist: List<MediaPlaybackItem>?, startIndex: Int) {
         Log.d(TAG, "播放: ${item.name}, playlist=${playlist?.size}, startIndex=$startIndex")
 
+        // 检查是否是同一首歌曲（比较URL）
+        val currentTrack = audioBackgroundManager?.getCurrentTrack()
+        val isSameTrack = currentTrack?.url == item.url
+
+        if (isSameTrack && audioBackgroundManager?.isServiceRunning() == true) {
+            // 同一首歌且服务正在运行，只更新UI，不重新播放
+            Log.d(TAG, "点击了正在播放的同一首歌曲: ${item.name}")
+
+            // 获取完整的当前播放状态
+            val currentStatus = audioBackgroundManager?.getPlaybackStatus()
+            if (currentStatus != null) {
+                Log.d(TAG, "当前播放状态: ${currentStatus.state}, 位置: ${currentStatus.position}/${currentStatus.duration}")
+
+                // 1. 更新当前项目和索引
+                currentItem = item
+
+                // 2. 如果有新的播放列表，更新它
+                if (playlist != null && playlist.isNotEmpty()) {
+                    this.playlist = playlist
+                    currentIndex = startIndex.coerceIn(0, playlist.size - 1)
+                }
+
+                // 3. 从当前状态同步所有信息
+                currentState = currentStatus.state
+                currentPosition = currentStatus.position
+                currentDuration = currentStatus.duration
+                playbackSpeed = currentStatus.playbackSpeed
+                repeatMode = currentStatus.repeatMode
+                shuffleEnabled = currentStatus.shuffleEnabled
+
+                // 重要：如果当前是暂停状态，不要自动恢复播放
+                // 保持当前的播放/暂停状态，不发送任何控制命令
+
+                // 4. 通知UI更新
+                // 先通知轨道变化（这会更新歌词标题等）
+                notifyTrackChanged(item, currentIndex)
+
+                // 再通知状态变化（这会更新播放/暂停按钮、进度等）
+                notifyPlaybackStateChange()
+
+                // 最后通知进度更新（这会更新进度条）
+                notifyProgressUpdate(currentPosition, currentDuration)
+
+                Log.d(TAG, "UI已更新：状态=${currentState}, 位置=${currentPosition}/${currentDuration}")
+            } else {
+                Log.w(TAG, "无法获取当前播放状态")
+            }
+
+            return  // 重要：直接返回，不重新播放
+        }
+
+        // 如果不是同一首歌，执行正常播放流程
         currentItem = item
         updateState(PlaybackState.LOADING)
 
@@ -263,6 +324,38 @@ class AudioPlaybackController(
             duration = 0L,
             metadata = emptyMap()
         )
+
+        // 检查是否是同一首歌曲
+        val currentTrack = audioBackgroundManager?.getCurrentTrack()
+        val isSameTrack = currentTrack?.url == url
+
+        if (isSameTrack && audioBackgroundManager?.isServiceRunning() == true) {
+            // 同一首歌且服务正在运行
+            Log.d(TAG, "点击了正在播放的同一首歌曲")
+
+            // 获取当前播放状态
+            val currentStatus = audioBackgroundManager?.getPlaybackStatus()
+            currentStatus?.let { status ->
+                // 同步状态信息
+                currentState = status.state
+                currentItem = status.currentTrack?.let { convertToMediaPlaybackItem(it) }
+                currentPosition = status.position
+                currentDuration = status.duration
+                playbackSpeed = status.playbackSpeed
+                repeatMode = status.repeatMode
+                shuffleEnabled = status.shuffleEnabled
+
+                // 通知UI更新
+                notifyPlaybackStateChange()
+                notifyProgressUpdate(currentPosition, currentDuration)
+
+                Log.d(TAG, "已更新UI状态：${status.state}, 位置：${status.position}/${status.duration}")
+            }
+
+            return
+        }
+
+        // 如果不是同一首歌，执行正常播放
         play(item)
     }
 
@@ -274,6 +367,14 @@ class AudioPlaybackController(
 
     override fun resume() {
         Log.d(TAG, "恢复播放")
+
+        // 检查是否已经在播放
+        val isPlaying = audioBackgroundManager?.isPlaying() ?: false
+        if (isPlaying) {
+            Log.d(TAG, "歌曲已在播放，跳过resume")
+            return
+        }
+
         audioBackgroundManager?.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
         updateState(PlaybackState.PLAYING)
     }
@@ -286,9 +387,19 @@ class AudioPlaybackController(
 
     override fun togglePlayback() {
         Log.d(TAG, "切换播放状态")
-        audioBackgroundManager?.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
+
+        // 获取当前播放状态
         val isPlaying = audioBackgroundManager?.isPlaying() ?: false
-        updateState(if (isPlaying) PlaybackState.PLAYING else PlaybackState.PAUSED)
+
+        if (isPlaying) {
+            // 当前正在播放，发送暂停命令
+            audioBackgroundManager?.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
+            updateState(PlaybackState.PAUSED)
+        } else {
+            // 当前暂停，发送播放命令
+            audioBackgroundManager?.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
+            updateState(PlaybackState.PLAYING)
+        }
     }
 
     override fun seekTo(position: Long) {

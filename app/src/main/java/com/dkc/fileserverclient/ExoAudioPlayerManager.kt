@@ -161,6 +161,38 @@ class ExoAudioPlayerManager(
     // ==================== 播放控制 ====================
 
     override fun play(track: AudioTrack) {
+        // 检查是否是同一首歌曲
+        val isSameTrack = currentTrack?.url == track.url
+
+        if (isSameTrack && currentState != PlaybackState.IDLE && currentState != PlaybackState.ENDED) {
+            // 同一首歌且正在播放或暂停，仅更新UI
+            Log.d("ExoAudioPlayerManager", "同一首歌已正在播放：${track.name}")
+
+            // 更新当前轨道和索引
+            currentTrack = track
+
+            // 更新播放列表中的索引
+            val index = playlist.indexOfFirst { it.id == track.id }
+            if (index != -1) {
+                currentIndex = index
+            }
+
+            // 通知轨道变更（这会更新UI）
+            notifyTrackChanged(track, currentIndex)
+
+            // 获取当前状态并通知
+            val status = getPlaybackStatus()
+            notifyPlaybackStateChange()
+
+            // 更新进度显示
+            val currentPos = exoPlayer?.currentPosition ?: 0L
+            val duration = exoPlayer?.duration ?: 0L
+            notifyProgressUpdate(currentPos, duration)
+
+            return  // 重要：直接返回，不重新播放
+        }
+
+        // 如果不是同一首歌，执行正常播放流程
         currentTrack = track
         updateState(PlaybackState.LOADING, null)
 

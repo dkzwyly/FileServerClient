@@ -767,7 +767,17 @@ class PreviewActivity : AppCompatActivity(),
         // 如果是自动播放模式
         if ((shouldAutoPlay || fromMusicLibrary || immediatePlay) && currentFileType == "audio") {
             handler.postDelayed({
-                mediaPlaybackController.resume()
+                // 重要：只有当不是同一首歌时才自动播放
+                // 检查当前是否已经在播放同一首歌
+                val currentItem = mediaPlaybackController.getCurrentItem()
+                val isSameTrack = currentItem?.url == currentFileUrl
+
+                if (!isSameTrack) {
+                    // 不是同一首歌，可以自动播放
+                    mediaPlaybackController.resume()
+                } else {
+                    Log.d("PreviewActivity", "同一首歌正在播放，跳过自动播放")
+                }
             }, 150)
         }
     }
@@ -953,36 +963,50 @@ class PreviewActivity : AppCompatActivity(),
         } else {
             android.R.drawable.ic_media_play
         }
-        playPauseButton.setImageResource(playPauseIcon)
 
-        // 更新文件名显示
-        status.currentItem?.let { item ->
-            if (fileNameTextView.text != item.name) {
-                fileNameTextView.text = item.name
-            }
-        }
+        handler.post {
+            playPauseButton.setImageResource(playPauseIcon)
 
-        // 更新歌词标题
-        if (currentFileType == "audio") {
+            // 更新文件名显示
             status.currentItem?.let { item ->
-                if (lyricsTitle.text != item.name) {
-                    lyricsTitle.text = item.name
-                    // 重新加载歌词
-                    loadLyricsForCurrentSong()
+                if (fileNameTextView.text != item.name) {
+                    fileNameTextView.text = item.name
                 }
             }
-        }
 
-        // 更新进度显示
-        if (status.duration > 0) {
-            durationTextView.text = formatTime(status.duration)
-        }
+            // 更新歌词标题
+            if (currentFileType == "audio") {
+                status.currentItem?.let { item ->
+                    if (lyricsTitle.text != item.name) {
+                        lyricsTitle.text = item.name
+                        // 重新加载歌词
+                        loadLyricsForCurrentSong()
+                    }
+                }
+            }
 
-        // 缓冲状态处理
-        if (status.state == PlaybackState.BUFFERING) {
-            mediaLoadingProgress.visibility = View.VISIBLE
-        } else {
-            mediaLoadingProgress.visibility = View.GONE
+            // 更新进度显示
+            if (status.duration > 0) {
+                durationTextView.text = formatTime(status.duration)
+
+                // 更新进度条
+                val progress = if (status.duration > 0) {
+                    (status.position * 1000 / status.duration).toInt()
+                } else {
+                    0
+                }
+                if (!Thread.currentThread().isInterrupted) {
+                    seekBar.progress = progress
+                }
+                currentTimeTextView.text = formatTime(status.position)
+            }
+
+            // 缓冲状态处理
+            if (status.state == PlaybackState.BUFFERING) {
+                mediaLoadingProgress.visibility = View.VISIBLE
+            } else {
+                mediaLoadingProgress.visibility = View.GONE
+            }
         }
     }
 
@@ -1007,6 +1031,33 @@ class PreviewActivity : AppCompatActivity(),
 
                 // 重新加载歌词
                 loadLyricsForCurrentSong()
+
+                // 立即获取当前播放状态并更新UI
+                val currentStatus = mediaPlaybackController.getPlaybackStatus()
+                Log.d("PreviewActivity", "轨道变化时获取状态: ${currentStatus.state}, 播放中: ${currentStatus.isPlaying}, 位置: ${currentStatus.position}")
+
+                // 更新播放/暂停按钮
+                val playPauseIcon = if (currentStatus.isPlaying) {
+                    android.R.drawable.ic_media_pause
+                } else {
+                    android.R.drawable.ic_media_play
+                }
+                playPauseButton.setImageResource(playPauseIcon)
+
+                // 更新进度显示
+                if (currentStatus.duration > 0) {
+                    durationTextView.text = formatTime(currentStatus.duration)
+                    val progress = if (currentStatus.duration > 0) {
+                        (currentStatus.position * 1000 / currentStatus.duration).toInt()
+                    } else {
+                        0
+                    }
+                    // 确保在主线程更新进度条
+                    if (!Thread.currentThread().isInterrupted) {
+                        seekBar.progress = progress
+                    }
+                    currentTimeTextView.text = formatTime(currentStatus.position)
+                }
             }
         }
     }

@@ -124,11 +124,35 @@ class AudioBackgroundManager(private val context: Context) {
         }
     }
 
+
     /**
      * 获取当前播放状态
      */
     fun getPlaybackStatus(): AudioPlaybackStatus? {
-        return audioService?.getPlaybackStatus()
+        if (isBound && audioService != null) {
+            return audioService?.getPlaybackStatus()
+        }
+
+        Log.d(TAG, "服务未绑定，尝试获取状态")
+
+        // 如果服务未绑定但存在，尝试重新绑定
+        if (!isBound && audioService == null) {
+            val bound = bindService()
+            if (bound) {
+                // 等待服务连接后获取状态
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (isBound && audioService != null) {
+                        Log.d(TAG, "重新绑定后获取状态成功")
+                        audioService?.getPlaybackStatus()
+                    } else {
+                        Log.w(TAG, "重新绑定后仍然无法获取状态")
+                        null
+                    }
+                }, 500)
+            }
+        }
+
+        return null
     }
 
     /**
