@@ -9,13 +9,15 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
-import kotlinx.coroutines.*
-import okhttp3.Request
-import okhttp3.RequestBody
-import org.json.JSONObject
-import java.io.*
-import java.net.URLEncoder
-import java.util.*
+import androidx.lifecycle.ViewModelProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.ObjectInputStream
+import java.io.ObjectOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
 class TextPreviewActivity : AppCompatActivity() {
@@ -28,50 +30,21 @@ class TextPreviewActivity : AppCompatActivity() {
     private lateinit var chapterButton: ImageButton
     private lateinit var statusLabel: TextView
 
-    private var currentFileUrl = ""
-    private var currentFileName = ""
-    private var currentServerPage = 1
-    private var totalServerPages = 1
-    private var currentClientPage = 1
-    private var totalClientPages = 1
-    private var totalLines = 0
-    private var fullContent = ""
-    private var linesPerPage = 20
-
-    // 防重复点击
-    private var lastClickTime = 0L
-    private val minClickInterval = 500L
-
-    // 双次加载控制
-    private val isFirstLayoutComplete = AtomicBoolean(false)
-    private val isContentLoaded = AtomicBoolean(false)
-    private var retryCount = 0
-    private val maxRetryCount = 3
-
-    // 章节相关
-    private val chapterList = mutableListOf<ChapterInfo>()
-    private val readingHistoryFile by lazy { File(filesDir, "reading_history_${currentFileName.hashCode()}.dat") }
-
-    private val coroutineScope = CoroutineScope(Dispatchers.Main)
-    private val client = UnsafeHttpClient.createUnsafeOkHttpClient()
+    private lateinit var viewModel: TextPreviewViewModel
     private lateinit var gestureDetector: GestureDetector
 
-    // 章节信息数据类
-    data class ChapterInfo(
-        val title: String,
-        val serverPage: Int,
-        val clientPage: Int,
-        val lineNumber: Int
-    ) : Serializable
+    private val isFirstLayoutComplete = AtomicBoolean(false)
+    private var linesPerPage = 20
+    private var lastClickTime = 0L
+    private val minClickInterval = 200L  // 进一步缩短到200ms
 
-    // 阅读历史数据类
-    data class ReadingHistory(
-        val fileName: String,
-        val fileUrl: String,
-        val serverPage: Int,
-        val clientPage: Int,
-        val timestamp: Long
-    ) : Serializable
+    // 本地历史记录文件路径
+    private lateinit var readingHistoryFile: File
+
+    // 用于存储当前文件信息
+    private lateinit var currentFileName: String
+    private lateinit var currentFileUrl: String
+    private lateinit var currentFilePath: String
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,13 +52,14 @@ class TextPreviewActivity : AppCompatActivity() {
 
         initViews()
         setupIntentData()
+        initViewModel()
         setupGestureDetector()
-
-        // 设置布局完成监听器
         setupLayoutListener()
+        setupObservers()
 
+        // 先加载历史记录，再计算分页和加载内容
         loadReadingHistory()
-        loadTextContent()
+        calculateLinesPerPageAndLoad()
     }
 
     private fun initViews() {
@@ -97,54 +71,156 @@ class TextPreviewActivity : AppCompatActivity() {
         chapterButton = findViewById(R.id.chapterButton)
         statusLabel = findViewById(R.id.statusLabel)
 
-        // 隐藏标题栏
         supportActionBar?.hide()
-
-        // 设置文本视图为固定高度，避免滚动
         textContentTextView.isScrollContainer = false
 
-        // 设置页面指示器为小字号，透明背景
-        pageIndicator.textSize = 12f
-        pageIndicator.setBackgroundColor(Color.TRANSPARENT)
-        pageIndicator.setTextColor(getColor(R.color.text_primary))
-
-        // 设置章节按钮为透明但保持可点击
+        // 章节按钮：保持正常大小但完全透明
+        // 1. 保持按钮原始大小（48x48dp），不修改布局参数
+        // 2. 完全透明化按钮
+        chapterButton.setBackgroundResource(android.R.color.transparent)
         chapterButton.setImageResource(android.R.color.transparent)
-        chapterButton.setBackgroundColor(Color.TRANSPARENT)
+        chapterButton.alpha = 0.0f  // 完全透明
 
-        // 设置章节按钮点击事件
+        // 3. 将按钮提到最前面，确保它不会被其他视图遮挡
+        chapterButton.bringToFront()
+
+        // 4. 设置点击事件
         chapterButton.setOnClickListener {
             showChapterDialog()
         }
-    }
 
-    private fun setupLayoutListener() {
-        // 添加全局布局监听器来检测视图布局完成
-        rootLayout.viewTreeObserver.addOnGlobalLayoutListener {
-            if (!isFirstLayoutComplete.get()) {
-                Log.d("TextPreview", "首次布局完成，textView高度: ${textContentTextView.height}")
-                isFirstLayoutComplete.set(true)
+        // 5. 确保按钮可见（虽然透明）
+        chapterButton.isVisible = true
 
-                // 如果内容已经加载但还未分页，立即执行分页
-                if (isContentLoaded.get() && fullContent.isNotEmpty()) {
-                    Log.d("TextPreview", "布局完成后触发分页")
-                    performClientPagingWithRetry()
-                }
-            }
-        }
+        // 设置页面指示器
+        pageIndicator.textSize = 12f
+        pageIndicator.setBackgroundColor(Color.TRANSPARENT)
+        pageIndicator.setTextColor(Color.parseColor("#666666"))
     }
 
     private fun setupIntentData() {
         currentFileName = intent.getStringExtra("FILE_NAME") ?: "未知文件"
         currentFileUrl = intent.getStringExtra("FILE_URL") ?: ""
+        currentFilePath = intent.getStringExtra("FILE_PATH") ?: ""
 
-        Log.d("TextPreview", "初始化文件信息: 文件名=$currentFileName, URL=$currentFileUrl")
+        Log.d("TextPreview", "初始化文件信息: 文件名=$currentFileName, URL=$currentFileUrl, 路径=$currentFilePath")
+
+        // 创建历史记录目录和文件
+        val historyDir = File(filesDir, "reading_history")
+        if (!historyDir.exists()) {
+            historyDir.mkdirs()
+            Log.d("TextPreview", "创建历史记录目录: ${historyDir.absolutePath}")
+        }
+
+        // 使用更简单的文件名，避免特殊字符问题
+        val safeFileName = currentFileName.replace("[^a-zA-Z0-9]".toRegex(), "_")
+        readingHistoryFile = File(historyDir, "history_${safeFileName}.dat")
+        Log.d("TextPreview", "历史记录文件: ${readingHistoryFile.absolutePath}, 存在: ${readingHistoryFile.exists()}")
+    }
+
+    private fun initViewModel() {
+        viewModel = ViewModelProvider(this).get(TextPreviewViewModel::class.java)
+        // 传递文件信息给ViewModel
+        viewModel.initialize(currentFileName, currentFileUrl, currentFilePath)
+    }
+
+    private fun setupObservers() {
+        // 观察页面内容
+        viewModel.pageContent.observe(this) { content ->
+            textContentTextView.text = content
+            Log.d("TextPreview", "页面内容更新: ${content.length} 字符")
+        }
+
+        // 观察页面信息
+        viewModel.pageInfo.observe(this) { pageInfo ->
+            val progressText = "${pageInfo.currentPage}/${pageInfo.totalPages} (${pageInfo.progress}%)"
+            pageIndicator.text = progressText
+            Log.d("TextPreview", "页面信息更新: $progressText")
+        }
+
+        // 观察加载状态
+        viewModel.loadingState.observe(this) { loadingState ->
+            if (loadingState.isLoading) {
+                showLoadingState(loadingState.message)
+                Log.d("TextPreview", "显示加载状态: ${loadingState.message}")
+            } else {
+                showContentState()
+                Log.d("TextPreview", "显示内容状态")
+            }
+        }
+
+        // 观察错误信息
+        viewModel.errorMessage.observe(this) { errorMessage ->
+            if (errorMessage != null) {
+                showErrorState(errorMessage)
+                Log.e("TextPreview", "显示错误状态: $errorMessage")
+            }
+        }
+
+        // 观察章节列表
+        viewModel.chapters.observe(this) { chapters ->
+            if (chapters.isNotEmpty()) {
+                Log.d("TextPreview", "获取到章节列表: ${chapters.size} 个章节")
+                showChapterList(chapters)
+            } else {
+                Log.d("TextPreview", "无章节数据")
+                showNoChaptersDialog()
+            }
+        }
+
+        // 观察当前页面变化，自动保存历史记录
+        viewModel.currentPageState.observe(this) { pageState ->
+            pageState?.let {
+                Log.d("TextPreview", "页面状态变化: 服务器页=${it.serverPage}, 客户端页=${it.clientPage}")
+                saveReadingHistory(it.serverPage, it.clientPage)
+            }
+        }
+    }
+
+    private fun setupLayoutListener() {
+        rootLayout.viewTreeObserver.addOnGlobalLayoutListener {
+            if (!isFirstLayoutComplete.get()) {
+                Log.d("TextPreview", "首次布局完成，textView高度: ${textContentTextView.height}")
+                isFirstLayoutComplete.set(true)
+                calculateLinesPerPageAndLoad()
+            }
+        }
+    }
+
+    private fun calculateLinesPerPageAndLoad() {
+        if (isFirstLayoutComplete.get()) {
+            linesPerPage = calculateMaxLines()
+            Log.d("TextPreview", "开始加载内容，每页行数: $linesPerPage")
+            // 先从ViewModel获取历史记录，然后加载内容
+            viewModel.loadTextContent(linesPerPage)
+        }
+    }
+
+    private fun calculateMaxLines(): Int {
+        return try {
+            if (textContentTextView.height == 0) {
+                textContentTextView.measure(0, 0)
+            }
+
+            val height = textContentTextView.measuredHeight
+            val lineHeight = textContentTextView.lineHeight
+            val paddingTop = textContentTextView.paddingTop
+            val paddingBottom = textContentTextView.paddingBottom
+            val availableHeight = height - paddingTop - paddingBottom
+            val maxLines = (availableHeight / lineHeight).toInt()
+            val safeMaxLines = (maxLines - 2).coerceAtLeast(1)
+
+            Log.d("TextPreview", "计算最大行数: 高度=$height, 行高=$lineHeight, 可用高度=$availableHeight, 安全行数=$safeMaxLines")
+            safeMaxLines
+        } catch (e: Exception) {
+            Log.e("TextPreview", "计算最大行数失败", e)
+            18 // 默认值
+        }
     }
 
     private fun setupGestureDetector() {
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                // 防重复点击
                 val currentTime = System.currentTimeMillis()
                 if (currentTime - lastClickTime < minClickInterval) {
                     return true
@@ -152,399 +228,135 @@ class TextPreviewActivity : AppCompatActivity() {
                 lastClickTime = currentTime
 
                 val screenWidth = resources.displayMetrics.widthPixels
-                // 左点击 - 上一页（屏幕左侧1/3区域）
-                if (e.x < screenWidth / 3) {
-                    showPreviousPage()
+                val x = e.x
+
+                // 检查是否点击在章节按钮区域（右上角48x48dp区域）
+                val chapterButtonRect = android.graphics.Rect(
+                    screenWidth - 150,  // 150像素约为48dp
+                    0,
+                    screenWidth,
+                    150
+                )
+
+                // 如果点击在章节按钮区域，让按钮处理点击
+                if (chapterButtonRect.contains(x.toInt(), e.y.toInt())) {
+                    Log.d("TextPreview", "点击在章节按钮区域")
+                    return false  // 返回false，让按钮处理点击
+                }
+
+                // 否则处理翻页
+                if (x < screenWidth / 3) {
+                    Log.d("TextPreview", "点击左侧，上一页")
+                    viewModel.previousPage()
+                    return true
+                } else if (x > screenWidth * 2 / 3) {
+                    Log.d("TextPreview", "点击右侧，下一页")
+                    viewModel.nextPage()
                     return true
                 }
-                // 右点击 - 下一页（屏幕右侧1/3区域）
-                else if (e.x > screenWidth * 2 / 3) {
-                    showNextPage()
-                    return true
-                }
-                // 中间区域不处理
                 return false
             }
         })
 
-        // 设置触摸监听器到整个布局
+        // 直接监听触摸事件，简化手势处理
         rootLayout.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_UP) {
-                // 防重复点击
-                val currentTime = System.currentTimeMillis()
-                if (currentTime - lastClickTime < minClickInterval) {
+            // 处理触摸事件
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    // 记录触摸位置，但不立即处理
                     return@setOnTouchListener true
                 }
-                lastClickTime = currentTime
+                MotionEvent.ACTION_UP -> {
+                    val currentTime = System.currentTimeMillis()
+                    // 如果距离上次点击时间太短，不处理
+                    if (currentTime - lastClickTime < minClickInterval) {
+                        return@setOnTouchListener true
+                    }
+                    lastClickTime = currentTime
 
-                val screenWidth = resources.displayMetrics.widthPixels
-                if (event.x < screenWidth / 3) {
-                    showPreviousPage()
-                    return@setOnTouchListener true
-                } else if (event.x > screenWidth * 2 / 3) {
-                    showNextPage()
-                    return@setOnTouchListener true
+                    val screenWidth = resources.displayMetrics.widthPixels
+                    val x = event.x
+                    val y = event.y
+
+                    // 检查是否点击在章节按钮区域（右上角48x48dp区域）
+                    val chapterButtonRect = android.graphics.Rect(
+                        screenWidth - 150,  // 150像素约为48dp
+                        0,
+                        screenWidth,
+                        150
+                    )
+
+                    // 如果点击在章节按钮区域，触发章节按钮点击
+                    if (chapterButtonRect.contains(x.toInt(), y.toInt())) {
+                        Log.d("TextPreview", "点击在章节按钮区域，触发章节按钮")
+                        chapterButton.performClick()
+                        return@setOnTouchListener true
+                    }
+
+                    // 否则处理翻页
+                    if (x < screenWidth / 3) {
+                        // 点击左侧1/3区域，上一页
+                        Log.d("TextPreview", "点击左侧区域，上一页")
+                        viewModel.previousPage()
+                        return@setOnTouchListener true
+                    } else if (x > screenWidth * 2 / 3) {
+                        // 点击右侧1/3区域，下一页
+                        Log.d("TextPreview", "点击右侧区域，下一页")
+                        viewModel.nextPage()
+                        return@setOnTouchListener true
+                    }
+                    // 中间区域不处理翻页，但允许其他操作
                 }
             }
+
+            // 将事件传递给GestureDetector处理其他手势
             gestureDetector.onTouchEvent(event)
         }
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        return gestureDetector.onTouchEvent(event) || super.onTouchEvent(event)
+    private fun showChapterDialog() {
+        Log.d("TextPreview", "显示章节对话框")
+        statusLabel.isVisible = true
+        statusLabel.text = "正在从服务器加载章节..."
+
+        CoroutineScope(Dispatchers.Main).launch {
+            viewModel.loadChapters()
+        }
     }
 
-    private fun loadReadingHistory() {
-        Log.d("TextPreview", "尝试加载阅读历史: ${readingHistoryFile.absolutePath}")
+    private fun showChapterList(chapters: List<TextPreviewViewModel.ChapterInfo>) {
+        val chapterTitles = chapters.map { it.title }.toTypedArray()
 
-        if (readingHistoryFile.exists()) {
-            try {
-                ObjectInputStream(FileInputStream(readingHistoryFile)).use { ois ->
-                    val history = ois.readObject() as ReadingHistory
-                    if (history.fileName == currentFileName) {
-                        currentServerPage = history.serverPage
-                        currentClientPage = history.clientPage
-                        Log.d("TextPreview", "加载阅读历史成功: 服务器页=${currentServerPage}, 客户端页=${currentClientPage}")
-                    } else {
-                        Log.d("TextPreview", "文件名不匹配，不使用历史记录")
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("TextPreview", "加载阅读历史失败", e)
+        AlertDialog.Builder(this)
+            .setTitle("章节跳转 (${chapters.size}章)")
+            .setItems(chapterTitles) { _, which ->
+                val chapter = chapters[which]
+                Log.d("TextPreview", "跳转到章节: ${chapter.title}, 服务器页: ${chapter.serverPage}, 客户端页: ${chapter.clientPage}")
+                viewModel.jumpToChapter(chapter)
+                Toast.makeText(this, "跳转到: ${chapter.title}", Toast.LENGTH_SHORT).show()
             }
-        } else {
-            Log.d("TextPreview", "阅读历史文件不存在")
-        }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
-    private fun saveReadingHistory() {
-        coroutineScope.launch(Dispatchers.IO) {
-            try {
-                val history = ReadingHistory(
-                    fileName = currentFileName,
-                    fileUrl = currentFileUrl,
-                    serverPage = currentServerPage,
-                    clientPage = currentClientPage,
-                    timestamp = System.currentTimeMillis()
-                )
-                ObjectOutputStream(FileOutputStream(readingHistoryFile)).use { oos ->
-                    oos.writeObject(history)
-                }
-                Log.d("TextPreview", "保存阅读历史成功: ${readingHistoryFile.absolutePath}")
-            } catch (e: Exception) {
-                Log.e("TextPreview", "保存阅读历史失败", e)
-            }
-        }
+    private fun showNoChaptersDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("未发现章节")
+            .setMessage("该文件可能没有章节标记，或者章节索引尚未构建。")
+            .setPositiveButton("确定", null)
+            .show()
     }
 
-    private fun loadTextContent() {
-        showLoadingState()
-        isContentLoaded.set(false)
-
-        coroutineScope.launch {
-            try {
-                val url = buildTextUrlWithPagination()
-                Log.d("TextPreview", "加载文本内容: $url")
-
-                val textData = withContext(Dispatchers.IO) {
-                    loadTextContentFromServer(url)
-                }
-
-                val jsonObject = JSONObject(textData)
-                val content = jsonObject.optString("content", "")
-                val fileName = jsonObject.optString("fileName", currentFileName)
-
-                // 获取分页信息
-                val pagination = jsonObject.optJSONObject("pagination")
-                val fileInfo = jsonObject.optJSONObject("fileInfo")
-
-                // 更新分页信息
-                updatePaginationInfo(pagination, fileInfo)
-
-                // 设置完整内容并进行客户端分页
-                fullContent = content
-                isContentLoaded.set(true)
-
-                Log.d("TextPreview", "文本加载成功: ${fileName}, 服务器页码: ${currentServerPage}")
-
-                // 立即更新进度显示
-                updatePageIndicator()
-
-                // 使用双次加载机制确保视图布局完成
-                performClientPagingWithRetry()
-
-            } catch (e: Exception) {
-                Log.e("TextPreviewActivity", "文本加载失败", e)
-                showErrorState("文本加载失败: ${e.message}")
-                updatePageIndicator() // 错误时也更新进度
-            }
-        }
-    }
-
-    private fun performClientPagingWithRetry() {
-        Log.d("TextPreview", "开始双次加载分页，重试计数: $retryCount, 首次布局完成: ${isFirstLayoutComplete.get()}")
-
-        // 第一次尝试：立即执行
-        textContentTextView.post {
-            performClientPaging("第一次分页尝试")
-
-            // 第二次尝试：延迟执行以确保布局完全稳定
-            textContentTextView.postDelayed({
-                if (retryCount < maxRetryCount) {
-                    retryCount++
-                    Log.d("TextPreview", "执行第二次分页尝试，计数: $retryCount")
-                    performClientPaging("第二次分页尝试")
-                }
-            }, 100L) // 延迟100毫秒
-        }
-    }
-
-    private fun performClientPaging(attempt: String) {
-        if (fullContent.isEmpty()) {
-            Log.w("TextPreview", "$attempt: 内容为空")
-            textContentTextView.text = ""
-            updatePageIndicator() // 确保进度更新
-            return
-        }
-
-        try {
-            // 计算文本视图可以显示多少行文本
-            linesPerPage = calculateMaxLines()
-            Log.d("TextPreview", "$attempt: 计算每页行数=$linesPerPage, 文本视图高度=${textContentTextView.height}")
-
-            // 按行分割内容
-            val lines = fullContent.split("\n")
-
-            // 计算客户端总页数
-            totalClientPages = if (linesPerPage > 0) {
-                (lines.size + linesPerPage - 1) / linesPerPage
-            } else {
-                Log.w("TextPreview", "$attempt: 每页行数为0，使用默认值18")
-                18 // 默认值
-            }
-
-            // 确保当前页在有效范围内
-            currentClientPage = currentClientPage.coerceIn(1, totalClientPages)
-
-            // 显示当前客户端页面
-            showCurrentClientPage(lines, linesPerPage, attempt)
-
-            // 保存阅读历史和更新进度
-            saveReadingHistory()
-            updatePageIndicator() // 确保进度更新
-
-            // 显示内容状态
-            showContentState()
-
-            Log.d("TextPreview", "$attempt: 客户端分页完成 - 当前页=$currentClientPage, 总页数=$totalClientPages, 每页行数=$linesPerPage")
-
-        } catch (e: Exception) {
-            Log.e("TextPreview", "$attempt: 分页失败", e)
-            updatePageIndicator() // 即使失败也更新进度
-        }
-    }
-
-    private fun buildTextUrlWithPagination(): String {
-        return if (currentFileUrl.contains("?")) {
-            "${currentFileUrl}&page=$currentServerPage"
-        } else {
-            "${currentFileUrl}?page=$currentServerPage"
-        }
-    }
-
-    private fun updatePaginationInfo(pagination: JSONObject?, fileInfo: JSONObject?) {
-        pagination?.let {
-            currentServerPage = it.optInt("currentPage", 1)
-            totalServerPages = it.optInt("totalPages", 1)
-            totalLines = it.optInt("totalLines", 0)
-            Log.d("TextPreview", "分页信息: 当前页=$currentServerPage, 总页数=$totalServerPages, 总行数=$totalLines")
-        }
-
-        // 记录总体行数信息
-        fileInfo?.let {
-            val lines = it.optInt("lines", totalLines)
-            if (lines > totalLines) {
-                totalLines = lines
-                Log.d("TextPreview", "更新总行数: $totalLines")
-            }
-        }
-    }
-
-    private fun calculateMaxLines(): Int {
-        try {
-            // 确保视图已经布局完成
-            if (textContentTextView.height == 0) {
-                textContentTextView.measure(0, 0)
-                Log.d("TextPreview", "文本视图高度为0，进行测量")
-            }
-
-            // 获取文本视图的高度和行高
-            val height = textContentTextView.measuredHeight
-            val lineHeight = textContentTextView.lineHeight
-
-            // 考虑边距
-            val paddingTop = textContentTextView.paddingTop
-            val paddingBottom = textContentTextView.paddingBottom
-            val availableHeight = height - paddingTop - paddingBottom
-
-            // 计算最大行数
-            val maxLines = (availableHeight / lineHeight).toInt()
-
-            // 减少2行作为安全余量，确保不会被切
-            val safeMaxLines = (maxLines - 2).coerceAtLeast(1)
-
-            Log.d("TextPreview", "计算最大行数: 高度=$height, 行高=$lineHeight, 可用高度=$availableHeight, 最大行数=$maxLines, 安全行数=$safeMaxLines")
-
-            return safeMaxLines
-        } catch (e: Exception) {
-            Log.e("TextPreview", "计算最大行数失败", e)
-            return 18 // 默认值
-        }
-    }
-
-    private fun showCurrentClientPage(lines: List<String>, linesPerPage: Int, attempt: String) {
-        val startIndex = (currentClientPage - 1) * linesPerPage
-        val endIndex = (startIndex + linesPerPage).coerceAtMost(lines.size)
-
-        val pageLines = if (startIndex < lines.size) {
-            lines.subList(startIndex, endIndex)
-        } else {
-            emptyList()
-        }
-
-        val pageContent = pageLines.joinToString("\n")
-        textContentTextView.text = pageContent
-        updatePageIndicator()
-
-        Log.d("TextPreview", "$attempt: 显示客户端页面 - 页$currentClientPage/$totalClientPages, 行范围: $startIndex-$endIndex, 总行数: ${lines.size}, 显示行数: ${pageLines.size}")
-    }
-
-    private fun updatePageIndicator() {
-        val progress = calculateReadingProgress()
-        pageIndicator.text = "$progress%"
-    }
-
-    private fun calculateReadingProgress(): Int {
-        return try {
-            // 方法1: 使用服务器分页信息计算（更准确）
-            if (totalServerPages > 0) {
-                val serverProgress = ((currentServerPage - 1) * 100 / totalServerPages).toFloat()
-
-                // 如果当前服务器页有客户端分页，添加当前页内的进度
-                val pageProgress = if (totalClientPages > 1) {
-                    ((currentClientPage - 1) * 100 / totalClientPages).toFloat() / totalServerPages
-                } else {
-                    0f
-                }
-
-                (serverProgress + pageProgress).toInt().coerceIn(0, 100)
-            }
-            // 方法2: 使用客户端分页信息计算（备选方案）
-            else if (totalClientPages > 0) {
-                (currentClientPage * 100 / totalClientPages).coerceAtMost(100)
-            }
-            // 方法3: 使用总行数计算（如果可用）
-            else if (totalLines > 0 && fullContent.isNotEmpty()) {
-                val lines = fullContent.split("\n")
-                val currentLine = ((currentServerPage - 1) * linesPerPage) + ((currentClientPage - 1) * linesPerPage)
-                ((currentLine * 100) / totalLines.toFloat()).toInt().coerceIn(0, 100)
-            }
-            else {
-                // 默认方法：基于当前章节位置估算
-                estimateProgressFromChapters()
-            }
-        } catch (e: Exception) {
-            Log.e("TextPreview", "计算阅读进度失败", e)
-            estimateProgressFromChapters()
-        }
-    }
-
-    private fun estimateProgressFromChapters(): Int {
-        return if (chapterList.isNotEmpty() && totalServerPages > 0) {
-            // 基于当前章节在章节列表中的位置估算进度
-            val currentChapterIndex = findCurrentChapterIndex()
-            if (currentChapterIndex >= 0) {
-                ((currentChapterIndex + 1) * 100 / chapterList.size).coerceAtMost(100)
-            } else {
-                // 如果没有找到匹配的章节，使用服务器页数估算
-                (currentServerPage * 100 / totalServerPages).coerceAtMost(100)
-            }
-        } else {
-            // 最后备选：使用服务器页数
-            if (totalServerPages > 0) {
-                (currentServerPage * 100 / totalServerPages).coerceAtMost(100)
-            } else {
-                0
-            }
-        }
-    }
-
-    private fun findCurrentChapterIndex(): Int {
-        // 查找当前阅读位置对应的章节
-        for ((index, chapter) in chapterList.withIndex()) {
-            if (chapter.serverPage == currentServerPage && chapter.clientPage <= currentClientPage) {
-                return index
-            } else if (chapter.serverPage < currentServerPage) {
-                return index
-            }
-        }
-        return -1
-    }
-
-    private fun showPreviousPage() {
-        Log.d("TextPreview", "点击上一页: 当前客户端页=$currentClientPage, 总客户端页=$totalClientPages, 当前服务器页=$currentServerPage, 总服务器页=$totalServerPages")
-
-        if (currentClientPage > 1) {
-            currentClientPage--
-            performClientPaging("上一页")
-        } else if (currentServerPage > 1) {
-            // 需要加载上一服务器页
-            currentServerPage--
-            currentClientPage = 1 // 重置为客户端第一页
-            loadTextContent()
-        } else {
-            // 已经是第一页了
-            Toast.makeText(this, "已经是第一页了", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun showNextPage() {
-        Log.d("TextPreview", "点击下一页: 当前客户端页=$currentClientPage, 总客户端页=$totalClientPages, 当前服务器页=$currentServerPage, 总服务器页=$totalServerPages")
-
-        if (currentClientPage < totalClientPages) {
-            currentClientPage++
-            performClientPaging("下一页")
-        } else if (currentServerPage < totalServerPages) {
-            // 需要加载下一服务器页
-            currentServerPage++
-            currentClientPage = 1 // 重置为客户端第一页
-            loadTextContent()
-        } else {
-            // 已经是最后一页了
-            Toast.makeText(this, "已经是最后一页了", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private suspend fun loadTextContentFromServer(url: String): String {
-        return withContext(Dispatchers.IO) {
-            val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute()
-
-            if (!response.isSuccessful) {
-                throw IOException("HTTP ${response.code}: ${response.message}")
-            }
-
-            response.body?.string() ?: throw IOException("响应体为空")
-        }
-    }
-
-    private fun showLoadingState() {
+    // UI状态管理
+    private fun showLoadingState(message: String? = null) {
         loadingProgress.isVisible = true
         textContentTextView.isVisible = false
         pageIndicator.isVisible = false
         errorTextView.isVisible = false
-        chapterButton.isVisible = false
-        statusLabel.isVisible = false
+        // 章节按钮保持透明但可见
+        chapterButton.isVisible = true
+        statusLabel.isVisible = true
+        statusLabel.text = message ?: "正在加载..."
     }
 
     private fun showContentState() {
@@ -552,6 +364,7 @@ class TextPreviewActivity : AppCompatActivity() {
         textContentTextView.isVisible = true
         pageIndicator.isVisible = true
         errorTextView.isVisible = false
+        // 章节按钮保持透明但可见
         chapterButton.isVisible = true
         statusLabel.isVisible = false
     }
@@ -561,294 +374,90 @@ class TextPreviewActivity : AppCompatActivity() {
         textContentTextView.isVisible = false
         pageIndicator.isVisible = false
         errorTextView.isVisible = true
-        chapterButton.isVisible = false
-        statusLabel.isVisible = false
-    }
-
-    // 章节跳转相关功能 - 修改为使用服务器端章节索引
-    private fun showChapterDialog() {
-        Log.d("TextPreview", "显示章节对话框")
-
-        coroutineScope.launch {
-            showLoadingState()
-            statusLabel.isVisible = true
-            statusLabel.text = "正在从服务器加载章节..."
-
-            try {
-                // 添加重试机制
-                var chapters = emptyList<ChapterInfo>()
-                var retryCount = 0
-                val maxRetries = 2
-
-                while (retryCount <= maxRetries) {
-                    try {
-                        chapters = loadChaptersFromServer()
-                        if (chapters.isNotEmpty()) break
-                        Log.d("TextPreview", "第 ${retryCount + 1} 次加载章节成功但为空列表")
-                    } catch (e: Exception) {
-                        Log.w("TextPreview", "第 ${retryCount + 1} 次加载章节失败", e)
-                        if (retryCount == maxRetries) throw e
-                        delay(1000L) // 延迟1秒后重试
-                    }
-                    retryCount++
-                }
-
-                chapterList.clear()
-                chapterList.addAll(chapters)
-
-                if (chapters.isEmpty()) {
-                    showNoChaptersDialog()
-                } else {
-                    showChapterList()
-                }
-            } catch (e: Exception) {
-                Log.e("TextPreview", "加载章节失败", e)
-                showChapterErrorState("章节加载失败: ${e.message}")
-
-                // 提供重试选项
-                showRetryDialog(e.message ?: "未知错误")
-            } finally {
-                showContentState()
-                statusLabel.isVisible = false
-            }
-        }
-    }
-
-    private suspend fun loadChaptersFromServer(): List<ChapterInfo> {
-        return withContext(Dispatchers.IO) {
-            try {
-                // 修复 URL 构建逻辑
-                val baseUrl = currentFileUrl.substringBefore("/preview/")
-
-                // 正确提取文件名并编码 - 从完整URL中提取文件名部分
-                val fileName = if (currentFileUrl.contains("/preview/")) {
-                    currentFileUrl.substringAfter("/preview/").substringBefore("?")
-                } else {
-                    // 如果URL格式不符合预期，使用当前文件名
-                    currentFileName
-                }
-
-                val encodedFileName = URLEncoder.encode(fileName, "UTF-8")
-
-                // 构建正确的章节 URL
-                val chaptersUrl = "$baseUrl/chapters/$encodedFileName"
-
-                Log.d("TextPreview", "请求章节列表: $chaptersUrl")
-
-                val request = Request.Builder()
-                    .url(chaptersUrl)
-                    .addHeader("Accept", "application/json")
-                    .build()
-
-                val response = client.newCall(request).execute()
-
-                if (!response.isSuccessful) {
-                    val errorBody = response.body?.string() ?: "No error body"
-                    Log.e("TextPreview", "章节请求失败: HTTP ${response.code}, Body: $errorBody")
-                    throw IOException("HTTP ${response.code}: $errorBody")
-                }
-
-                val jsonData = response.body?.string() ?: throw IOException("响应体为空")
-                Log.d("TextPreview", "章节响应: $jsonData")
-
-                val jsonObject = JSONObject(jsonData)
-
-                // 检查响应结构 - 支持两种可能的响应格式
-                if (jsonObject.has("chapters")) {
-                    // 格式1: 直接包含chapters数组
-                    return@withContext parseChaptersFromJson(jsonObject)
-                } else if (jsonObject.has("data") && jsonObject.getJSONObject("data").has("chapters")) {
-                    // 格式2: chapters在data对象内
-                    return@withContext parseChaptersFromJson(jsonObject.getJSONObject("data"))
-                } else {
-                    Log.w("TextPreview", "章节响应格式未知，尝试直接解析为章节数组")
-                    // 尝试直接解析为章节数组
-                    return@withContext try {
-                        parseChaptersFromJson(jsonObject)
-                    } catch (e: Exception) {
-                        Log.e("TextPreview", "无法解析章节数据", e)
-                        emptyList()
-                    }
-                }
-
-            } catch (e: Exception) {
-                Log.e("TextPreview", "从服务器加载章节失败", e)
-                throw e
-            }
-        }
-    }
-
-    private fun parseChaptersFromJson(jsonObject: JSONObject): List<ChapterInfo> {
-        val chaptersArray = jsonObject.getJSONArray("chapters")
-        val chapters = mutableListOf<ChapterInfo>()
-
-        for (i in 0 until chaptersArray.length()) {
-            try {
-                val chapterObj = chaptersArray.getJSONObject(i)
-                val title = chapterObj.optString("title", "未知章节")
-                val serverPage = chapterObj.optInt("page", 1)
-                val lineNumber = chapterObj.optInt("lineNumber", 0)
-
-                // 计算客户端页码
-                val clientPage = calculateClientPageFromLineNumber(lineNumber)
-
-                chapters.add(ChapterInfo(title, serverPage, clientPage, lineNumber))
-
-                Log.d("TextPreview", "解析章节: $title, 页: $serverPage, 行: $lineNumber")
-            } catch (e: Exception) {
-                Log.e("TextPreview", "解析单个章节失败", e)
-            }
-        }
-
-        Log.d("TextPreview", "成功解析 ${chapters.size} 个章节")
-        return chapters
-    }
-
-    private fun calculateClientPageFromLineNumber(lineNumber: Int): Int {
-        // 基于行号计算客户端页码
-        // 服务器页大小为1000行，我们需要计算在服务器页内的相对行号
-        val relativeLineNumber = lineNumber % 1000
-        val calculatedPage = (relativeLineNumber / linesPerPage) + 1
-
-        // 确保页码至少为1
-        return calculatedPage.coerceAtLeast(1)
-    }
-
-    private fun showChapterErrorState(message: String) {
-        // 专门用于章节加载错误的显示状态
-        loadingProgress.isVisible = false
-        textContentTextView.isVisible = true
-        pageIndicator.isVisible = true
-        errorTextView.isVisible = true
         errorTextView.text = message
+        // 章节按钮保持透明但可见
         chapterButton.isVisible = true
         statusLabel.isVisible = false
     }
 
-    private fun showNoChaptersDialog() {
-        AlertDialog.Builder(this@TextPreviewActivity)
-            .setTitle("未发现章节")
-            .setMessage("该文件可能没有章节标记，或者章节索引尚未构建。是否尝试构建章节索引？")
-            .setPositiveButton("构建索引") { _, _ ->
-                rebuildChapterIndexFromServer()
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
+    // 修复：本地历史记录方法
+    private fun loadReadingHistory() {
+        Log.d("TextPreview", "尝试加载历史记录: ${readingHistoryFile.absolutePath}")
 
-    private fun showRetryDialog(errorMessage: String) {
-        AlertDialog.Builder(this@TextPreviewActivity)
-            .setTitle("章节加载失败")
-            .setMessage("错误: $errorMessage\n是否重新尝试加载章节？")
-            .setPositiveButton("重试") { _, _ ->
-                showChapterDialog()
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun rebuildChapterIndexFromServer() {
-        coroutineScope.launch {
-            showLoadingState()
-            statusLabel.isVisible = true
-            statusLabel.text = "正在重建章节索引..."
-
+        if (readingHistoryFile.exists()) {
             try {
-                val success = rebuildChapterIndex()
-                if (success) {
-                    // 重建成功后重新加载章节
-                    showChapterDialog()
-                    Toast.makeText(this@TextPreviewActivity, "章节索引重建完成", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this@TextPreviewActivity, "章节索引重建失败", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Log.e("TextPreview", "重建章节索引失败", e)
-                Toast.makeText(this@TextPreviewActivity, "重建失败: ${e.message}", Toast.LENGTH_LONG).show()
-            } finally {
-                showContentState()
-            }
-        }
-    }
+                ObjectInputStream(FileInputStream(readingHistoryFile)).use { ois ->
+                    val history = ois.readObject() as? ReadingHistory
+                    history?.let {
+                        Log.d("TextPreview", "找到历史记录: 文件名=${it.fileName}, 服务器页=${it.serverPage}, 客户端页=${it.clientPage}")
 
-    private suspend fun rebuildChapterIndex(): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                val baseUrl = currentFileUrl.substringBefore("/preview/")
-                val fileName = if (currentFileUrl.contains("/preview/")) {
-                    currentFileUrl.substringAfter("/preview/").substringBefore("?")
-                } else {
-                    currentFileName
-                }
-                val encodedPath = URLEncoder.encode(fileName, "UTF-8")
-                // 修复URL：去掉重复的路径
-                val rebuildUrl = "$baseUrl/chapters/rebuild/$encodedPath"
-
-                Log.d("TextPreview", "请求重建章节索引: $rebuildUrl")
-
-                val request = Request.Builder()
-                    .url(rebuildUrl)
-                    .post(RequestBody.create(null, ""))
-                    .build()
-
-                val response = client.newCall(request).execute()
-
-                if (response.isSuccessful) {
-                    val jsonData = response.body?.string()
-                    if (jsonData != null) {
-                        val jsonObject = JSONObject(jsonData)
-                        val success = jsonObject.optBoolean("success", false)
-
-                        if (success) {
-                            Log.d("TextPreview", "章节索引重建成功")
-                            return@withContext true
+                        // 检查是否是同一文件（比较文件名或URL）
+                        if (it.fileName == currentFileName || it.fileUrl == currentFileUrl) {
+                            Log.d("TextPreview", "恢复历史记录: 服务器页=${it.serverPage}, 客户端页=${it.clientPage}")
+                            viewModel.restoreFromHistory(it.serverPage, it.clientPage)
+                        } else {
+                            Log.d("TextPreview", "文件名不匹配，不使用历史记录")
                         }
                     }
                 }
-
-                Log.w("TextPreview", "章节索引重建失败: HTTP ${response.code}")
-                return@withContext false
             } catch (e: Exception) {
-                Log.e("TextPreview", "重建章节索引失败", e)
-                return@withContext false
+                Log.e("TextPreview", "加载历史记录失败", e)
+            }
+        } else {
+            Log.d("TextPreview", "历史记录文件不存在")
+        }
+    }
+
+    private fun saveReadingHistory(serverPage: Int, clientPage: Int) {
+        Log.d("TextPreview", "保存历史记录: 服务器页=$serverPage, 客户端页=$clientPage")
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val history = ReadingHistory(
+                    fileName = currentFileName,
+                    fileUrl = currentFileUrl,
+                    serverPage = serverPage,
+                    clientPage = clientPage,
+                    timestamp = System.currentTimeMillis()
+                )
+
+                ObjectOutputStream(FileOutputStream(readingHistoryFile)).use { oos ->
+                    oos.writeObject(history)
+                }
+
+                Log.d("TextPreview", "历史记录保存成功: ${readingHistoryFile.absolutePath}")
+            } catch (e: Exception) {
+                Log.e("TextPreview", "保存历史记录失败", e)
             }
         }
     }
 
-    private fun showChapterList() {
-        if (chapterList.isEmpty()) {
-            Toast.makeText(this, "未发现章节", Toast.LENGTH_SHORT).show()
-            return
+    override fun onPause() {
+        super.onPause()
+        Log.d("TextPreview", "Activity暂停，保存当前状态")
+
+        // 获取当前页面状态并保存
+        viewModel.getCurrentPageState()?.let {
+            saveReadingHistory(it.serverPage, it.clientPage)
         }
-
-        Log.d("TextPreview", "显示章节列表，章节数: ${chapterList.size}")
-
-        val chapterTitles = chapterList.map { it.title }.toTypedArray()
-
-        AlertDialog.Builder(this)
-            .setTitle("章节跳转 (${chapterList.size}章)")
-            .setItems(chapterTitles) { dialog: android.content.DialogInterface?, which: Int ->
-                val chapter = chapterList[which]
-                jumpToChapter(chapter)
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun jumpToChapter(chapter: ChapterInfo) {
-        currentServerPage = chapter.serverPage
-        currentClientPage = chapter.clientPage
-        loadTextContent()
-
-        // 立即更新进度显示
-        updatePageIndicator()
-
-        Toast.makeText(this, "跳转到: ${chapter.title}", Toast.LENGTH_SHORT).show()
-        Log.d("TextPreview", "跳转到章节: ${chapter.title}, 服务器页: ${chapter.serverPage}, 客户端页: ${chapter.clientPage}")
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        coroutineScope.cancel()
+        Log.d("TextPreview", "Activity销毁")
+
+        // 获取当前页面状态并保存
+        viewModel.getCurrentPageState()?.let {
+            saveReadingHistory(it.serverPage, it.clientPage)
+        }
     }
 }
+
+// 历史记录数据类
+data class ReadingHistory(
+    val fileName: String,
+    val fileUrl: String,
+    val serverPage: Int,
+    val clientPage: Int,
+    val timestamp: Long
+) : java.io.Serializable

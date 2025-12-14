@@ -810,6 +810,7 @@ class PreviewActivity : AppCompatActivity(),
         val intent = Intent(this, TextPreviewActivity::class.java).apply {
             putExtra("FILE_NAME", currentFileName)
             putExtra("FILE_URL", currentFileUrl)
+            putExtra("FILE_PATH", intent.getStringExtra("FILE_PATH"))
         }
         startActivity(intent)
         finish()
