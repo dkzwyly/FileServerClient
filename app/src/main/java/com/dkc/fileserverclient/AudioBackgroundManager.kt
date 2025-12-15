@@ -63,10 +63,17 @@ class AudioBackgroundManager(private val context: Context) {
         context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
-    /**
-     * 停止后台播放服务
-     */
-    // AudioBackgroundManager.kt - 修改 stopService() 方法
+    fun stopServiceAndRelease() {
+        Log.d(TAG, "停止服务并释放资源")
+
+        // 发送关闭服务命令
+        AudioPlaybackService.sendAction(context, AudioPlaybackService.ACTION_CLOSE)
+
+        // 清理本地资源
+        cleanup()
+
+        Log.d(TAG, "服务已停止")
+    }
     /**
      * 停止后台播放服务
      */

@@ -145,6 +145,13 @@ class PreviewActivity : AppCompatActivity(),
         setupEventListeners()
         loadPreview()
 
+        // 检查是否从通知栏进入
+        val fromNotification = intent.getBooleanExtra("FROM_NOTIFICATION", false)
+        if (fromNotification) {
+            Log.d("PreviewActivity", "从通知栏进入，恢复播放状态")
+            handleNotificationIntent(intent)
+        }
+
         // 获取自动连播相关参数
         val autoPlayEnabled = intent.getBooleanExtra("AUTO_PLAY_ENABLED", false)
         val mediaFileList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -1028,6 +1035,70 @@ class PreviewActivity : AppCompatActivity(),
 
         // 重新加载预览
         loadPreview()
+    }
+
+
+    // 添加处理通知栏Intent的方法
+    private fun handleNotificationIntent(intent: Intent) {
+        Log.d("PreviewActivity", "处理通知栏Intent")
+
+        try {
+            // 检查是否有音频轨道数据
+            val audioTrack = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra("AUDIO_TRACK")
+            }
+
+            val audioTracks = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableArrayListExtra("AUDIO_TRACKS", AudioTrack::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableArrayListExtra("AUDIO_TRACKS")
+            }
+
+            val currentIndex = intent.getIntExtra("CURRENT_INDEX", 0)
+            val shouldAutoPlay = intent.getBooleanExtra("SHOULD_AUTO_PLAY", false)
+
+            if (audioTrack != null) {
+                Log.d("PreviewActivity", "从通知栏恢复: ${audioTrack.name}, 索引: $currentIndex")
+
+                // 更新当前文件信息
+                currentFileType = "audio"
+                currentFileName = audioTrack.name
+                currentFileUrl = audioTrack.url
+                currentAudioTrack = audioTrack
+
+                if (audioTracks != null && audioTracks.isNotEmpty()) {
+                    this.audioTracks = audioTracks
+                }
+
+                currentAudioIndex = currentIndex
+
+                // 更新UI
+                fileNameTextView.text = currentFileName
+                fileTypeTextView.text = "音频"
+
+                // 立即加载歌词
+                loadLyricsForCurrentSong()
+
+                // 如果通知栏传递了自动播放标志，恢复播放
+                if (shouldAutoPlay) {
+                    handler.postDelayed({
+                        // 检查是否已经在播放
+                        if (!mediaPlaybackController.isPlaying()) {
+                            mediaPlaybackController.resume()
+                            Log.d("PreviewActivity", "从通知栏恢复播放")
+                        } else {
+                            Log.d("PreviewActivity", "音频已在播放，无需恢复")
+                        }
+                    }, 300)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("PreviewActivity", "处理通知栏Intent失败", e)
+        }
     }
 
     override fun onLoadAudioTrack(track: AudioTrack, index: Int) {

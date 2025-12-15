@@ -13,4 +13,11 @@
         android:title="关于"
         app:showAsAction="never" />
 
+    <item
+    android:id="@+id/menu_auto_connect"
+    android:title="自动连接"
+    android:checkable="true"
+    android:icon="@drawable/ic_auto_connect_off"
+    app:showAsAction="never" />
+
 </menu>

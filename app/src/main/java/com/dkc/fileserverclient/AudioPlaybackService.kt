@@ -232,12 +232,34 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                     stopPlayback()
                 }
                 ACTION_CLOSE -> {
-                    Log.d(TAG, "关闭服务")
+                    Log.d(TAG, "收到关闭服务命令")
+                    // 停止播放
+                    audioPlayerManager.stop()
+                    // 移除前台状态
                     stopForeground(true)
+                    // 停止服务自身
                     stopSelf()
+
+                    // 发送广播通知其他组件
+                    val closeIntent = Intent("AUDIO_SERVICE_CLOSED")
+                    sendBroadcast(closeIntent)
+
+                    Log.d(TAG, "服务已完全关闭")
+                }
+                else -> {
+                    // 处理其他未定义的动作
+                    Log.w(TAG, "收到未知的动作类型: $action")
+
+                    // 如果是启动服务的初始化意图（没有action），则忽略
+                    if (action.isNotBlank() && action != Intent.ACTION_MAIN) {
+                        Log.w(TAG, "服务收到未知意图，可能来自恶意应用或系统错误")
+                    }
+                    else{}
+                    // 可以在这里添加默认行为，或者什么也不做
                 }
             }
         }
+
 
         return START_STICKY
     }
@@ -312,13 +334,36 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         // 停止音频播放
         audioPlayerManager.stop()
 
-        // 重要：即使停止播放，也不立即停止服务
-        // 保持服务运行，允许通知栏重新开始播放
+        // 移除前台状态，但保持服务运行
+        if (isForeground) {
+            stopForeground(false)  // false表示不移除通知
+            isForeground = false
+        }
 
-        // 更新通知栏状态
+        // 更新通知栏为停止状态
         updateNotification()
 
-        Log.d(TAG, "播放已停止，但服务仍在运行")
+        Log.d(TAG, "播放已停止，服务仍在运行，可通过通知栏重新播放")
+    }
+    /**
+     * 完全停止服务（用于滑动清除或用户主动关闭）
+     */
+    fun stopServiceCompletely() {
+        Log.d(TAG, "完全停止服务")
+
+        // 停止播放
+        audioPlayerManager.stop()
+
+        // 移除前台状态
+        if (isForeground) {
+            stopForeground(true)
+            isForeground = false
+        }
+
+        // 停止服务自身
+        stopSelf()
+
+        Log.d(TAG, "服务已完全停止")
     }
 
     /**
@@ -391,14 +436,30 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         try {
             val status = audioPlayerManager.getPlaybackStatus()
             val track = status.currentTrack
+            val playlist = audioPlayerManager.getPlaylist()
+            val currentIndex = audioPlayerManager.getCurrentIndex()
 
-            // 创建返回应用的Intent
-            val contentIntent = Intent(this, MainActivity::class.java).apply {
+            // 创建返回 PreviewActivity 的 Intent
+            val contentIntent = Intent(this, PreviewActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra("navigate_to", "audio")
+
+                // 传递当前播放状态
+                putExtra("AUDIO_TRACK", track)
+                putExtra("AUDIO_TRACKS", ArrayList(playlist))
+                putExtra("CURRENT_INDEX", currentIndex)
+                putExtra("FROM_NOTIFICATION", true)
+                putExtra("SHOULD_AUTO_PLAY", status.isPlaying)
+                putExtra("SERVER_URL", track?.serverUrl ?: "")
+                putExtra("FILE_NAME", track?.name ?: "音频播放")
+                putExtra("FILE_TYPE", "audio")
+
+                // 尝试获取当前路径
+                track?.let { audioTrack ->
+                    putExtra("FILE_PATH", audioTrack.path)
+                }
             }
 
-            // 创建PendingIntent（安全处理）
+            // 创建 PendingIntent（安全处理）
             val contentPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 PendingIntent.getActivity(
                     this,
@@ -407,6 +468,7 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
             } else {
+                @Suppress("DEPRECATION")
                 PendingIntent.getActivity(
                     this,
                     0,
@@ -423,7 +485,9 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                 .setContentIntent(contentPendingIntent)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setOngoing(status.isPlaying)
+                .setOngoing(false)  // 修改：允许滑动清除
+                .setAutoCancel(true)  // 点击后自动清除
+                .setDeleteIntent(createDeleteIntent())  // 添加：处理滑动清除事件
                 .setShowWhen(false)
                 .setOnlyAlertOnce(true)
 
@@ -451,11 +515,18 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                         "下一首",
                         createPendingIntent(ACTION_NEXT)
                     )
+                    // 添加关闭服务按钮
+                    .addAction(
+                        android.R.drawable.ic_menu_close_clear_cancel,
+                        "关闭",
+                        createPendingIntent(ACTION_CLOSE)
+                    )
             }
 
             return builder.build()
         } catch (e: Exception) {
             Log.e(TAG, "构建通知失败: ${e.message}")
+            e.printStackTrace()
 
             // 返回一个最小化的通知
             return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -463,9 +534,13 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                 .setContentTitle("音频播放")
                 .setContentText("正在播放")
                 .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(false)
                 .build()
         }
     }
+
+
+
 
     @SuppressLint("UnspecifiedImmutableFlag")
     private fun createPendingIntent(action: String): PendingIntent {
@@ -479,7 +554,16 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
             PendingIntent.FLAG_UPDATE_CURRENT
         }
 
-        return PendingIntent.getService(this, 0, intent, flags)
+        // 为不同动作设置不同的requestCode，避免冲突
+        val requestCode = when (action) {
+            ACTION_PLAY_PAUSE -> 0
+            ACTION_PREVIOUS -> 1
+            ACTION_NEXT -> 2
+            ACTION_CLOSE -> 3
+            else -> 4
+        }
+
+        return PendingIntent.getService(this, requestCode, intent, flags)
     }
 
     private fun createNotificationChannel() {
@@ -658,6 +742,23 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                 listener.onPlaybackEnded()
             }
         }
+    }
+
+    @SuppressLint("UnspecifiedImmutableFlag")
+    private fun createDeleteIntent(): PendingIntent {
+        Log.d(TAG, "创建删除Intent：滑动清除时停止服务")
+
+        val intent = Intent(this, AudioPlaybackService::class.java).apply {
+            action = ACTION_CLOSE  // 使用现有的关闭动作
+        }
+
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+
+        return PendingIntent.getService(this, 2, intent, flags)
     }
 
     override fun onAudioBuffering(isBuffering: Boolean) {

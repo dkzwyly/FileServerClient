@@ -18,6 +18,7 @@ import android.view.animation.AnimationUtils
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.cardview.widget.CardView
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.graphics.toColorInt
 import com.google.gson.Gson
@@ -48,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private val gson = Gson()
     private var currentServerUrl = ""
     private var isConnected = false
+    private var autoConnectEnabled = true // 默认启用自动连接
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
 
@@ -57,6 +59,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val PREF_AUTO_CONNECT = "auto_connect_enabled"
     }
 
     // 服务连接
@@ -80,8 +83,16 @@ class MainActivity : AppCompatActivity() {
             setContentView(R.layout.activity_main)
             Log.d(TAG, "setContentView completed")
 
-            currentServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
-            Log.d(TAG, "Current server URL: $currentServerUrl")
+            // 检查是否从intent传入服务器地址
+            val intentServerUrl = intent.getStringExtra("SERVER_URL")
+            if (!intentServerUrl.isNullOrEmpty()) {
+                currentServerUrl = intentServerUrl
+                Log.d(TAG, "从Intent获取服务器地址: $currentServerUrl")
+            } else {
+                // 从SharedPreferences加载自动连接设置
+                autoConnectEnabled = sharedPreferences.getBoolean(PREF_AUTO_CONNECT, true)
+                Log.d(TAG, "自动连接设置: $autoConnectEnabled")
+            }
 
             // 初始化音频后台管理器
             audioBackgroundManager = AudioBackgroundManager(this)
@@ -90,10 +101,46 @@ class MainActivity : AppCompatActivity() {
             loadConnectionHistory()
             setupHistoryListView()
 
+            // 如果没有从intent传入服务器地址，尝试自动连接
+            if (intentServerUrl.isNullOrEmpty() && autoConnectEnabled && connectionHistory.isNotEmpty()) {
+                // 延迟一小段时间再自动连接，确保UI已经初始化完成
+                coroutineScope.launch {
+                    delay(500) // 延迟500毫秒
+                    autoConnectToLastServer()
+                }
+            }
+
             Log.d(TAG, "onCreate completed successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Error in onCreate: ${e.message}", e)
             throw e
+        }
+    }
+
+    /**
+     * 自动连接到最近一次连接的服务器
+     */
+    private fun autoConnectToLastServer() {
+        if (connectionHistory.isEmpty()) {
+            Log.d(TAG, "没有连接历史记录，跳过自动连接")
+            return
+        }
+
+        // 获取最近一次连接的服务器
+        val lastConnection = connectionHistory.first()
+        Log.d(TAG, "尝试自动连接到最近服务器: ${lastConnection.url}")
+
+        // 更新UI显示
+        serverUrlEditText.setText(lastConnection.url)
+
+        // 显示自动连接提示
+        showToast("正在自动连接到上次服务器...")
+
+        // 执行连接
+        coroutineScope.launch {
+            // 延迟一小段时间，让用户看到提示
+            delay(1000)
+            connectToServer(lastConnection.url)
         }
     }
 
@@ -114,8 +161,35 @@ class MainActivity : AppCompatActivity() {
                 showToast("文件服务器客户端 v1.0")
                 true
             }
+            R.id.menu_auto_connect -> {
+                // 切换自动连接设置
+                autoConnectEnabled = !autoConnectEnabled
+                sharedPreferences.edit {
+                    putBoolean(PREF_AUTO_CONNECT, autoConnectEnabled)
+                }
+                val status = if (autoConnectEnabled) "启用" else "禁用"
+                showToast("已${status}自动连接")
+                // 更新菜单项显示
+                item.isChecked = autoConnectEnabled
+                true
+            }
             else -> super.onOptionsItemSelected(item)
         }
+    }
+
+    // 在创建菜单时设置自动连接菜单项状态
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+        val autoConnectItem = menu.findItem(R.id.menu_auto_connect)
+        if (autoConnectItem != null) {
+            autoConnectItem.isChecked = autoConnectEnabled
+            val iconRes = if (autoConnectEnabled) {
+                R.drawable.ic_auto_connect_on
+            } else {
+                R.drawable.ic_auto_connect_off
+            }
+            autoConnectItem.icon = ContextCompat.getDrawable(this, iconRes)
+        }
+        return super.onPrepareOptionsMenu(menu)
     }
 
     private fun openSettings() {
@@ -185,6 +259,15 @@ class MainActivity : AppCompatActivity() {
                     overrideActivityTransition()
                 } else {
                     showToast("请先连接到服务器")
+                }
+            }
+
+            // 如果当前已经有服务器地址（从Intent传入），则自动连接
+            if (!currentServerUrl.isNullOrEmpty()) {
+                serverUrlEditText.setText(currentServerUrl)
+                coroutineScope.launch {
+                    delay(300) // 延迟一小段时间
+                    connectToServer()
                 }
             }
 
@@ -280,11 +363,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 连接到服务器（使用EditText中的地址）
+     */
     private fun connectToServer() {
         val serverInput = serverUrlEditText.text.toString().trim()
-        Log.d(TAG, "Connecting to server: $serverInput")
+        connectToServer(serverInput)
+    }
 
-        if (serverInput.isEmpty()) {
+    /**
+     * 连接到指定服务器
+     */
+    private fun connectToServer(serverUrl: String) {
+        Log.d(TAG, "Connecting to server: $serverUrl")
+
+        if (serverUrl.isEmpty()) {
             showToast("请输入服务器地址")
             serverUrlEditText.requestFocus()
             return
@@ -297,16 +390,16 @@ class MainActivity : AppCompatActivity() {
 
             try {
                 val success = withContext(Dispatchers.IO) {
-                    fileServerService.testConnection(serverInput)
+                    fileServerService.testConnection(serverUrl)
                 }
 
                 if (success) {
-                    currentServerUrl = serverInput
+                    currentServerUrl = serverUrl
                     isConnected = true
 
                     updateConnectionStatus("已连接", "#4CAF50")
                     showQuickActions(true)
-                    addToConnectionHistory(serverInput)
+                    addToConnectionHistory(serverUrl)
 
                     showToast("✅ 连接成功！")
 
