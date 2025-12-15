@@ -37,7 +37,7 @@ class GestureControlManager(
     var volumeSensitivity = 1.2f
     var brightnessSensitivity = 0.6f
 
-    private val hideControlRunnable = Runnable { hideControlOverlay() }
+    // 注意：完全移除了 hideControlRunnable 和延迟隐藏逻辑
 
     // 监听器接口
     interface GestureListener {
@@ -69,9 +69,6 @@ class GestureControlManager(
 
                 // 更新当前系统音量状态
                 currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-
-                // 取消所有延迟任务
-                handler.removeCallbacks(hideControlRunnable)
             }
 
             MotionEvent.ACTION_MOVE -> {
@@ -113,13 +110,8 @@ class GestureControlManager(
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                // 如果是水平滑动结束，快速隐藏控制栏
-                if (isSwiping && swipeRegion == 1) {
-                    handler.postDelayed({ hideControlOverlay() }, 500)
-                } else {
-                    // 其他滑动立即隐藏
-                    hideControlOverlay()
-                }
+                // 关键修改：所有手势控制结束后，立即隐藏控制提示
+                hideControlOverlay()
 
                 // 重置状态
                 isSwiping = false
@@ -187,9 +179,7 @@ class GestureControlManager(
         controlContainer.visibility = LinearLayout.VISIBLE
         gestureListener?.onControlOverlayShow(text, iconRes)
 
-        // 2秒后自动隐藏
-        handler.removeCallbacks(hideControlRunnable)
-        handler.postDelayed(hideControlRunnable, 2000)
+        // 注意：完全移除了延迟隐藏逻辑
     }
 
     private fun hideControlOverlay() {
@@ -197,7 +187,7 @@ class GestureControlManager(
     }
 
     fun clear() {
-        handler.removeCallbacks(hideControlRunnable)
+        // 注意：没有移除任何Runnable
         controlContainer.visibility = LinearLayout.GONE
         isSwiping = false
         swipeRegion = -1

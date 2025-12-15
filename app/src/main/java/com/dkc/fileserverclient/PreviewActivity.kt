@@ -1,7 +1,9 @@
 package com.dkc.fileserverclient
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.drawable.Animatable
 import android.media.AudioManager
 import android.os.Build
@@ -10,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.webkit.WebView
@@ -45,6 +48,9 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var textContainer: FrameLayout
     private lateinit var generalContainer: FrameLayout
     private lateinit var errorTextView: TextView
+
+    private var longPressStartTime: Long = 0
+    private var originalSpeed: Float = 1.0f
 
     // 图片预览组件
     private lateinit var imagePreview: ImageView
@@ -119,6 +125,14 @@ class PreviewActivity : AppCompatActivity(),
     // 当前播放类型
     private var currentPlaybackType: PlaybackType? = null
 
+    // 手势控制管理器
+    private lateinit var gestureControlManager: GestureControlManager
+
+    // 手势控制UI组件
+    private lateinit var controlOverlay: TextView
+    private lateinit var controlIcon: ImageView
+    private lateinit var controlContainer: LinearLayout
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_preview)
@@ -126,6 +140,7 @@ class PreviewActivity : AppCompatActivity(),
         initViews()
         setupIntentData()
         initManagers()
+        setupGestureControlManager()
         setupGestureDetector()
         setupEventListeners()
         loadPreview()
@@ -243,6 +258,112 @@ class PreviewActivity : AppCompatActivity(),
                 generalLoadingProgress.visibility = View.GONE
             }
         }
+    }
+
+    private fun setupGestureControlManager() {
+        // 获取音频管理器
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+        // 创建控制UI组件 - 修改：移除背景色
+        controlOverlay = TextView(this).apply {
+            text = ""
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setShadowLayer(2f, 1f, 1f, Color.BLACK) // 添加文字阴影提高可读性
+        }
+
+        controlIcon = ImageView(this)
+
+        controlContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            // 移除了背景色设置
+            visibility = View.GONE
+
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            params.gravity = Gravity.CENTER
+
+            // 为图标和文字添加内边距
+            val iconParams = LinearLayout.LayoutParams(
+                48, // 图标大小
+                48
+            )
+            iconParams.gravity = Gravity.CENTER
+            iconParams.setMargins(0, 0, 0, 8) // 图标下方添加间距
+
+            val textParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            textParams.gravity = Gravity.CENTER
+
+            addView(controlIcon, iconParams)
+            addView(controlOverlay, textParams)
+        }
+
+        // 添加到mediaContainer
+        mediaContainer.addView(controlContainer)
+
+        // 获取显示宽度和区域宽度
+        val displayWidth = resources.displayMetrics.widthPixels
+        val regionWidth = displayWidth / 3
+
+        // 创建手势控制管理器
+        gestureControlManager = GestureControlManager(
+            activity = this,
+            handler = handler,
+            audioManager = audioManager,
+            controlOverlay = controlOverlay,
+            controlIcon = controlIcon,
+            controlContainer = controlContainer,
+            regionWidth = regionWidth
+        )
+
+        // 设置手势监听器
+        gestureControlManager.setGestureListener(object : GestureControlManager.GestureListener {
+            override fun onProgressControl(deltaX: Float, displayWidth: Int) {
+                val duration = mediaPlaybackController.getDuration()
+                if (duration > 0) {
+                    val deltaProgress = (deltaX / displayWidth) * duration * 0.5f // 灵敏度系数
+                    val currentPosition = mediaPlaybackController.getCurrentPosition()
+                    var newPosition = currentPosition + deltaProgress.toLong()
+                    if (newPosition < 0) newPosition = 0
+                    if (newPosition > duration) newPosition = duration
+                    mediaPlaybackController.seekTo(newPosition)
+
+                    // 更新控制条显示
+                    gestureControlManager.showControlOverlay(
+                        "进度: ${formatTime(newPosition)} / ${formatTime(duration)}",
+                        android.R.drawable.ic_media_play
+                    )
+
+                    // 更新进度条UI
+                    val progress = if (duration > 0) (newPosition * 1000 / duration).toInt() else 0
+                    seekBar.progress = progress
+                    currentTimeTextView.text = formatTime(newPosition)
+                    durationTextView.text = formatTime(duration)
+                }
+            }
+
+            override fun onControlOverlayShow(text: String, iconRes: Int) {
+                // 控制条显示时的额外处理
+                Log.d("PreviewActivity", "显示控制条: $text")
+
+                // 确保控制条显示在前面
+                controlContainer.bringToFront()
+            }
+
+            override fun onSeekBarProgressUpdate(position: Long, duration: Long) {
+                // 更新进度条
+                seekBar.progress = (position * 1000 / duration).toInt()
+                currentTimeTextView.text = formatTime(position)
+                durationTextView.text = formatTime(duration)
+            }
+        })
     }
 
     private fun setupIntentData() {
@@ -389,44 +510,63 @@ class PreviewActivity : AppCompatActivity(),
             }
 
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                if (!isLongPressDetected) {
-                    handleSingleTap()
+                // 处理单击：切换控制栏显示/隐藏
+                if (currentFileType == "video" || currentFileType == "audio") {
+                    toggleControlsVisibilityWithClick()
                 }
                 return true
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                if (!isLongPressDetected) {
-                    handleDoubleTap()
+                // 双击：播放/暂停
+                if (currentFileType == "video" || currentFileType == "audio") {
+                    mediaPlaybackController.togglePlayback()
                 }
                 return true
             }
 
             override fun onLongPress(e: MotionEvent) {
+                // 长按：二倍速播放
                 handleLongPress()
             }
         })
 
+        // 启用长按检测
         gestureDetector.setIsLongpressEnabled(true)
 
         // 为媒体容器设置触摸监听
         mediaContainer.setOnTouchListener { _, event ->
             val handledByGesture = gestureDetector.onTouchEvent(event)
 
+            // 传递触摸事件给手势控制管理器
+            gestureControlManager.handleTouchEvent(event, mediaContainer.width)
+
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    // 重置长按状态
                     isLongPressDetected = false
+                    gestureControlManager.setupAudioManager()
+
+                    // 记录原始速度
+                    originalSpeed = mediaPlaybackController.getPlaybackSpeed()
                 }
+
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // 如果长按被检测到，恢复原始速度
                     if (isLongPressDetected) {
+                        mediaPlaybackController.setPlaybackSpeed(originalSpeed)
+                        Log.d("PreviewActivity", "长按结束，恢复原始速度: $originalSpeed")
                         isLongPressDetected = false
+
+                        // 长按结束后不显示控制栏
+                        return@setOnTouchListener true
                     }
                 }
             }
             true
         }
 
-        // 为图片容器添加左右滑动手势检测
+        // 为图片容器添加左右滑动手势检测（保持不变）
         imagePreview.setOnTouchListener(object : View.OnTouchListener {
             private var startX = 0f
             private val SWIPE_THRESHOLD = 100f
@@ -459,42 +599,60 @@ class PreviewActivity : AppCompatActivity(),
         })
     }
 
+    private fun handleLongPress() {
+        isLongPressDetected = true
+
+        if (currentFileType == "video" || currentFileType == "audio") {
+            // 长按二倍速播放
+            val currentSpeed = mediaPlaybackController.getPlaybackSpeed()
+            if (currentSpeed < 2.0f) {
+                mediaPlaybackController.setPlaybackSpeed(2.0f)
+                Log.d("PreviewActivity", "长按开始，设置为二倍速，原始速度: $originalSpeed")
+            }
+        }
+    }
+
     private fun handleSingleTap() {
         if (isLongPressDetected) {
             return
         }
 
         if (fullscreenManager.isFullscreen()) {
+            // 全屏模式下，单击切换控制栏显示/隐藏
             toggleControlsVisibility()
         } else {
             if (currentFileType == "video" || currentFileType == "audio") {
-                mediaPlaybackController.togglePlayback()
+                // 非全屏模式下，单击切换控制栏显示/隐藏
+                toggleControlsVisibilityWithClick()
             }
         }
     }
 
-    private fun handleDoubleTap() {
-        if (isLongPressDetected) {
-            return
-        }
-
-        if (currentFileType == "video" || currentFileType == "audio") {
-            mediaPlaybackController.togglePlayback()
+    // 处理单击显示/隐藏控制栏（无自动隐藏）
+    private fun toggleControlsVisibilityWithClick() {
+        if (mediaControls.visibility == View.VISIBLE) {
+            mediaControls.visibility = View.GONE
+            // 同时隐藏手势控制提示框
+            controlContainer.visibility = View.GONE
+        } else {
+            mediaControls.visibility = View.VISIBLE
+            // 确保控制条显示在前面
+            mediaControls.bringToFront()
         }
     }
 
-    private fun handleLongPress() {
-        // 长按处理（如果需要）
-        isLongPressDetected = true
-    }
-
+    // 修改原有的toggleControlsVisibility方法（全屏模式使用）
     private fun toggleControlsVisibility() {
         if (mediaControls.visibility == View.VISIBLE) {
             mediaControls.visibility = View.GONE
+            controlContainer.visibility = View.GONE
         } else {
             mediaControls.visibility = View.VISIBLE
+            mediaControls.bringToFront()
         }
     }
+
+
 
     private fun setupEventListeners() {
         backButton.setOnClickListener {
@@ -942,7 +1100,6 @@ class PreviewActivity : AppCompatActivity(),
         Log.d("PreviewActivity", "歌词加载成功: title=$title, 当前歌曲名=${currentAudioTrack?.name}, 歌词标题=${lyricsTitle.text}")
 
         lyricsManager.startLyricsUpdates()
-        showToast("歌词加载成功")
     }
 
     override fun onLyricsUpdated(currentLine: String?, nextLine: String?) {
@@ -1384,11 +1541,13 @@ class PreviewActivity : AppCompatActivity(),
         return null
     }
 
-
     override fun onDestroy() {
         super.onDestroy()
 
         Log.d("PreviewActivity", "onDestroy: 开始销毁，文件类型: $currentFileType")
+
+        // 清理手势控制管理器
+        gestureControlManager.clear()
 
         // 让播放器自己决定如何处理销毁
         if (currentFileType == "video" || currentFileType == "audio") {

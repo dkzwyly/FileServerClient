@@ -467,9 +467,16 @@ class AudioPlaybackController(
     override fun getPlaylist(): List<MediaPlaybackItem> = playlist
 
     override fun setPlaybackSpeed(speed: Float) {
+        Log.d(TAG, "设置播放速度: $speed")
         playbackSpeed = speed
         // TODO: 通过后台服务设置播放速度
+        // audioBackgroundManager?.setPlaybackSpeed(speed)
         notifyPlaybackStateChange()
+    }
+
+    override fun getPlaybackSpeed(): Float {
+        Log.d(TAG, "获取播放速度: $playbackSpeed")
+        return playbackSpeed
     }
 
     override fun setRepeatMode(mode: RepeatMode) {

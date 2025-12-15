@@ -182,7 +182,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
-            android:background="#80000000"
+            android:background="@android:color/transparent"
             android:orientation="horizontal"
             android:paddingVertical="12dp"
             android:paddingHorizontal="16dp"

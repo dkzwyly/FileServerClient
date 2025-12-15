@@ -130,6 +130,10 @@ interface MediaPlaybackController {
      * @param speed 播放速度（0.5x, 1.0x, 1.5x, 2.0x等）
      */
     fun setPlaybackSpeed(speed: Float)
+    /**
+     * 获取当前播放速度
+     */
+    fun getPlaybackSpeed(): Float
 
     /**
      * 设置重复模式

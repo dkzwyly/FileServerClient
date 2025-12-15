@@ -344,6 +344,11 @@ class VideoPlaybackController(
         notifyPlaybackStateChange()
     }
 
+    override fun getPlaybackSpeed(): Float {
+        Log.d("VideoPlaybackController", "获取播放速度: $playbackSpeed")
+        return playbackSpeed
+    }
+
     override fun setRepeatMode(mode: RepeatMode) {
         repeatMode = mode
         when (mode) {
