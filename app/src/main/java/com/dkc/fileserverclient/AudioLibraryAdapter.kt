@@ -10,7 +10,8 @@ import androidx.recyclerview.widget.RecyclerView
 class AudioLibraryAdapter(
     private val serverUrl: String,
     private val audioItems: List<FileSystemItem>,
-    private val onAudioClick: (FileSystemItem) -> Unit
+    private val onAudioClick: (FileSystemItem) -> Unit,
+    private val onAudioLongClick: (FileSystemItem) -> Unit
 ) : RecyclerView.Adapter<AudioLibraryAdapter.AudioViewHolder>() {
 
     class AudioViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -41,6 +42,11 @@ class AudioLibraryAdapter(
         // 设置点击事件
         holder.itemView.setOnClickListener {
             onAudioClick(audioItem)
+        }
+
+        holder.itemView.setOnLongClickListener {
+            onAudioLongClick(audioItem)
+            true
         }
     }
 

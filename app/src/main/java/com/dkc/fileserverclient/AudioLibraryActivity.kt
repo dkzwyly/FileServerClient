@@ -73,6 +73,10 @@ class AudioLibraryActivity : AppCompatActivity() {
         loadAudios()
         // 初始化歌单列表（空列表）
         updatePlaylistUI()
+        // 初始化歌单管理器
+        PlaylistManager.initialize(this)
+        // 加载歌单
+        loadPlaylists()
     }
 
     private fun initViews() {
@@ -116,15 +120,21 @@ class AudioLibraryActivity : AppCompatActivity() {
         playlistRecyclerView.layoutManager = LinearLayoutManager(this)
 
         // 初始化音频适配器
-        audioAdapter = AudioLibraryAdapter(currentServerUrl, filteredAudioList) { audioItem ->
-            playAudio(audioItem)
-        }
+        audioAdapter = AudioLibraryAdapter(
+            currentServerUrl,
+            filteredAudioList,
+            onAudioClick = { audioItem -> playAudio(audioItem) },
+            onAudioLongClick = { audioItem -> showAddToPlaylistDialog(audioItem) }
+        )
         audioRecyclerView.adapter = audioAdapter
 
-        // 初始化歌单适配器（暂时使用空列表）
+        // 初始化歌单适配器
         playlistAdapter = PlaylistAdapter(playlistList) { playlist ->
-            // TODO: 打开歌单详情页面
-            showToast("打开歌单: ${playlist.name}")
+            val intent = Intent(this, PlaylistDetailActivity::class.java).apply {
+                putExtra("PLAYLIST_ID", playlist.id)
+                putExtra("SERVER_URL", currentServerUrl)
+            }
+            startActivity(intent)
         }
         playlistRecyclerView.adapter = playlistAdapter
 
@@ -143,6 +153,12 @@ class AudioLibraryActivity : AppCompatActivity() {
         playlistTab.setOnClickListener {
             switchToTab(TabType.PLAYLISTS)
         }
+    }
+
+    private fun loadPlaylists() {
+        playlistList.clear()
+        playlistList.addAll(PlaylistManager.getAllPlaylists())
+        updatePlaylistUI()
     }
 
     private fun switchToTab(tabType: TabType) {
@@ -201,6 +217,30 @@ class AudioLibraryActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun showAddToPlaylistDialog(audioItem: FileSystemItem) {
+        val playlists = PlaylistManager.getAllPlaylists()
+        if (playlists.isEmpty()) {
+            showToast("请先创建歌单")
+            return
+        }
+
+        val playlistNames = playlists.map { it.name }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("添加到歌单")
+            .setItems(playlistNames) { _, which ->
+                val selectedPlaylist = playlists[which]
+                val audioTrack = AudioTrack.fromFileSystemItem(audioItem, currentServerUrl)
+                val added = PlaylistManager.addTrackToPlaylist(selectedPlaylist.id, audioTrack)
+                if (added) {
+                    showToast("已添加到歌单 \"${selectedPlaylist.name}\"")
+                } else {
+                    showToast("歌曲已存在于该歌单")
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun showSearchContainer() {
@@ -379,19 +419,10 @@ class AudioLibraryActivity : AppCompatActivity() {
     }
 
     private fun createNewPlaylist(name: String) {
-        // 创建新歌单
-        val newPlaylist = Playlist(
-            id = "playlist_${System.currentTimeMillis()}",
-            name = name,
-            tracks = emptyList(),
-            currentIndex = 0
-        )
-
+        val newPlaylist = PlaylistManager.createPlaylist(name)
         playlistList.add(newPlaylist)
         playlistAdapter.notifyItemInserted(playlistList.size - 1)
         updatePlaylistUI()
-
-        // TODO: 保存到数据库或SharedPreferences
         showToast("歌单 '$name' 创建成功")
     }
 
