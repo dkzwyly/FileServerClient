@@ -129,13 +129,23 @@ class AudioLibraryActivity : AppCompatActivity() {
         audioRecyclerView.adapter = audioAdapter
 
         // 初始化歌单适配器
-        playlistAdapter = PlaylistAdapter(playlistList) { playlist ->
-            val intent = Intent(this, PlaylistDetailActivity::class.java).apply {
-                putExtra("PLAYLIST_ID", playlist.id)
-                putExtra("SERVER_URL", currentServerUrl)
+        // 初始化歌单适配器
+        playlistAdapter = PlaylistAdapter(
+            playlists = playlistList,
+            onPlaylistClick = { playlist ->
+                val intent = Intent(this, PlaylistDetailActivity::class.java).apply {
+                    putExtra("PLAYLIST_ID", playlist.id)
+                    putExtra("SERVER_URL", currentServerUrl)
+                }
+                startActivity(intent)
+            },
+            onRenameClick = { playlist ->
+                showRenamePlaylistDialog(playlist)
+            },
+            onDeleteClick = { playlist ->
+                showDeletePlaylistDialog(playlist)
             }
-            startActivity(intent)
-        }
+        )
         playlistRecyclerView.adapter = playlistAdapter
 
         // 新建歌单按钮
@@ -238,6 +248,54 @@ class AudioLibraryActivity : AppCompatActivity() {
                 } else {
                     showToast("歌曲已存在于该歌单")
                 }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+
+    private fun showRenamePlaylistDialog(playlist: Playlist) {
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("重命名歌单")
+
+        val input = EditText(this)
+        input.setText(playlist.name)
+        input.hint = "输入新歌单名称"
+        builder.setView(input)
+
+        builder.setPositiveButton("确定") { dialog, which ->
+            val newName = input.text.toString().trim()
+            if (newName.isNotEmpty() && newName != playlist.name) {
+                // 调用 PlaylistManager 重命名
+                val success = PlaylistManager.renamePlaylist(playlist.id, newName)
+                if (success) {
+                    // 重新加载歌单
+                    playlistList.clear()
+                    playlistList.addAll(PlaylistManager.getAllPlaylists())
+                    playlistAdapter.notifyDataSetChanged()
+                    updatePlaylistUI()
+                    showToast("歌单已重命名")
+                }
+            }
+        }
+
+        builder.setNegativeButton("取消") { dialog, which ->
+            dialog.cancel()
+        }
+
+        builder.show()
+    }
+
+    private fun showDeletePlaylistDialog(playlist: Playlist) {
+        AlertDialog.Builder(this)
+            .setTitle("删除歌单")
+            .setMessage("确定要删除歌单 \"${playlist.name}\" 吗？此操作不可撤销。")
+            .setPositiveButton("删除") { _, _ ->
+                PlaylistManager.deletePlaylist(playlist.id)
+                playlistList.remove(playlist)
+                playlistAdapter.notifyDataSetChanged()
+                updatePlaylistUI()
+                showToast("歌单已删除")
             }
             .setNegativeButton("取消", null)
             .show()

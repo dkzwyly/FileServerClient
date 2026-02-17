@@ -4,12 +4,15 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 
 class PlaylistAdapter(
     private var playlists: List<Playlist>,
-    private val onPlaylistClick: (Playlist) -> Unit
+    private val onPlaylistClick: (Playlist) -> Unit,
+    private val onRenameClick: (Playlist) -> Unit,   // 重命名回调
+    private val onDeleteClick: (Playlist) -> Unit    // 删除回调
 ) : RecyclerView.Adapter<PlaylistAdapter.PlaylistViewHolder>() {
 
     class PlaylistViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -28,27 +31,38 @@ class PlaylistAdapter(
     override fun onBindViewHolder(holder: PlaylistViewHolder, position: Int) {
         val playlist = playlists[position]
 
-        // 设置歌单名称
         holder.playlistName.text = playlist.name
-
-        // 设置曲目数量
-        val count = playlist.tracks.size
-        holder.trackCount.text = "$count 首"
-
-        // 设置歌单图标 - 使用唱片样式的占位符
+        holder.trackCount.text = "${playlist.tracks.size} 首"
         holder.playlistIcon.setImageResource(R.drawable.ic_music_image_placeholder)
 
-        // 如果有歌单封面，可以在这里加载（后续扩展）
-
-        // 设置点击事件
+        // 点击整个项进入详情
         holder.itemView.setOnClickListener {
             onPlaylistClick(playlist)
         }
 
-        // 更多按钮点击事件（后续可以添加菜单）
-        holder.moreButton.setOnClickListener {
-            // TODO: 显示歌单操作菜单（重命名、删除等）
+        // 点击更多按钮显示操作菜单
+        holder.moreButton.setOnClickListener { view ->
+            showPopupMenu(view, playlist)
         }
+    }
+
+    private fun showPopupMenu(anchor: View, playlist: Playlist) {
+        val popup = PopupMenu(anchor.context, anchor)
+        popup.menuInflater.inflate(R.menu.playlist_item_menu, popup.menu)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.action_rename -> {
+                    onRenameClick(playlist)
+                    true
+                }
+                R.id.action_delete -> {
+                    onDeleteClick(playlist)
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
     }
 
     override fun getItemCount(): Int = playlists.size
