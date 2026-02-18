@@ -133,6 +133,36 @@ class AudioBackgroundManager(private val context: Context) {
 
 
     /**
+     * 设置重复模式
+     */
+    fun setRepeatMode(mode: RepeatMode) {
+        if (isBound && audioService != null) {
+            audioService?.setRepeatMode(mode)
+        } else {
+            ensureServiceReady { isReady ->
+                if (isReady) {
+                    audioService?.setRepeatMode(mode)
+                }
+            }
+        }
+    }
+
+    /**
+     * 设置随机播放开关
+     */
+    fun setShuffleEnabled(enabled: Boolean) {
+        if (isBound && audioService != null) {
+            audioService?.setShuffleEnabled(enabled)
+        } else {
+            ensureServiceReady { isReady ->
+                if (isReady) {
+                    audioService?.setShuffleEnabled(enabled)
+                }
+            }
+        }
+    }
+
+    /**
      * 获取当前播放状态
      */
     fun getPlaybackStatus(): AudioPlaybackStatus? {

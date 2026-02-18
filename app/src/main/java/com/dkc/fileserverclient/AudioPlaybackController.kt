@@ -481,13 +481,13 @@ class AudioPlaybackController(
 
     override fun setRepeatMode(mode: RepeatMode) {
         repeatMode = mode
-        // TODO: 通过后台服务设置重复模式
+        audioBackgroundManager?.setRepeatMode(mode)
         notifyPlaybackStateChange()
     }
 
     override fun setShuffleEnabled(enabled: Boolean) {
         shuffleEnabled = enabled
-        // TODO: 通过后台服务设置随机播放
+        audioBackgroundManager?.setShuffleEnabled(enabled)
         notifyPlaybackStateChange()
     }
 

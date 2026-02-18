@@ -429,6 +429,14 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         progressListeners.remove(listener)
     }
 
+    fun setRepeatMode(mode: RepeatMode) {
+        audioPlayerManager.setRepeatMode(mode)
+    }
+
+    fun setShuffleEnabled(enabled: Boolean) {
+        audioPlayerManager.setShuffleEnabled(enabled)
+    }
+
     // ==================== 通知管理 ====================
 
     @SuppressLint("UnspecifiedImmutableFlag")
