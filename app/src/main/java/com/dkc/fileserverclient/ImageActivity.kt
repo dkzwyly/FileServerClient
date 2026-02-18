@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import android.view.KeyEvent
 
 class ImageActivity : AppCompatActivity() {
 
@@ -127,6 +128,22 @@ class ImageActivity : AppCompatActivity() {
         imagePreview.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
             true
+        }
+    }
+
+
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        return when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                viewModel.navigateToPrevious()
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                viewModel.navigateToNext()
+                true
+            }
+            else -> super.onKeyDown(keyCode, event)
         }
     }
 
