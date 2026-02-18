@@ -142,22 +142,19 @@ class ImageGalleryAdapter(
             holder.selectionOverlay.isVisible = true
             holder.selectionCheck.isVisible = true
 
-            // 设置选中状态
             if (isSelected) {
                 holder.selectionOverlay.alpha = 0.6f
-                holder.selectionCheck.setImageResource(android.R.drawable.checkbox_on_background)
-                // 使用 setColorFilter 替代 tint
-                holder.selectionCheck.setColorFilter(Color.parseColor("#2196F3")) // 蓝色
+                holder.selectionCheck.setImageResource(R.drawable.ic_checkbox_checked)  // 自定义选中图标
+                // 移除了颜色滤镜，因为图标本身已着色
             } else {
                 holder.selectionOverlay.alpha = 0.3f
-                holder.selectionCheck.setImageResource(android.R.drawable.checkbox_off_background)
-                // 使用 setColorFilter 替代 tint
-                holder.selectionCheck.setColorFilter(Color.WHITE)
+                holder.selectionCheck.setImageResource(R.drawable.ic_checkbox_unchecked) // 自定义未选中图标
+                // 移除了颜色滤镜
             }
         } else {
             holder.selectionOverlay.isVisible = false
             holder.selectionCheck.isVisible = false
-            // 清除选择状态的颜色
+            // 清除可能残留的颜色滤镜（可选）
             holder.selectionCheck.clearColorFilter()
         }
     }
