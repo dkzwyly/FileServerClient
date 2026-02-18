@@ -31,4 +31,9 @@
     <string name="download">下载</string>
     <string name="video_count_format">%d个视频</string>
     <string name="empty_folder">空文件夹</string>
+    <string name="play_mode">播放模式</string>
+    <string name="random_play">随机播放</string>
+    <string name="single_cycle">单曲循环</string>
+    <string name="list_cycle">列表循环</string>
+    <string name="play_mode_set">播放模式已设置为：%s</string>
 </resources>

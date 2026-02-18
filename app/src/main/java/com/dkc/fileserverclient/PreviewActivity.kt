@@ -194,6 +194,10 @@ class PreviewActivity : AppCompatActivity(),
                     directoryPath = currentDirectoryPath
                 )
             }
+
+            // ========== 新增：根据 Intent 设置播放模式 ==========
+            applyPlayModeFromIntent(intent)
+            // ==================================================
         } else if (currentFileType != "image") {
             // 非图片非音频文件使用原有的自动连播逻辑
             autoPlayManager.setupAutoPlay(
@@ -700,6 +704,24 @@ class PreviewActivity : AppCompatActivity(),
 
         lyricsSettingsButton.setOnClickListener {
             showLyricsSettingsDialog()
+        }
+    }
+
+    private fun applyPlayModeFromIntent(intent: Intent) {
+        val playMode = intent.getIntExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
+        when (playMode) {
+            PlaylistDetailActivity.MODE_LIST -> {
+                mediaPlaybackController.setRepeatMode(RepeatMode.ALL)
+                mediaPlaybackController.setShuffleEnabled(false)
+            }
+            PlaylistDetailActivity.MODE_SINGLE -> {
+                mediaPlaybackController.setRepeatMode(RepeatMode.ONE)
+                mediaPlaybackController.setShuffleEnabled(false)
+            }
+            PlaylistDetailActivity.MODE_RANDOM -> {
+                mediaPlaybackController.setRepeatMode(RepeatMode.ALL)   // 列表循环 + 随机
+                mediaPlaybackController.setShuffleEnabled(true)
+            }
         }
     }
 
