@@ -229,24 +229,20 @@ class AudioPlaybackController(
         val isSameTrack = currentTrack?.url == item.url
 
         if (isSameTrack && audioBackgroundManager?.isServiceRunning() == true) {
-            // 同一首歌且服务正在运行，只更新UI，不重新播放
-            Log.d(TAG, "点击了正在播放的同一首歌曲: ${item.name}")
+            // 同一首歌且服务正在运行，保持当前播放进度，仅更新UI
+            Log.d(TAG, "点击了正在播放的同一首歌曲: ${item.name}，保持当前播放进度")
 
             // 获取完整的当前播放状态
             val currentStatus = audioBackgroundManager?.getPlaybackStatus()
             if (currentStatus != null) {
-                Log.d(TAG, "当前播放状态: ${currentStatus.state}, 位置: ${currentStatus.position}/${currentStatus.duration}")
-
-                // 1. 更新当前项目和索引
+                // 更新本地状态
                 currentItem = item
-
-                // 2. 如果有新的播放列表，更新它
                 if (playlist != null && playlist.isNotEmpty()) {
                     this.playlist = playlist
                     currentIndex = startIndex.coerceIn(0, playlist.size - 1)
                 }
 
-                // 3. 从当前状态同步所有信息
+                // 同步播放状态（从服务获取）
                 currentState = currentStatus.state
                 currentPosition = currentStatus.position
                 currentDuration = currentStatus.duration
@@ -254,25 +250,11 @@ class AudioPlaybackController(
                 repeatMode = currentStatus.repeatMode
                 shuffleEnabled = currentStatus.shuffleEnabled
 
-                // 重要：如果当前是暂停状态，不要自动恢复播放
-                // 保持当前的播放/暂停状态，不发送任何控制命令
-
-                // 4. 通知UI更新
-                // 先通知轨道变化（这会更新歌词标题等）
+                // 通知UI更新（轨道变化和状态变化）
                 notifyTrackChanged(item, currentIndex)
-
-                // 再通知状态变化（这会更新播放/暂停按钮、进度等）
                 notifyPlaybackStateChange()
-
-                // 最后通知进度更新（这会更新进度条）
-                notifyProgressUpdate(currentPosition, currentDuration)
-
-                Log.d(TAG, "UI已更新：状态=${currentState}, 位置=${currentPosition}/${currentDuration}")
-            } else {
-                Log.w(TAG, "无法获取当前播放状态")
             }
-
-            return  // 重要：直接返回，不重新播放
+            return  // 不执行任何播放控制命令
         }
 
         // 如果不是同一首歌，执行正常播放流程
@@ -332,8 +314,8 @@ class AudioPlaybackController(
         Log.d(TAG, "play() 检查同一首歌: isSameTrack=$isSameTrack, currentUrl=${currentTrack?.url}, newUrl=$url")
 
         if (isSameTrack && audioBackgroundManager?.isServiceRunning() == true) {
-            // 同一首歌且服务正在运行
-            Log.d(TAG, "点击了正在播放的同一首歌曲")
+            // 同一首歌且服务正在运行，保持当前播放进度
+            Log.d(TAG, "点击了正在播放的同一首歌曲，保持当前播放进度")
 
             // 获取当前播放状态
             val currentStatus = audioBackgroundManager?.getPlaybackStatus()
@@ -350,11 +332,7 @@ class AudioPlaybackController(
                 // 通知UI更新
                 notifyPlaybackStateChange()
                 notifyProgressUpdate(currentPosition, currentDuration)
-
-                Log.d(TAG, "已更新UI状态：${status.state}, 位置：${status.position}/${status.duration}")
             }
-
-            // 关键：不发送任何播放/暂停命令，保持当前状态
             return
         }
 

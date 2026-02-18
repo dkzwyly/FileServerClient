@@ -17,7 +17,7 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.util.*
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
 @UnstableApi
@@ -47,6 +47,8 @@ class ExoAudioPlayerManager(
     private val playbackLock = Any()
     private var isPlayingNext = false
     private var isPlayingPrevious = false
+    // 标记是否正在手动操作，防止自动切换干扰
+    private var isManualOperation = false
 
     // 监听器
     private val playbackListeners = CopyOnWriteArrayList<AudioPlaybackListener>()
@@ -107,7 +109,6 @@ class ExoAudioPlayerManager(
                         notifyBuffering(false)
                         startProgressUpdates()
 
-                        // 自动开始播放
                         if (currentState == PlaybackState.LOADING) {
                             exoPlayer?.playWhenReady = true
                             updateState(PlaybackState.PLAYING, null)
@@ -117,8 +118,7 @@ class ExoAudioPlayerManager(
                         updateState(PlaybackState.ENDED, null)
                         notifyPlaybackEnded()
                         stopProgressUpdates()
-
-                        // 根据重复模式处理
+                        // 播放结束，根据模式手动触发下一首
                         handlePlaybackEnded()
                     }
                 }
@@ -137,14 +137,31 @@ class ExoAudioPlayerManager(
                 }
             }
 
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                // 媒体项切换
-                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
-                    currentIndex >= 0 && currentIndex < playlist.size) {
-                    notifyTrackChanged(playlist[currentIndex], currentIndex)
+            // 移除 onMediaItemTransition 监听，避免干扰 currentIndex 的更新
+        })
+    }
+
+    // 处理播放结束，根据模式决定是否自动下一首
+    private fun handlePlaybackEnded() {
+        if (isManualOperation) return // 如果是手动操作触发的结束，不自动切换
+
+        synchronized(playbackLock) {
+            if (playlist.isEmpty()) return
+
+            when (repeatMode) {
+                RepeatMode.ONE -> {
+                    // 单曲循环，重新播放当前曲目
+                    playAtIndex(currentIndex)
+                }
+                RepeatMode.ALL -> {
+                    // 列表循环，播放下一个
+                    playNext()
+                }
+                RepeatMode.NONE -> {
+                    // 不循环，停止
                 }
             }
-        })
+        }
     }
 
     override fun release() {
@@ -161,39 +178,31 @@ class ExoAudioPlayerManager(
     // ==================== 播放控制 ====================
 
     override fun play(track: AudioTrack) {
-        // 检查是否是同一首歌曲
-        val isSameTrack = currentTrack?.url == track.url
+        // 获取目标曲目在播放列表中的索引
+        val targetIndex = playlist.indexOfFirst { it.id == track.id }
 
-        if (isSameTrack && currentState != PlaybackState.IDLE && currentState != PlaybackState.ENDED) {
-            // 同一首歌且正在播放或暂停，仅更新UI
-            Log.d("ExoAudioPlayerManager", "同一首歌已正在播放：${track.name}")
+        // 如果是同一首歌且索引相同，且播放器已准备就绪（非空闲/结束），则仅更新UI，不重新播放
+        if (currentTrack?.url == track.url && currentIndex == targetIndex && currentState != PlaybackState.IDLE && currentState != PlaybackState.ENDED) {
+            Log.d("ExoAudioPlayerManager", "点击了正在播放的同一首歌曲（索引相同）: ${track.name}，保持当前播放进度")
 
-            // 更新当前轨道和索引
+            // 确保 currentTrack 引用正确
             currentTrack = track
-
-            // 更新播放列表中的索引
-            val index = playlist.indexOfFirst { it.id == track.id }
-            if (index != -1) {
-                currentIndex = index
+            // 确保索引一致
+            if (targetIndex != -1) {
+                currentIndex = targetIndex
             }
 
-            // 通知轨道变更（这会更新UI）
+            // 通知UI更新（刷新歌词、标题等）
             notifyTrackChanged(track, currentIndex)
-
-            // 获取当前状态并通知
-            val status = getPlaybackStatus()
             notifyPlaybackStateChange()
-
-            // 更新进度显示
-            val currentPos = exoPlayer?.currentPosition ?: 0L
-            val duration = exoPlayer?.duration ?: 0L
-            notifyProgressUpdate(currentPos, duration)
-
-            return  // 重要：直接返回，不重新播放
+            return // 直接返回，不执行任何播放/跳转操作
         }
 
-        // 如果不是同一首歌，执行正常播放流程
+        // 正常播放新曲目
         currentTrack = track
+        if (targetIndex != -1) {
+            currentIndex = targetIndex
+        }
         updateState(PlaybackState.LOADING, null)
 
         try {
@@ -201,19 +210,15 @@ class ExoAudioPlayerManager(
             val mediaItem = MediaItem.fromUri(track.url)
             val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
 
+            isManualOperation = true
             exoPlayer?.setMediaSource(mediaSource)
             exoPlayer?.prepare()
+            isManualOperation = false
 
-            // 更新播放列表中的索引
-            val index = playlist.indexOfFirst { it.id == track.id }
-            if (index != -1) {
-                currentIndex = index
-            }
-
-            // 重要：通知轨道变更
             notifyTrackChanged(track, currentIndex)
 
         } catch (e: Exception) {
+            isManualOperation = false
             val errorMessage = "音频加载失败: ${e.message}"
             updateState(PlaybackState.ERROR, errorMessage)
             notifyPlaybackError(errorMessage)
@@ -284,7 +289,6 @@ class ExoAudioPlayerManager(
             val safeIndex = startIndex.coerceIn(0, tracks.size - 1)
             currentIndex = safeIndex
 
-            // 如果当前正在播放，切换到新的播放列表
             if (currentState == PlaybackState.PLAYING || currentState == PlaybackState.PAUSED) {
                 playAtIndex(safeIndex)
             }
@@ -297,33 +301,32 @@ class ExoAudioPlayerManager(
         synchronized(playbackLock) {
             if (isPlayingNext || playlist.isEmpty()) return
             isPlayingNext = true
+            isManualOperation = true
 
             try {
                 val nextIndex = when {
                     shuffleEnabled -> {
-                        // 随机播放逻辑
                         val availableIndices = playlist.indices.toMutableList()
                         availableIndices.remove(currentIndex)
                         if (availableIndices.isEmpty()) currentIndex else availableIndices.random()
                     }
                     repeatMode == RepeatMode.ONE -> currentIndex
                     currentIndex < playlist.size - 1 -> currentIndex + 1
-                    repeatMode == RepeatMode.ALL -> 0  // 循环到开头
+                    repeatMode == RepeatMode.ALL -> 0
                     else -> {
                         isPlayingNext = false
-                        return  // 没有下一首，不播放
+                        return
                     }
                 }
 
-                // 确保索引有效
                 if (nextIndex in playlist.indices) {
-                    currentIndex = nextIndex
                     play(playlist[nextIndex])
                 }
             } finally {
                 handler?.postDelayed({
                     isPlayingNext = false
-                }, 300) // 防止快速连续点击
+                    isManualOperation = false
+                }, 300)
             }
         }
     }
@@ -332,31 +335,31 @@ class ExoAudioPlayerManager(
         synchronized(playbackLock) {
             if (isPlayingPrevious || playlist.isEmpty()) return
             isPlayingPrevious = true
+            isManualOperation = true
 
             try {
                 val prevIndex = when {
                     shuffleEnabled -> {
-                        // 随机播放逻辑
                         val availableIndices = playlist.indices.toMutableList()
                         availableIndices.remove(currentIndex)
                         if (availableIndices.isEmpty()) currentIndex else availableIndices.random()
                     }
                     repeatMode == RepeatMode.ONE -> currentIndex
                     currentIndex > 0 -> currentIndex - 1
-                    repeatMode == RepeatMode.ALL -> playlist.size - 1  // 循环到最后
+                    repeatMode == RepeatMode.ALL -> playlist.size - 1
                     else -> {
                         isPlayingPrevious = false
-                        return  // 没有上一首，不播放
+                        return
                     }
                 }
 
                 if (prevIndex in playlist.indices) {
-                    currentIndex = prevIndex
                     play(playlist[prevIndex])
                 }
             } finally {
                 handler?.postDelayed({
                     isPlayingPrevious = false
+                    isManualOperation = false
                 }, 300)
             }
         }
@@ -366,6 +369,7 @@ class ExoAudioPlayerManager(
         synchronized(playbackLock) {
             if (isPlayingNext || index < 0 || index >= playlist.size) return
             isPlayingNext = true
+            isManualOperation = true
 
             try {
                 currentIndex = index
@@ -373,6 +377,7 @@ class ExoAudioPlayerManager(
             } finally {
                 handler?.postDelayed({
                     isPlayingNext = false
+                    isManualOperation = false
                 }, 300)
             }
         }
@@ -387,25 +392,20 @@ class ExoAudioPlayerManager(
     override fun setPlaybackSpeed(speed: Float) {
         playbackSpeed = speed
         exoPlayer?.playbackParameters = exoPlayer?.playbackParameters?.withSpeed(speed) ?: return
-
-        // 通知状态更新
         notifyPlaybackStateChange()
     }
 
     override fun setRepeatMode(mode: RepeatMode) {
         repeatMode = mode
-        // 同步到ExoPlayer的重复模式
-        exoPlayer?.repeatMode = when(mode) {
-            RepeatMode.NONE -> Player.REPEAT_MODE_OFF
-            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-        }
+        // 禁用 ExoPlayer 的自动重复，由我们手动控制
+        exoPlayer?.repeatMode = Player.REPEAT_MODE_OFF
         notifyPlaybackStateChange()
     }
 
     override fun setShuffleEnabled(enabled: Boolean) {
         shuffleEnabled = enabled
-        exoPlayer?.shuffleModeEnabled = enabled
+        // 禁用 ExoPlayer 的随机，由我们手动控制
+        exoPlayer?.shuffleModeEnabled = false
         notifyPlaybackStateChange()
     }
 
@@ -494,22 +494,11 @@ class ExoAudioPlayerManager(
         currentPosition = position
         currentDuration = duration
 
-        // 通知进度更新
         notifyProgressUpdate(position, duration)
 
-        // 继续下一次更新
         if (currentState == PlaybackState.PLAYING) {
             handler?.postDelayed(updateProgressRunnable, 1000)
         }
-    }
-
-    private fun handlePlaybackEnded() {
-        // 如果是音频模式，且播放列表中有多个曲目，则让服务层处理自动连播
-        // 这里不处理自动连播，避免与服务层的逻辑冲突
-        Log.d("ExoAudioPlayerManager", "播放结束，通知服务层处理")
-
-        // 直接通知播放结束事件，由服务层决定如何处理
-        notifyPlaybackEnded()
     }
 
     // ==================== 通知方法 ====================

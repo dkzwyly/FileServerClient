@@ -666,45 +666,29 @@ class PreviewActivity : AppCompatActivity(),
 
 
     private fun setupEventListeners() {
-        backButton.setOnClickListener {
-            onBackPressed()
-        }
+        backButton.setOnClickListener { onBackPressed() }
+        downloadButton.setOnClickListener { downloadFile() }
+        playPauseButton.setOnClickListener { mediaPlaybackController.togglePlayback() }
 
-        downloadButton.setOnClickListener {
-            downloadFile()
-        }
-
-        playPauseButton.setOnClickListener {
-            mediaPlaybackController.togglePlayback()
-        }
-
+        // 音频模式由媒体播放控制器直接处理，视频模式由 AutoPlayManager 处理
         previousButton.setOnClickListener {
             if (autoPlayManager.isAudioMode()) {
-                // 音频模式由控制器处理
                 mediaPlaybackController.playPrevious()
             } else {
-                // 视频模式使用AutoPlayManager
                 autoPlayManager.playPreviousMedia()
             }
         }
 
         nextButton.setOnClickListener {
             if (autoPlayManager.isAudioMode()) {
-                // 音频模式由控制器处理
                 mediaPlaybackController.playNext()
             } else {
-                // 视频模式使用AutoPlayManager
                 autoPlayManager.playNextMedia()
             }
         }
 
-        fullscreenToggleButton.setOnClickListener {
-            toggleFullscreen()
-        }
-
-        lyricsSettingsButton.setOnClickListener {
-            showLyricsSettingsDialog()
-        }
+        fullscreenToggleButton.setOnClickListener { toggleFullscreen() }
+        lyricsSettingsButton.setOnClickListener { showLyricsSettingsDialog() }
     }
 
     private fun applyPlayModeFromIntent(intent: Intent) {
@@ -1231,7 +1215,6 @@ class PreviewActivity : AppCompatActivity(),
     override fun onPlaybackStateChanged(status: MediaPlaybackStatus) {
         Log.d("PreviewActivity", "播放状态变化: ${status.state}")
 
-        // 更新播放/暂停按钮
         val playPauseIcon = if (status.isPlaying) {
             android.R.drawable.ic_media_pause
         } else {
@@ -1241,29 +1224,26 @@ class PreviewActivity : AppCompatActivity(),
         handler.post {
             playPauseButton.setImageResource(playPauseIcon)
 
-            // 更新文件名显示
-            status.currentItem?.let { item ->
-                if (fileNameTextView.text != item.name) {
-                    fileNameTextView.text = item.name
-                }
-            }
+            // 更新文件名显示（不影响歌词标题）
+           // status.currentItem?.let { item ->
+             //   if (fileNameTextView.text != item.name) {
+            //        fileNameTextView.text = item.name
+             //   }
+           // }
 
-            // 更新歌词标题
-            if (currentFileType == "audio") {
-                status.currentItem?.let { item ->
-                    if (lyricsTitle.text != item.name) {
-                        lyricsTitle.text = item.name
-                        // 重新加载歌词
-                        loadLyricsForCurrentSong()
-                    }
-                }
-            }
+            // 移除歌词标题更新部分 —— 歌词标题已由 onTrackChanged 负责
+            // if (currentFileType == "audio") {
+            //     status.currentItem?.let { item ->
+            //         if (lyricsTitle.text != item.name) {
+            //             lyricsTitle.text = item.name
+            //             loadLyricsForCurrentSong()
+            //         }
+            //     }
+            // }
 
-            // 更新进度显示
+            // 更新进度显示（保持不变）
             if (status.duration > 0) {
                 durationTextView.text = formatTime(status.duration)
-
-                // 更新进度条
                 val progress = if (status.duration > 0) {
                     (status.position * 1000 / status.duration).toInt()
                 } else {
@@ -1287,15 +1267,21 @@ class PreviewActivity : AppCompatActivity(),
     override fun onTrackChanged(item: MediaPlaybackItem, index: Int) {
         Log.d("PreviewActivity", "轨道变化: ${item.name}, 索引: $index")
 
-        // 轨道变化时更新UI
+        // 更新本地状态变量，确保与当前播放曲目一致
+        currentFileName = item.name
+        currentFileUrl = item.url
+        // 如果 item 包含路径信息（从 AudioTrack 转换而来），也更新当前目录路径
+        item.path?.let { currentDirectoryPath = it }
+
         handler.post {
             fileNameTextView.text = item.name
 
             if (currentFileType == "audio") {
+                // 更新当前音频轨道对象
                 currentAudioTrack = item.toAudioTrack()
                 lyricsTitle.text = item.name
 
-                // 重要：确保歌词容器可见
+                // 确保歌词容器可见
                 lyricsContainer.visibility = View.VISIBLE
                 isLyricsVisible = true
 
@@ -1303,14 +1289,14 @@ class PreviewActivity : AppCompatActivity(),
                 currentLyricsLine.text = "正在加载歌词..."
                 nextLyricsLine.text = ""
 
-                // 重新加载歌词
+                // 重新加载歌词（使用更新后的 currentAudioTrack）
                 loadLyricsForCurrentSong()
 
-                // 立即获取当前播放状态并更新UI
+                // 获取当前播放状态并更新播放按钮和进度条
                 val currentStatus = mediaPlaybackController.getPlaybackStatus()
                 Log.d("PreviewActivity", "轨道变化时获取状态: ${currentStatus.state}, 播放中: ${currentStatus.isPlaying}, 位置: ${currentStatus.position}")
 
-                // 更新播放/暂停按钮
+                // 更新播放/暂停按钮图标
                 val playPauseIcon = if (currentStatus.isPlaying) {
                     android.R.drawable.ic_media_pause
                 } else {
@@ -1386,8 +1372,9 @@ class PreviewActivity : AppCompatActivity(),
 
     private fun loadLyricsForCurrentSong() {
         val songPath = getCurrentSongPath()
-        Log.d("PreviewActivity", "加载歌词: 歌曲路径=$songPath, 文件名=$currentFileName, 服务器=$currentServerUrl")
-        lyricsManager.loadLyrics(currentServerUrl, songPath, currentFileName)
+        val songName = currentAudioTrack?.name ?: currentFileName  // 优先用 currentAudioTrack 的名字
+        Log.d("PreviewActivity", "加载歌词: 路径=$songPath, 歌曲名=$songName, 服务器=$currentServerUrl")
+        lyricsManager.loadLyrics(currentServerUrl, songPath, songName)
     }
 
     private fun getCurrentSongPath(): String {
