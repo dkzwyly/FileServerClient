@@ -114,6 +114,14 @@
             android:contentDescription="音频封面"
             android:visibility="gone" />
 
+        <!-- 新增：动态可视化背景 -->
+        <com.dkc.fileserverclient.MusicVisualizerView
+            android:id="@+id/musicVisualizerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+
         <ProgressBar
             android:id="@+id/mediaLoadingProgress"
             android:layout_width="wrap_content"

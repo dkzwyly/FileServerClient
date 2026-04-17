@@ -69,6 +69,7 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var currentTimeTextView: TextView
     private lateinit var durationTextView: TextView
 
+    private lateinit var musicVisualizerView: MusicVisualizerView
     // 歌词显示组件
     private lateinit var lyricsContainer: LinearLayout
     private lateinit var lyricsTitle: TextView
@@ -250,6 +251,7 @@ class PreviewActivity : AppCompatActivity(),
 
         webViewPreview = findViewById(R.id.webViewPreview)
         generalLoadingProgress = findViewById(R.id.generalLoadingProgress)
+        musicVisualizerView = findViewById(R.id.musicVisualizerView)
 
         // 初始化WebView
         setupWebView()
@@ -886,8 +888,10 @@ class PreviewActivity : AppCompatActivity(),
             lyricsContainer.visibility = View.GONE
         } else if (currentFileType == "audio") {
             playerView.visibility = View.GONE
-            audioCoverView.visibility = View.VISIBLE
+            audioCoverView.visibility = View.GONE       // 隐藏原占位图
+            musicVisualizerView.visibility = View.VISIBLE  // 显示可视化背景
             lyricsContainer.visibility = View.VISIBLE
+
 
             // 重置歌词状态
             lyricsManager.clear()
@@ -1240,7 +1244,9 @@ class PreviewActivity : AppCompatActivity(),
             //         }
             //     }
             // }
-
+            if (currentFileType == "audio") {
+                musicVisualizerView.setPlaying(status.isPlaying)
+            }
             // 更新进度显示（保持不变）
             if (status.duration > 0) {
                 durationTextView.text = formatTime(status.duration)
@@ -1291,7 +1297,10 @@ class PreviewActivity : AppCompatActivity(),
 
                 // 重新加载歌词（使用更新后的 currentAudioTrack）
                 loadLyricsForCurrentSong()
-
+                // 确保可视化视图可见
+                musicVisualizerView.visibility = View.VISIBLE
+                // 同步当前播放状态
+                musicVisualizerView.setPlaying(mediaPlaybackController.isPlaying())
                 // 获取当前播放状态并更新播放按钮和进度条
                 val currentStatus = mediaPlaybackController.getPlaybackStatus()
                 Log.d("PreviewActivity", "轨道变化时获取状态: ${currentStatus.state}, 播放中: ${currentStatus.isPlaying}, 位置: ${currentStatus.position}")
@@ -1566,6 +1575,10 @@ class PreviewActivity : AppCompatActivity(),
         // 让播放器自己处理暂停
         if (currentFileType == "video" || currentFileType == "audio") {
             mediaPlaybackController.onActivityPause()
+
+        }
+        if (currentFileType == "audio") {
+            musicVisualizerView.setPlaying(false)
         }
 
         // 只处理UI相关的暂停
@@ -1590,6 +1603,10 @@ class PreviewActivity : AppCompatActivity(),
         // 让播放器自己处理恢复
         if (currentFileType == "video" || currentFileType == "audio") {
             mediaPlaybackController.onActivityResume()
+        }
+
+        if (currentFileType == "audio") {
+            musicVisualizerView.setPlaying(mediaPlaybackController.isPlaying())
         }
 
         // 恢复歌词更新
@@ -1636,6 +1653,10 @@ class PreviewActivity : AppCompatActivity(),
             val keepAlive = currentFileType == "audio"
             mediaPlaybackController.release(keepAlive)
         }
+        if (::musicVisualizerView.isInitialized) {
+            musicVisualizerView.setPlaying(false)
+        }
+
 
         // 清理其他资源（这些与播放器无关）
         coroutineScope.cancel()
