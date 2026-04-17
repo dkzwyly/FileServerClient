@@ -29,6 +29,8 @@ class ExoAudioPlayerManager(
     private var context: Context? = null
     private var handler: Handler? = null
     private var exoPlayer: ExoPlayer? = null
+    private var retryVisualizerCount = 0
+    private var visualizerFailed = false
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
 
     private var currentState = PlaybackState.IDLE
@@ -131,11 +133,51 @@ class ExoAudioPlayerManager(
 
     private fun startVisualizer() {
         if (spectrumListeners.isEmpty()) return
-        if (audioVisualizerHelper == null && exoPlayer != null) {
-            audioVisualizerHelper = AudioVisualizerHelper(exoPlayer!!) { spectrum ->
-                spectrumListeners.forEach { it.onSpectrumData(spectrum) }
+        if (audioVisualizerHelper != null) return
+        if (exoPlayer == null) return
+
+        // 必须在主线程执行
+        handler?.post {
+            // 检查播放器是否处于 READY 状态
+            if (exoPlayer?.playbackState != Player.STATE_READY) {
+                Log.d("ExoAudioPlayerManager", "Player not ready, will retry later")
+                // 延迟重试（最多重试 5 次，每次间隔 300ms）
+                if (retryVisualizerCount < 5) {
+                    retryVisualizerCount++
+                    handler?.postDelayed({ startVisualizer() }, 300)
+                } else {
+                    Log.w("ExoAudioPlayerManager", "Visualizer start retry exhausted, disabled")
+                    visualizerFailed = true
+                }
+                return@post
             }
-            audioVisualizerHelper?.start()
+
+            // 播放器已 READY，再延迟 500ms 启动 Visualizer
+            handler?.postDelayed({
+                try {
+                    if (audioVisualizerHelper != null) return@postDelayed
+                    if (exoPlayer?.playbackState != Player.STATE_READY) {
+                        Log.w("ExoAudioPlayerManager", "Player left READY state, abort visualizer start")
+                        return@postDelayed
+                    }
+                    val sessionId = exoPlayer?.audioSessionId ?: 0
+                    if (sessionId == 0) {
+                        Log.w("ExoAudioPlayerManager", "AudioSessionId is 0, abort")
+                        return@postDelayed
+                    }
+
+                    audioVisualizerHelper = AudioVisualizerHelper(exoPlayer!!) { spectrum ->
+                        spectrumListeners.forEach { it.onSpectrumData(spectrum) }
+                    }
+                    audioVisualizerHelper?.start()
+                    retryVisualizerCount = 0
+                    Log.d("ExoAudioPlayerManager", "Visualizer started successfully after delay")
+                } catch (e: Exception) {
+                    Log.e("ExoAudioPlayerManager", "Failed to start visualizer", e)
+                    visualizerFailed = true
+                    audioVisualizerHelper = null
+                }
+            }, 500) // 延迟 500 毫秒
         }
     }
 

@@ -1,8 +1,10 @@
 package com.dkc.fileserverclient
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.Animatable
 import android.media.AudioManager
@@ -34,6 +36,8 @@ class PreviewActivity : AppCompatActivity(),
     AutoPlayManager.AutoPlayListener,
     MediaPlaybackListener,
     MediaProgressListener {
+    // 在类的顶部添加权限请求码常量
+    private val PERMISSION_REQUEST_RECORD_AUDIO = 100
 
     // UI 组件
     private lateinit var titleBar: LinearLayout
@@ -137,7 +141,7 @@ class PreviewActivity : AppCompatActivity(),
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_preview)
-
+        checkAndRequestRecordAudioPermission()
         initViews()
         setupIntentData()
         initManagers()
@@ -378,7 +382,31 @@ class PreviewActivity : AppCompatActivity(),
             }
         })
     }
+    // 添加权限检查与请求方法
+    private fun checkAndRequestRecordAudioPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_RECORD_AUDIO)
+            } else {
+                // 已有权限，可视化可以正常工作
+                Log.d("PreviewActivity", "RECORD_AUDIO permission already granted")
+            }
+        }
+    }
 
+    // 处理权限请求结果
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_REQUEST_RECORD_AUDIO) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Log.d("PreviewActivity", "RECORD_AUDIO permission granted, visualizer can work")
+                // 可选：重新启动可视化（如果之前因为权限问题失败）
+            } else {
+                Log.w("PreviewActivity", "RECORD_AUDIO permission denied, visualizer disabled")
+                Toast.makeText(this, "录音权限被拒绝，频谱可视化将不可用", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
     private fun setupIntentData() {
         // 从Intent获取文件信息
         currentFileName = intent.getStringExtra("FILE_NAME") ?: "未知文件"
