@@ -80,8 +80,10 @@ class AudioVisualizerHelper(
                 }
             }
             val avg = sum / step
-            spectrum[i] = (avg / 500f).coerceIn(0f, 1f)
+            spectrum[i] = (avg / 50f).coerceIn(0f, 1f)
         }
+        // 反转频谱，使低频在右，高频在左（视觉上高点移到右边）
+        spectrum.reverse()
         mainHandler.post { onSpectrum(spectrum) }
     }
 

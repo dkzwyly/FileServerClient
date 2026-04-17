@@ -214,6 +214,32 @@ class PreviewActivity : AppCompatActivity(),
                 directoryPath = currentDirectoryPath
             )
         }
+        // 临时测试：5秒后模拟频谱数据，检查 MusicVisualizerView 是否工作
+        handler.postDelayed({
+            runOnUiThread {
+                Toast.makeText(this, "模拟频谱数据测试", Toast.LENGTH_SHORT).show()
+                // 生成模拟频谱：32个频段，值从0.1到1.0渐变，然后重复几次形成波动效果
+                val fakeSpectrum = FloatArray(32) { i ->
+                    // 正弦波形模拟动态效果
+                    (Math.sin(System.currentTimeMillis() / 200.0 + i * 0.3) * 0.5 + 0.5).toFloat()
+                }
+                musicVisualizerView.updateSpectrum(fakeSpectrum)
+
+                // 可选：持续几秒钟的动画（每200ms更新一次）
+                object : Runnable {
+                    var count = 0
+                    override fun run() {
+                        if (count++ < 20) { // 4秒
+                            val animatedSpectrum = FloatArray(32) { i ->
+                                (Math.sin(System.currentTimeMillis() / 150.0 + i * 0.4) * 0.8 + 0.2).toFloat()
+                            }
+                            musicVisualizerView.updateSpectrum(animatedSpectrum)
+                            handler.postDelayed(this, 200)
+                        }
+                    }
+                }.run()
+            }
+        }, 5000) // 延迟5秒，确保界面已完全加载
 
         Log.d("PreviewActivity", "初始化完成: fileType=$currentFileType, autoPlayEnabled=${autoPlayManager.isAutoPlayEnabled()}, fromMusicLibrary=$fromMusicLibrary")
     }
