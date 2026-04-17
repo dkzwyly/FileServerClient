@@ -130,6 +130,7 @@ interface MediaPlaybackController {
      * @param speed 播放速度（0.5x, 1.0x, 1.5x, 2.0x等）
      */
     fun setPlaybackSpeed(speed: Float)
+
     /**
      * 获取当前播放速度
      */
@@ -206,6 +207,18 @@ interface MediaPlaybackController {
      * 获取播放视图（仅视频播放器需要）
      */
     fun getPlaybackView(): Any?
+
+    // ==================== 频谱可视化 ====================
+
+    /**
+     * 添加频谱监听器（仅音频播放器有效）
+     */
+    fun addSpectrumListener(listener: AudioSpectrumListener) {}
+
+    /**
+     * 移除频谱监听器
+     */
+    fun removeSpectrumListener(listener: AudioSpectrumListener) {}
 }
 
 /**

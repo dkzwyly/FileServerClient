@@ -1,3 +1,4 @@
+// ExoAudioPlayerManager.kt
 package com.dkc.fileserverclient
 
 import android.content.Context
@@ -30,7 +31,6 @@ class ExoAudioPlayerManager(
     private var exoPlayer: ExoPlayer? = null
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
 
-    // 播放状态
     private var currentState = PlaybackState.IDLE
     private var currentTrack: AudioTrack? = null
     private var currentPosition: Long = 0L
@@ -40,38 +40,32 @@ class ExoAudioPlayerManager(
     private var repeatMode: RepeatMode = RepeatMode.NONE
     private var shuffleEnabled: Boolean = false
 
-    // 播放列表
     private val playlist = mutableListOf<AudioTrack>()
     private var currentIndex: Int = -1
 
     private val playbackLock = Any()
     private var isPlayingNext = false
     private var isPlayingPrevious = false
-    // 标记是否正在手动操作，防止自动切换干扰
     private var isManualOperation = false
 
-    // 监听器
     private val playbackListeners = CopyOnWriteArrayList<AudioPlaybackListener>()
     private val progressListeners = CopyOnWriteArrayList<AudioProgressListener>()
+    private val spectrumListeners = CopyOnWriteArrayList<AudioSpectrumListener>()
 
-    // 进度更新Runnable
+    private var audioVisualizerHelper: AudioVisualizerHelper? = null
+
     private val updateProgressRunnable = Runnable { updateProgress() }
-
-    // ==================== 初始化与基础操作 ====================
 
     override fun initialize(context: Context, handler: Handler) {
         this.context = context
         this.handler = handler
 
         val dataSourceFactory = createUnsafeDataSourceFactory()
-
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(30000, 60000, 1500, 2000)
             .setTargetBufferBytes(-1)
             .build()
-
-        val renderersFactory = DefaultRenderersFactory(context)
-            .setEnableDecoderFallback(true)
+        val renderersFactory = DefaultRenderersFactory(context).setEnableDecoderFallback(true)
 
         exoPlayer = ExoPlayer.Builder(context)
             .setLoadControl(loadControl)
@@ -81,7 +75,6 @@ class ExoAudioPlayerManager(
             .build()
 
         setupPlayerListeners()
-
         updateState(PlaybackState.IDLE, null)
     }
 
@@ -94,9 +87,7 @@ class ExoAudioPlayerManager(
         exoPlayer?.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 when (playbackState) {
-                    Player.STATE_IDLE -> {
-                        updateState(PlaybackState.IDLE, null)
-                    }
+                    Player.STATE_IDLE -> updateState(PlaybackState.IDLE, null)
                     Player.STATE_BUFFERING -> {
                         isBuffering = true
                         updateState(PlaybackState.BUFFERING, null)
@@ -108,17 +99,16 @@ class ExoAudioPlayerManager(
                         updateState(PlaybackState.READY, null)
                         notifyBuffering(false)
                         startProgressUpdates()
-
                         if (currentState == PlaybackState.LOADING) {
                             exoPlayer?.playWhenReady = true
                             updateState(PlaybackState.PLAYING, null)
                         }
+                        startVisualizer()
                     }
                     Player.STATE_ENDED -> {
                         updateState(PlaybackState.ENDED, null)
                         notifyPlaybackEnded()
                         stopProgressUpdates()
-                        // 播放结束，根据模式手动触发下一首
                         handlePlaybackEnded()
                     }
                 }
@@ -136,73 +126,61 @@ class ExoAudioPlayerManager(
                     updateState(newState, null)
                 }
             }
-
-            // 移除 onMediaItemTransition 监听，避免干扰 currentIndex 的更新
         })
     }
 
-    // 处理播放结束，根据模式决定是否自动下一首
-    private fun handlePlaybackEnded() {
-        if (isManualOperation) return // 如果是手动操作触发的结束，不自动切换
+    private fun startVisualizer() {
+        if (spectrumListeners.isEmpty()) return
+        if (audioVisualizerHelper == null && exoPlayer != null) {
+            audioVisualizerHelper = AudioVisualizerHelper(exoPlayer!!) { spectrum ->
+                spectrumListeners.forEach { it.onSpectrumData(spectrum) }
+            }
+            audioVisualizerHelper?.start()
+        }
+    }
 
+    private fun stopVisualizer() {
+        audioVisualizerHelper?.stop()
+        audioVisualizerHelper = null
+    }
+
+    private fun handlePlaybackEnded() {
+        if (isManualOperation) return
         synchronized(playbackLock) {
             if (playlist.isEmpty()) return
-
             when (repeatMode) {
-                RepeatMode.ONE -> {
-                    // 单曲循环，重新播放当前曲目
-                    playAtIndex(currentIndex)
-                }
-                RepeatMode.ALL -> {
-                    // 列表循环，播放下一个
-                    playNext()
-                }
-                RepeatMode.NONE -> {
-                    // 不循环，停止
-                }
+                RepeatMode.ONE -> playAtIndex(currentIndex)
+                RepeatMode.ALL -> playNext()
+                RepeatMode.NONE -> {}
             }
         }
     }
 
     override fun release() {
+        stopVisualizer()
         stopProgressUpdates()
         exoPlayer?.release()
         exoPlayer = null
-
         playbackListeners.clear()
         progressListeners.clear()
-
+        spectrumListeners.clear()
         updateState(PlaybackState.IDLE, null)
     }
 
-    // ==================== 播放控制 ====================
-
     override fun play(track: AudioTrack) {
-        // 获取目标曲目在播放列表中的索引
         val targetIndex = playlist.indexOfFirst { it.id == track.id }
-
-        // 如果是同一首歌且索引相同，且播放器已准备就绪（非空闲/结束），则仅更新UI，不重新播放
-        if (currentTrack?.url == track.url && currentIndex == targetIndex && currentState != PlaybackState.IDLE && currentState != PlaybackState.ENDED) {
-            Log.d("ExoAudioPlayerManager", "点击了正在播放的同一首歌曲（索引相同）: ${track.name}，保持当前播放进度")
-
-            // 确保 currentTrack 引用正确
+        if (currentTrack?.url == track.url && currentIndex == targetIndex &&
+            currentState != PlaybackState.IDLE && currentState != PlaybackState.ENDED) {
+            Log.d("ExoAudioPlayerManager", "同一首歌，保持进度")
             currentTrack = track
-            // 确保索引一致
-            if (targetIndex != -1) {
-                currentIndex = targetIndex
-            }
-
-            // 通知UI更新（刷新歌词、标题等）
+            if (targetIndex != -1) currentIndex = targetIndex
             notifyTrackChanged(track, currentIndex)
             notifyPlaybackStateChange()
-            return // 直接返回，不执行任何播放/跳转操作
+            return
         }
 
-        // 正常播放新曲目
         currentTrack = track
-        if (targetIndex != -1) {
-            currentIndex = targetIndex
-        }
+        if (targetIndex != -1) currentIndex = targetIndex
         updateState(PlaybackState.LOADING, null)
 
         try {
@@ -216,7 +194,6 @@ class ExoAudioPlayerManager(
             isManualOperation = false
 
             notifyTrackChanged(track, currentIndex)
-
         } catch (e: Exception) {
             isManualOperation = false
             val errorMessage = "音频加载失败: ${e.message}"
@@ -254,12 +231,8 @@ class ExoAudioPlayerManager(
     }
 
     override fun togglePlayback() {
-        exoPlayer?.let { player ->
-            if (player.isPlaying) {
-                pause()
-            } else {
-                resume()
-            }
+        exoPlayer?.let {
+            if (it.isPlaying) pause() else resume()
         }
     }
 
@@ -279,18 +252,13 @@ class ExoAudioPlayerManager(
         seekTo(newPosition)
     }
 
-    // ==================== 播放列表管理 ====================
-
     override fun setPlaylist(tracks: List<AudioTrack>, startIndex: Int) {
         playlist.clear()
         playlist.addAll(tracks)
-
         if (tracks.isNotEmpty()) {
-            val safeIndex = startIndex.coerceIn(0, tracks.size - 1)
-            currentIndex = safeIndex
-
+            currentIndex = startIndex.coerceIn(0, tracks.size - 1)
             if (currentState == PlaybackState.PLAYING || currentState == PlaybackState.PAUSED) {
-                playAtIndex(safeIndex)
+                playAtIndex(currentIndex)
             }
         } else {
             currentIndex = -1
@@ -302,23 +270,18 @@ class ExoAudioPlayerManager(
             if (isPlayingNext || playlist.isEmpty()) return
             isPlayingNext = true
             isManualOperation = true
-
             try {
                 val nextIndex = when {
                     shuffleEnabled -> {
-                        val availableIndices = playlist.indices.toMutableList()
-                        availableIndices.remove(currentIndex)
-                        if (availableIndices.isEmpty()) currentIndex else availableIndices.random()
+                        val available = playlist.indices.toMutableList()
+                        available.remove(currentIndex)
+                        if (available.isEmpty()) currentIndex else available.random()
                     }
                     repeatMode == RepeatMode.ONE -> currentIndex
                     currentIndex < playlist.size - 1 -> currentIndex + 1
                     repeatMode == RepeatMode.ALL -> 0
-                    else -> {
-                        isPlayingNext = false
-                        return
-                    }
+                    else -> { isPlayingNext = false; return }
                 }
-
                 if (nextIndex in playlist.indices) {
                     play(playlist[nextIndex])
                 }
@@ -336,23 +299,18 @@ class ExoAudioPlayerManager(
             if (isPlayingPrevious || playlist.isEmpty()) return
             isPlayingPrevious = true
             isManualOperation = true
-
             try {
                 val prevIndex = when {
                     shuffleEnabled -> {
-                        val availableIndices = playlist.indices.toMutableList()
-                        availableIndices.remove(currentIndex)
-                        if (availableIndices.isEmpty()) currentIndex else availableIndices.random()
+                        val available = playlist.indices.toMutableList()
+                        available.remove(currentIndex)
+                        if (available.isEmpty()) currentIndex else available.random()
                     }
                     repeatMode == RepeatMode.ONE -> currentIndex
                     currentIndex > 0 -> currentIndex - 1
                     repeatMode == RepeatMode.ALL -> playlist.size - 1
-                    else -> {
-                        isPlayingPrevious = false
-                        return
-                    }
+                    else -> { isPlayingPrevious = false; return }
                 }
-
                 if (prevIndex in playlist.indices) {
                     play(playlist[prevIndex])
                 }
@@ -367,10 +325,9 @@ class ExoAudioPlayerManager(
 
     override fun playAtIndex(index: Int) {
         synchronized(playbackLock) {
-            if (isPlayingNext || index < 0 || index >= playlist.size) return
+            if (isPlayingNext || index !in playlist.indices) return
             isPlayingNext = true
             isManualOperation = true
-
             try {
                 currentIndex = index
                 play(playlist[index])
@@ -383,11 +340,7 @@ class ExoAudioPlayerManager(
         }
     }
 
-    override fun getPlaylist(): List<AudioTrack> {
-        return playlist.toList()
-    }
-
-    // ==================== 播放设置 ====================
+    override fun getPlaylist(): List<AudioTrack> = playlist.toList()
 
     override fun setPlaybackSpeed(speed: Float) {
         playbackSpeed = speed
@@ -397,19 +350,15 @@ class ExoAudioPlayerManager(
 
     override fun setRepeatMode(mode: RepeatMode) {
         repeatMode = mode
-        // 禁用 ExoPlayer 的自动重复，由我们手动控制
         exoPlayer?.repeatMode = Player.REPEAT_MODE_OFF
         notifyPlaybackStateChange()
     }
 
     override fun setShuffleEnabled(enabled: Boolean) {
         shuffleEnabled = enabled
-        // 禁用 ExoPlayer 的随机，由我们手动控制
         exoPlayer?.shuffleModeEnabled = false
         notifyPlaybackStateChange()
     }
-
-    // ==================== 状态获取 ====================
 
     override fun getPlaybackStatus(): AudioPlaybackStatus {
         return AudioPlaybackStatus(
@@ -425,56 +374,41 @@ class ExoAudioPlayerManager(
         )
     }
 
-    override fun getCurrentPosition(): Long {
-        return exoPlayer?.currentPosition ?: currentPosition
-    }
-
-    override fun getDuration(): Long {
-        return exoPlayer?.duration ?: currentDuration
-    }
-
-    override fun isPlaying(): Boolean {
-        return currentState == PlaybackState.PLAYING
-    }
-
-    override fun getCurrentTrack(): AudioTrack? {
-        return currentTrack
-    }
-
-    override fun getCurrentIndex(): Int {
-        return currentIndex
-    }
-
-    // ==================== 事件监听 ====================
+    override fun getCurrentPosition(): Long = exoPlayer?.currentPosition ?: currentPosition
+    override fun getDuration(): Long = exoPlayer?.duration ?: currentDuration
+    override fun isPlaying(): Boolean = currentState == PlaybackState.PLAYING
+    override fun getCurrentTrack(): AudioTrack? = currentTrack
+    override fun getCurrentIndex(): Int = currentIndex
 
     override fun addPlaybackListener(listener: AudioPlaybackListener) {
         playbackListeners.add(listener)
     }
-
     override fun removePlaybackListener(listener: AudioPlaybackListener) {
         playbackListeners.remove(listener)
     }
-
     override fun addProgressListener(listener: AudioProgressListener) {
         progressListeners.add(listener)
     }
-
     override fun removeProgressListener(listener: AudioProgressListener) {
         progressListeners.remove(listener)
     }
-
-    // ==================== 私有辅助方法 ====================
-
-    private fun updateState(newState: PlaybackState, errorMessage: String? = null) {
-        currentState = newState
-
-        if (newState == PlaybackState.PLAYING) {
-            startProgressUpdates()
-        } else if (newState == PlaybackState.PAUSED || newState == PlaybackState.ENDED ||
-            newState == PlaybackState.ERROR) {
-            stopProgressUpdates()
+    override fun addSpectrumListener(listener: AudioSpectrumListener) {
+        spectrumListeners.add(listener)
+        if (exoPlayer?.playbackState == Player.STATE_READY) {
+            startVisualizer()
         }
+    }
+    override fun removeSpectrumListener(listener: AudioSpectrumListener) {
+        spectrumListeners.remove(listener)
+        if (spectrumListeners.isEmpty()) {
+            stopVisualizer()
+        }
+    }
 
+    private fun updateState(newState: PlaybackState, errorMessage: String?) {
+        currentState = newState
+        if (newState == PlaybackState.PLAYING) startProgressUpdates()
+        else if (newState in listOf(PlaybackState.PAUSED, PlaybackState.ENDED, PlaybackState.ERROR)) stopProgressUpdates()
         notifyPlaybackStateChange(errorMessage)
     }
 
@@ -490,26 +424,19 @@ class ExoAudioPlayerManager(
     private fun updateProgress() {
         val position = exoPlayer?.currentPosition ?: 0L
         val duration = exoPlayer?.duration ?: 0L
-
         currentPosition = position
         currentDuration = duration
-
         notifyProgressUpdate(position, duration)
-
         if (currentState == PlaybackState.PLAYING) {
             handler?.postDelayed(updateProgressRunnable, 1000)
         }
     }
 
-    // ==================== 通知方法 ====================
-
     private fun notifyPlaybackStateChange(errorMessage: String? = null) {
         val status = getPlaybackStatus()
-
         coroutineScope.launch {
             playbackListeners.forEach { listener ->
                 listener.onPlaybackStateChanged(status)
-
                 if (errorMessage != null && currentState == PlaybackState.ERROR) {
                     listener.onPlaybackError(errorMessage)
                 }
@@ -519,41 +446,31 @@ class ExoAudioPlayerManager(
 
     private fun notifyTrackChanged(track: AudioTrack, index: Int) {
         coroutineScope.launch {
-            playbackListeners.forEach { listener ->
-                listener.onTrackChanged(track, index)
-            }
+            playbackListeners.forEach { it.onTrackChanged(track, index) }
         }
     }
 
     private fun notifyPlaybackError(error: String) {
         coroutineScope.launch {
-            playbackListeners.forEach { listener ->
-                listener.onPlaybackError(error)
-            }
+            playbackListeners.forEach { it.onPlaybackError(error) }
         }
     }
 
     private fun notifyPlaybackEnded() {
         coroutineScope.launch {
-            playbackListeners.forEach { listener ->
-                listener.onPlaybackEnded()
-            }
+            playbackListeners.forEach { it.onPlaybackEnded() }
         }
     }
 
     private fun notifyBuffering(isBuffering: Boolean) {
         coroutineScope.launch {
-            playbackListeners.forEach { listener ->
-                listener.onAudioBuffering(isBuffering)
-            }
+            playbackListeners.forEach { it.onAudioBuffering(isBuffering) }
         }
     }
 
     private fun notifyProgressUpdate(position: Long, duration: Long) {
         coroutineScope.launch {
-            progressListeners.forEach { listener ->
-                listener.onProgressUpdated(position, duration)
-            }
+            progressListeners.forEach { it.onProgressUpdated(position, duration) }
         }
     }
 }

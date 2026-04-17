@@ -486,6 +486,16 @@ class PreviewActivity : AppCompatActivity(),
             mediaPlaybackController.addPlaybackListener(this)
             mediaPlaybackController.addProgressListener(this)
 
+            // 新增：如果是音频，注册频谱监听器
+            if (currentFileType == "audio") {
+                mediaPlaybackController.addSpectrumListener(object : AudioSpectrumListener {
+                    override fun onSpectrumData(spectrum: FloatArray) {
+                        // 更新可视化视图
+                        musicVisualizerView.updateSpectrum(spectrum)
+                    }
+                })
+            }
+
             Log.d("PreviewActivity", "初始化媒体播放控制器: $playbackType")
         }
     }
@@ -886,12 +896,12 @@ class PreviewActivity : AppCompatActivity(),
             playerView.visibility = View.VISIBLE
             audioCoverView.visibility = View.GONE
             lyricsContainer.visibility = View.GONE
+            musicVisualizerView.visibility = View.GONE
         } else if (currentFileType == "audio") {
             playerView.visibility = View.GONE
-            audioCoverView.visibility = View.GONE       // 隐藏原占位图
+            audioCoverView.visibility = View.GONE
             musicVisualizerView.visibility = View.VISIBLE  // 显示可视化背景
             lyricsContainer.visibility = View.VISIBLE
-
 
             // 重置歌词状态
             lyricsManager.clear()
@@ -1299,8 +1309,9 @@ class PreviewActivity : AppCompatActivity(),
                 loadLyricsForCurrentSong()
                 // 确保可视化视图可见
                 musicVisualizerView.visibility = View.VISIBLE
-                // 同步当前播放状态
-                musicVisualizerView.setPlaying(mediaPlaybackController.isPlaying())
+                // 同步当前播放状态（如果 MusicVisualizerView 有 setPlaying 方法可调用）
+                // musicVisualizerView.setPlaying(mediaPlaybackController.isPlaying())
+
                 // 获取当前播放状态并更新播放按钮和进度条
                 val currentStatus = mediaPlaybackController.getPlaybackStatus()
                 Log.d("PreviewActivity", "轨道变化时获取状态: ${currentStatus.state}, 播放中: ${currentStatus.isPlaying}, 位置: ${currentStatus.position}")
