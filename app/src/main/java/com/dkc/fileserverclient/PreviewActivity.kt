@@ -24,8 +24,12 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
+import coil.ImageLoader
 import coil.load
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import kotlinx.coroutines.*
+import java.io.File
 import java.util.*
 
 @UnstableApi
@@ -1039,16 +1043,22 @@ class PreviewActivity : AppCompatActivity(),
 
     private fun loadCoverAndMetadata() {
         val songPath = getCurrentSongPath()
-        if (songPath.isEmpty()) return
+        Log.d("PreviewActivity", "========== loadCoverAndMetadata 开始 ==========")
+        Log.d("PreviewActivity", "songPath: $songPath")
+        Log.d("PreviewActivity", "currentServerUrl: $currentServerUrl")
+
+        if (songPath.isEmpty()) {
+            Log.e("PreviewActivity", "songPath为空，无法加载封面")
+            return
+        }
 
         coroutineScope.launch {
             try {
-                // 获取元数据（优先缓存）
                 val metadata = metadataManager.getMetadata(currentServerUrl, songPath)
                 currentSongMetadata = metadata
+                Log.d("PreviewActivity", "获取到的metadata: $metadata")
 
                 if (metadata != null) {
-                    // 更新歌词标题为“艺术家 - 专辑”格式
                     val artistAlbum = when {
                         !metadata.artist.isNullOrEmpty() && !metadata.album.isNullOrEmpty() ->
                             "${metadata.artist} · ${metadata.album}"
@@ -1058,35 +1068,63 @@ class PreviewActivity : AppCompatActivity(),
                     }
                     lyricsTitle.text = artistAlbum
 
-                    // 如果有封面，加载封面图片
-                    if (metadata.hasCover) {
-                        val coverUrl = metadataManager.getCoverUrl(currentServerUrl, songPath)
-                        if (!coverUrl.isNullOrEmpty()) {
-                            // 使用 Coil 加载封面
-                            audioCoverView.load(coverUrl) {
-                                crossfade(true)
-                                placeholder(R.drawable.ic_music_image_placeholder)
-                                error(R.drawable.ic_music_image_placeholder)
-                            }
-                        } else {
-                            audioCoverView.setImageResource(R.drawable.ic_music_image_placeholder)
-                        }
-                    } else {
-                        audioCoverView.setImageResource(R.drawable.ic_music_image_placeholder)
-                    }
+                    val coverUrl = metadataManager.getCoverUrl(currentServerUrl, songPath, addTimestamp = true)
+                    Log.d("PreviewActivity", "生成的封面URL: $coverUrl")
 
-                    // 可选：更新当前 AudioTrack 的元数据，以便后续使用
-                    currentAudioTrack = currentAudioTrack?.let {
-                        AudioTrack.fromMetadata(it, metadata)
-                    }
+                    // 每次创建新的 ImageLoader，使用信任所有证书的 OkHttpClient
+                    val imageLoader = ImageLoader.Builder(this@PreviewActivity)
+                        .okHttpClient(UnsafeHttpClient.createUnsafeOkHttpClient())
+                        .build()
+
+                    val request = ImageRequest.Builder(this@PreviewActivity)
+                        .data(coverUrl)
+                        .target { drawable ->
+                            audioCoverView.setImageDrawable(drawable)
+                            Log.d("PreviewActivity", "Coil 加载成功: $coverUrl")
+                        }
+                        .error(android.R.color.black)
+                        .placeholder(android.R.color.black)
+                        .diskCachePolicy(CachePolicy.DISABLED)
+                        .memoryCachePolicy(CachePolicy.DISABLED)
+                        .build()
+                    imageLoader.enqueue(request)
                 } else {
-                    // 无元数据，显示默认占位
+                    Log.w("PreviewActivity", "metadata为null，设置黑色背景")
+                    audioCoverView.setImageDrawable(null)
+                    audioCoverView.setBackgroundColor(Color.BLACK)
                     lyricsTitle.text = currentFileName
-                    audioCoverView.setImageResource(R.drawable.ic_music_image_placeholder)
                 }
             } catch (e: Exception) {
                 Log.e("PreviewActivity", "加载封面/元数据失败", e)
-                audioCoverView.setImageResource(R.drawable.ic_music_image_placeholder)
+                audioCoverView.setImageDrawable(null)
+                audioCoverView.setBackgroundColor(Color.BLACK)
+            }
+        }
+    }
+    private fun testDownloadCoverWithOkHttp(coverUrl: String) {
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                Log.d("PreviewActivity", "OkHttp 开始请求: $coverUrl")
+                val client = UnsafeHttpClient.createUnsafeOkHttpClient()
+                val request = okhttp3.Request.Builder().url(coverUrl).build()
+                val response = client.newCall(request).execute()
+                Log.d("PreviewActivity", "OkHttp 响应码: ${response.code}")
+                if (response.isSuccessful) {
+                    val bitmap = android.graphics.BitmapFactory.decodeStream(response.body?.byteStream())
+                    withContext(Dispatchers.Main) {
+                        if (bitmap != null) {
+                            audioCoverView.setImageBitmap(bitmap)
+                            Log.d("PreviewActivity", "OkHttp 下载成功，bitmap尺寸: ${bitmap.width}x${bitmap.height}")
+                        } else {
+                            Log.e("PreviewActivity", "OkHttp 解码bitmap失败")
+                        }
+                    }
+                } else {
+                    Log.e("PreviewActivity", "OkHttp 下载失败，响应码: ${response.code}")
+                }
+                response.close()
+            } catch (e: Exception) {
+                Log.e("PreviewActivity", "OkHttp 下载异常", e)
             }
         }
     }
@@ -1588,23 +1626,96 @@ class PreviewActivity : AppCompatActivity(),
     }
 
     private fun showLyricsSettingsDialog() {
-        val options = arrayOf("重新加载歌词", "选择歌词文件", "标记为无歌词", "隐藏歌词", "编辑歌曲信息")
+        val options = mutableListOf("重新加载歌词", "选择歌词文件", "标记为无歌词", "隐藏歌词", "编辑歌曲信息")
+        // 仅在音频模式下显示封面操作
+        if (currentFileType == "audio") {
+            options.add("上传封面")
+            options.add("删除封面")
+        }
 
         val dialog = AlertDialog.Builder(this)
             .setTitle("歌词设置")
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> lyricsManager.loadLyrics(currentServerUrl, getCurrentSongPath(), currentFileName)
-                    1 -> showDirectoryLyricsFiles()
-                    2 -> markAsNoLyrics()
-                    3 -> hideLyrics()
-                    4 -> showEditMetadataDialog()
+            .setItems(options.toTypedArray()) { _, which ->
+                when (options[which]) {
+                    "重新加载歌词" -> lyricsManager.loadLyrics(currentServerUrl, getCurrentSongPath(), currentFileName)
+                    "选择歌词文件" -> showDirectoryLyricsFiles()
+                    "标记为无歌词" -> markAsNoLyrics()
+                    "隐藏歌词" -> hideLyrics()
+                    "编辑歌曲信息" -> showEditMetadataDialog()
+                    "上传封面" -> showCoverUploadDialog()
+                    "删除封面" -> confirmDeleteCover()
                 }
             }
             .setNegativeButton("取消", null)
             .create()
         dialog.show()
         lyricsDialog = dialog
+    }
+    private fun showCoverUploadDialog() {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        startActivityForResult(Intent.createChooser(intent, "选择封面图片"), REQUEST_CODE_PICK_COVER)
+    }
+
+    // 在类顶部添加常量
+    companion object {
+        private const val REQUEST_CODE_PICK_COVER = 1001
+    }
+
+    // 处理选择结果
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_PICK_COVER && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            // 将 Uri 转换为 File（注意：Android 10+ 需要特殊处理，这里简化，使用 ContentResolver 获取输入流）
+            coroutineScope.launch {
+                try {
+                    val inputStream = contentResolver.openInputStream(uri) ?: return@launch
+                    val tempFile = File(cacheDir, "temp_cover_${System.currentTimeMillis()}.jpg")
+                    tempFile.outputStream().use { output ->
+                        inputStream.copyTo(output)
+                    }
+                    inputStream.close()
+
+                    val success = metadataManager.uploadCover(currentServerUrl, getCurrentSongPath(), tempFile)
+                    if (success) {
+                        // 重新加载封面和元数据
+                        loadCoverAndMetadata()
+                        // 刷新缓存中的元数据
+                        currentSongMetadata = metadataManager.getMetadata(currentServerUrl, getCurrentSongPath())
+                        showToast("封面上传成功")
+                    } else {
+                        showToast("封面上传失败")
+                    }
+                    tempFile.delete()
+                } catch (e: Exception) {
+                    Log.e("PreviewActivity", "上传封面异常", e)
+                    showToast("上传失败: ${e.message}")
+                }
+            }
+        }
+    }
+    private fun confirmDeleteCover() {
+        AlertDialog.Builder(this)
+            .setTitle("删除封面")
+            .setMessage("确定要删除自定义封面吗？删除后将恢复显示歌曲内嵌封面（如果有）。")
+            .setPositiveButton("删除") { _, _ ->
+                coroutineScope.launch {
+                    val success = metadataManager.deleteCover(currentServerUrl, getCurrentSongPath())
+                    if (success) {
+                        // 重新加载封面（此时会显示内嵌封面或占位）
+                        loadCoverAndMetadata()
+                        currentSongMetadata = metadataManager.getMetadata(currentServerUrl, getCurrentSongPath())
+                        showToast("已删除自定义封面")
+                    } else {
+                        showToast("删除失败，可能没有自定义封面")
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
     private fun showEditMetadataDialog() {
         val currentTrack = currentAudioTrack ?: return
