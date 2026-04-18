@@ -24,6 +24,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
+import coil.load
 import kotlinx.coroutines.*
 import java.util.*
 
@@ -98,6 +99,9 @@ class PreviewActivity : AppCompatActivity(),
     private var currentAudioIndex = -1
     private var audioTracks: List<AudioTrack> = emptyList()
     private var currentAudioTrack: AudioTrack? = null
+    // 在类顶部添加
+    private lateinit var metadataManager: SongMetadataManager
+    private var currentSongMetadata: SongMetadata? = null   // 缓存当前歌曲的元数据
 
     // 手势检测
     private lateinit var gestureDetector: GestureDetector
@@ -497,6 +501,8 @@ class PreviewActivity : AppCompatActivity(),
         // 初始化自动连播管理器
         autoPlayManager = AutoPlayManager(handler, coroutineScope)
         autoPlayManager.setAutoPlayListener(this)
+        // 初始化元数据管理器
+        metadataManager = SongMetadataManager(this, FileServerService(this))
 
         // 设置进度条监听
         setupSeekBar()
@@ -953,18 +959,21 @@ class PreviewActivity : AppCompatActivity(),
             musicVisualizerView.visibility = View.GONE
         } else if (currentFileType == "audio") {
             playerView.visibility = View.GONE
-            audioCoverView.visibility = View.GONE
-            musicVisualizerView.visibility = View.VISIBLE  // 显示可视化背景
+            audioCoverView.visibility = View.VISIBLE   // 显示封面容器
+            musicVisualizerView.visibility = View.VISIBLE
             lyricsContainer.visibility = View.VISIBLE
 
-            // 重置歌词状态
+            // 重置歌词显示
             lyricsManager.clear()
             currentLyricsLine.text = "正在加载歌词..."
             nextLyricsLine.text = ""
 
             // 使用正确的音频轨道名称
             val audioTitle = currentAudioTrack?.name ?: currentFileName
-            lyricsTitle.text = audioTitle
+            lyricsTitle.text = audioTitle   // 临时显示歌曲名，稍后会更新为艺术家·专辑
+
+            // 加载封面和元数据
+            loadCoverAndMetadata()
 
             // 立即加载歌词
             handler.post {
@@ -1028,6 +1037,59 @@ class PreviewActivity : AppCompatActivity(),
         }
     }
 
+    private fun loadCoverAndMetadata() {
+        val songPath = getCurrentSongPath()
+        if (songPath.isEmpty()) return
+
+        coroutineScope.launch {
+            try {
+                // 获取元数据（优先缓存）
+                val metadata = metadataManager.getMetadata(currentServerUrl, songPath)
+                currentSongMetadata = metadata
+
+                if (metadata != null) {
+                    // 更新歌词标题为“艺术家 - 专辑”格式
+                    val artistAlbum = when {
+                        !metadata.artist.isNullOrEmpty() && !metadata.album.isNullOrEmpty() ->
+                            "${metadata.artist} · ${metadata.album}"
+                        !metadata.artist.isNullOrEmpty() -> metadata.artist!!
+                        !metadata.album.isNullOrEmpty() -> metadata.album!!
+                        else -> currentFileName
+                    }
+                    lyricsTitle.text = artistAlbum
+
+                    // 如果有封面，加载封面图片
+                    if (metadata.hasCover) {
+                        val coverUrl = metadataManager.getCoverUrl(currentServerUrl, songPath)
+                        if (!coverUrl.isNullOrEmpty()) {
+                            // 使用 Coil 加载封面
+                            audioCoverView.load(coverUrl) {
+                                crossfade(true)
+                                placeholder(R.drawable.ic_music_image_placeholder)
+                                error(R.drawable.ic_music_image_placeholder)
+                            }
+                        } else {
+                            audioCoverView.setImageResource(R.drawable.ic_music_image_placeholder)
+                        }
+                    } else {
+                        audioCoverView.setImageResource(R.drawable.ic_music_image_placeholder)
+                    }
+
+                    // 可选：更新当前 AudioTrack 的元数据，以便后续使用
+                    currentAudioTrack = currentAudioTrack?.let {
+                        AudioTrack.fromMetadata(it, metadata)
+                    }
+                } else {
+                    // 无元数据，显示默认占位
+                    lyricsTitle.text = currentFileName
+                    audioCoverView.setImageResource(R.drawable.ic_music_image_placeholder)
+                }
+            } catch (e: Exception) {
+                Log.e("PreviewActivity", "加载封面/元数据失败", e)
+                audioCoverView.setImageResource(R.drawable.ic_music_image_placeholder)
+            }
+        }
+    }
     // 添加辅助方法：检查是否正在播放同一首歌曲
     private fun isPlayingSameSong(): Boolean {
         return try {
@@ -1361,10 +1423,15 @@ class PreviewActivity : AppCompatActivity(),
 
                 // 重新加载歌词（使用更新后的 currentAudioTrack）
                 loadLyricsForCurrentSong()
+
+                // 重新加载封面和元数据
+                loadCoverAndMetadata()
+                loadLyricsForCurrentSong()
                 // 确保可视化视图可见
                 musicVisualizerView.visibility = View.VISIBLE
                 // 同步当前播放状态（如果 MusicVisualizerView 有 setPlaying 方法可调用）
                 // musicVisualizerView.setPlaying(mediaPlaybackController.isPlaying())
+
 
                 // 获取当前播放状态并更新播放按钮和进度条
                 val currentStatus = mediaPlaybackController.getPlaybackStatus()
@@ -1521,7 +1588,7 @@ class PreviewActivity : AppCompatActivity(),
     }
 
     private fun showLyricsSettingsDialog() {
-        val options = arrayOf("重新加载歌词", "选择歌词文件", "标记为无歌词", "隐藏歌词")
+        val options = arrayOf("重新加载歌词", "选择歌词文件", "标记为无歌词", "隐藏歌词", "编辑歌曲信息")
 
         val dialog = AlertDialog.Builder(this)
             .setTitle("歌词设置")
@@ -1531,15 +1598,75 @@ class PreviewActivity : AppCompatActivity(),
                     1 -> showDirectoryLyricsFiles()
                     2 -> markAsNoLyrics()
                     3 -> hideLyrics()
+                    4 -> showEditMetadataDialog()
                 }
             }
             .setNegativeButton("取消", null)
             .create()
-
         dialog.show()
         lyricsDialog = dialog
     }
+    private fun showEditMetadataDialog() {
+        val currentTrack = currentAudioTrack ?: return
+        val songPath = getCurrentSongPath()
+        if (songPath.isEmpty()) return
 
+        // 获取当前元数据（优先使用缓存的）
+        val currentMeta = currentSongMetadata ?: SongMetadata()
+
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("编辑歌曲信息")
+
+        val view = layoutInflater.inflate(R.layout.dialog_edit_metadata, null)
+        val titleInput = view.findViewById<EditText>(R.id.editTitle)
+        val artistInput = view.findViewById<EditText>(R.id.editArtist)
+        val albumInput = view.findViewById<EditText>(R.id.editAlbum)
+
+        // 预填当前值
+        titleInput.setText(currentMeta.title.ifEmpty { currentTrack.title ?: currentTrack.name })
+        artistInput.setText(currentMeta.artist)
+        albumInput.setText(currentMeta.album)
+
+        builder.setView(view)
+        builder.setPositiveButton("保存") { _, _ ->
+            val newTitle = titleInput.text.toString().trim().takeIf { it.isNotEmpty() }
+            val newArtist = artistInput.text.toString().trim().takeIf { it.isNotEmpty() }
+            val newAlbum = albumInput.text.toString().trim().takeIf { it.isNotEmpty() }
+
+            coroutineScope.launch {
+                val success = metadataManager.saveMetadata(
+                    currentServerUrl,
+                    songPath,
+                    newTitle,
+                    newArtist,
+                    newAlbum
+                )
+                if (success) {
+                    // 更新当前显示的元数据
+                    currentSongMetadata = SongMetadata(
+                        title = newTitle ?: "",
+                        artist = newArtist ?: "",
+                        album = newAlbum ?: "",
+                        hasCover = currentSongMetadata?.hasCover ?: false,
+                        customCoverPath = currentSongMetadata?.customCoverPath
+                    )
+                    // 刷新封面和标题显示
+                    loadCoverAndMetadata()
+                    // 同时更新当前 AudioTrack 对象
+                    currentAudioTrack = currentAudioTrack?.copy(
+                        title = newTitle,
+                        artist = newArtist,
+                        album = newAlbum
+                    )
+                    showToast("保存成功")
+                } else {
+                    showToast("保存失败")
+                }
+            }
+        }
+        builder.setNegativeButton("取消", null)
+        builder.show()
+    }
     private fun markAsNoLyrics() {
         coroutineScope.launch {
             try {
@@ -1721,7 +1848,7 @@ class PreviewActivity : AppCompatActivity(),
         if (::musicVisualizerView.isInitialized) {
             musicVisualizerView.setPlaying(false)
         }
-
+        metadataManager.clearCache()
 
         // 清理其他资源（这些与播放器无关）
         coroutineScope.cancel()

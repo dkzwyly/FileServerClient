@@ -35,22 +35,23 @@ class AudioLibraryActivity : AppCompatActivity() {
     private lateinit var addPlaylistButton: FloatingActionButton
 
     private val fileServerService by lazy { FileServerService(this) }
-    private val audioList = mutableListOf<FileSystemItem>()
-    private val filteredAudioList = mutableListOf<FileSystemItem>()
-    private val playlistList = mutableListOf<Playlist>() // 歌单列表
+    private lateinit var metadataManager: SongMetadataManager
+
+    private val audioFileItems = mutableListOf<FileSystemItem>()
+    private val audioTracks = mutableListOf<AudioTrack>()
+    private val filteredAudioTracks = mutableListOf<AudioTrack>()
+    private val playlistList = mutableListOf<Playlist>()
+
     private lateinit var audioAdapter: AudioLibraryAdapter
     private lateinit var playlistAdapter: PlaylistAdapter
-    private var currentServerUrl = ""
 
-    // 当前选中的选项卡
+    private var currentServerUrl = ""
     private var currentTab: TabType = TabType.SONGS
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
-    private val audioLibraryPath = "data/音乐"  // 固定音频目录路径
+    private val audioLibraryPath = "data/音乐"
 
-    private enum class TabType {
-        PLAYLISTS, SONGS
-    }
+    private enum class TabType { PLAYLISTS, SONGS }
 
     companion object {
         private const val TAG = "AudioLibraryActivity"
@@ -68,15 +69,13 @@ class AudioLibraryActivity : AppCompatActivity() {
             return
         }
 
+        metadataManager = SongMetadataManager(this, fileServerService)
+        PlaylistManager.initialize(this)
         initViews()
         setupTabs()
         loadAudios()
-        // 初始化歌单列表（空列表）
-        updatePlaylistUI()
-        // 初始化歌单管理器
-        PlaylistManager.initialize(this)
-        // 加载歌单
         loadPlaylists()
+
     }
 
     private fun initViews() {
@@ -97,39 +96,22 @@ class AudioLibraryActivity : AppCompatActivity() {
 
         titleText.text = "音频库"
 
-        // 设置返回按钮
-        backButton.setOnClickListener {
-            finish()
-        }
-
-        // 设置搜索图标点击事件
-        searchIconButton.setOnClickListener {
-            showSearchContainer()
-        }
-
-        // 设置关闭搜索按钮
-        closeSearchButton.setOnClickListener {
-            hideSearchContainer()
-        }
-
-        // 设置搜索功能
+        backButton.setOnClickListener { finish() }
+        searchIconButton.setOnClickListener { showSearchContainer() }
+        closeSearchButton.setOnClickListener { hideSearchContainer() }
         setupSearch()
 
-        // 使用线性布局管理器
         audioRecyclerView.layoutManager = LinearLayoutManager(this)
         playlistRecyclerView.layoutManager = LinearLayoutManager(this)
 
-        // 初始化音频适配器
         audioAdapter = AudioLibraryAdapter(
             currentServerUrl,
-            filteredAudioList,
-            onAudioClick = { audioItem -> playAudio(audioItem) },
-            onAudioLongClick = { audioItem -> showAddToPlaylistDialog(audioItem) }
+            filteredAudioTracks,
+            onAudioClick = { playAudio(it) },
+            onAudioLongClick = { showAddToPlaylistDialog(it) }
         )
         audioRecyclerView.adapter = audioAdapter
 
-        // 初始化歌单适配器
-        // 初始化歌单适配器
         playlistAdapter = PlaylistAdapter(
             playlists = playlistList,
             onPlaylistClick = { playlist ->
@@ -139,30 +121,17 @@ class AudioLibraryActivity : AppCompatActivity() {
                 }
                 startActivity(intent)
             },
-            onRenameClick = { playlist ->
-                showRenamePlaylistDialog(playlist)
-            },
-            onDeleteClick = { playlist ->
-                showDeletePlaylistDialog(playlist)
-            }
+            onRenameClick = { showRenamePlaylistDialog(it) },
+            onDeleteClick = { showDeletePlaylistDialog(it) }
         )
         playlistRecyclerView.adapter = playlistAdapter
 
-        // 新建歌单按钮
-        addPlaylistButton.setOnClickListener {
-            showCreatePlaylistDialog()
-        }
+        addPlaylistButton.setOnClickListener { showCreatePlaylistDialog() }
     }
 
     private fun setupTabs() {
-        // 歌曲选项卡默认选中
-        songsTab.setOnClickListener {
-            switchToTab(TabType.SONGS)
-        }
-
-        playlistTab.setOnClickListener {
-            switchToTab(TabType.PLAYLISTS)
-        }
+        songsTab.setOnClickListener { switchToTab(TabType.SONGS) }
+        playlistTab.setOnClickListener { switchToTab(TabType.PLAYLISTS) }
     }
 
     private fun loadPlaylists() {
@@ -173,54 +142,36 @@ class AudioLibraryActivity : AppCompatActivity() {
 
     private fun switchToTab(tabType: TabType) {
         currentTab = tabType
-
         when (tabType) {
             TabType.PLAYLISTS -> {
-                // 更新选项卡样式
                 playlistTab.setBackgroundResource(R.drawable.tab_background_selected)
                 songsTab.setBackgroundResource(R.drawable.tab_background)
                 playlistTab.setTextColor(getColor(R.color.primary_color))
                 songsTab.setTextColor(getColor(R.color.text_primary))
 
-                // 显示歌单列表，隐藏音频列表
                 playlistRecyclerView.visibility = View.VISIBLE
                 audioRecyclerView.visibility = View.GONE
-
-                // 显示新建歌单按钮
                 addPlaylistButton.visibility = View.VISIBLE
 
-                // 更新状态文本
                 updatePlaylistUI()
-
-                // 如果搜索框显示，更新搜索提示
                 if (searchContainer.visibility == View.VISIBLE) {
                     searchEditText.hint = "搜索歌单..."
                     performSearch(searchEditText.text.toString())
                 }
             }
-
             TabType.SONGS -> {
-                // 更新选项卡样式
                 playlistTab.setBackgroundResource(R.drawable.tab_background)
                 songsTab.setBackgroundResource(R.drawable.tab_background_selected)
                 playlistTab.setTextColor(getColor(R.color.text_primary))
                 songsTab.setTextColor(getColor(R.color.primary_color))
 
-                // 显示音频列表，隐藏歌单列表
                 audioRecyclerView.visibility = View.VISIBLE
                 playlistRecyclerView.visibility = View.GONE
-
-                // 隐藏新建歌单按钮
                 addPlaylistButton.visibility = View.GONE
 
-                // 更新状态文本
-                if (audioList.isEmpty()) {
-                    statusText.text = "没有找到音频文件"
-                } else {
-                    statusText.text = "共找到 ${audioList.size} 个音频文件"
-                }
+                if (audioTracks.isEmpty()) statusText.text = "没有找到音频文件"
+                else statusText.text = "共找到 ${audioTracks.size} 个音频文件"
 
-                // 如果搜索框显示，更新搜索提示
                 if (searchContainer.visibility == View.VISIBLE) {
                     searchEditText.hint = "搜索音频..."
                     performSearch(searchEditText.text.toString())
@@ -229,72 +180,51 @@ class AudioLibraryActivity : AppCompatActivity() {
         }
     }
 
-    private fun showAddToPlaylistDialog(audioItem: FileSystemItem) {
+    private fun showAddToPlaylistDialog(audioTrack: AudioTrack) {
         val playlists = PlaylistManager.getAllPlaylists()
         if (playlists.isEmpty()) {
             showToast("请先创建歌单")
             return
         }
-
         val playlistNames = playlists.map { it.name }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("添加到歌单")
             .setItems(playlistNames) { _, which ->
                 val selectedPlaylist = playlists[which]
-                val audioTrack = AudioTrack.fromFileSystemItem(audioItem, currentServerUrl)
                 val added = PlaylistManager.addTrackToPlaylist(selectedPlaylist.id, audioTrack)
-                if (added) {
-                    showToast("已添加到歌单 \"${selectedPlaylist.name}\"")
-                } else {
-                    showToast("歌曲已存在于该歌单")
+                if (added) showToast("已添加到歌单 \"${selectedPlaylist.name}\"")
+                else showToast("歌曲已存在于该歌单")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showRenamePlaylistDialog(playlist: Playlist) {
+        val input = EditText(this)
+        input.setText(playlist.name)
+        AlertDialog.Builder(this)
+            .setTitle("重命名歌单")
+            .setView(input)
+            .setPositiveButton("确定") { _, _ ->
+                val newName = input.text.toString().trim()
+                if (newName.isNotEmpty() && newName != playlist.name) {
+                    if (PlaylistManager.renamePlaylist(playlist.id, newName)) {
+                        loadPlaylists()
+                        showToast("歌单已重命名")
+                    }
                 }
             }
             .setNegativeButton("取消", null)
             .show()
     }
 
-
-    private fun showRenamePlaylistDialog(playlist: Playlist) {
-        val builder = AlertDialog.Builder(this)
-        builder.setTitle("重命名歌单")
-
-        val input = EditText(this)
-        input.setText(playlist.name)
-        input.hint = "输入新歌单名称"
-        builder.setView(input)
-
-        builder.setPositiveButton("确定") { dialog, which ->
-            val newName = input.text.toString().trim()
-            if (newName.isNotEmpty() && newName != playlist.name) {
-                // 调用 PlaylistManager 重命名
-                val success = PlaylistManager.renamePlaylist(playlist.id, newName)
-                if (success) {
-                    // 重新加载歌单
-                    playlistList.clear()
-                    playlistList.addAll(PlaylistManager.getAllPlaylists())
-                    playlistAdapter.notifyDataSetChanged()
-                    updatePlaylistUI()
-                    showToast("歌单已重命名")
-                }
-            }
-        }
-
-        builder.setNegativeButton("取消") { dialog, which ->
-            dialog.cancel()
-        }
-
-        builder.show()
-    }
-
     private fun showDeletePlaylistDialog(playlist: Playlist) {
         AlertDialog.Builder(this)
             .setTitle("删除歌单")
-            .setMessage("确定要删除歌单 \"${playlist.name}\" 吗？此操作不可撤销。")
+            .setMessage("确定要删除歌单 \"${playlist.name}\" 吗？")
             .setPositiveButton("删除") { _, _ ->
                 PlaylistManager.deletePlaylist(playlist.id)
-                playlistList.remove(playlist)
-                playlistAdapter.notifyDataSetChanged()
-                updatePlaylistUI()
+                loadPlaylists()
                 showToast("歌单已删除")
             }
             .setNegativeButton("取消", null)
@@ -304,15 +234,7 @@ class AudioLibraryActivity : AppCompatActivity() {
     private fun showSearchContainer() {
         searchContainer.visibility = View.VISIBLE
         searchIconButton.visibility = View.GONE
-
-        // 根据当前选项卡设置提示文字
-        searchEditText.hint = if (currentTab == TabType.PLAYLISTS) {
-            "搜索歌单..."
-        } else {
-            "搜索音频..."
-        }
-
-        // 显示键盘
+        searchEditText.hint = if (currentTab == TabType.PLAYLISTS) "搜索歌单..." else "搜索音频..."
         searchEditText.requestFocus()
     }
 
@@ -320,85 +242,44 @@ class AudioLibraryActivity : AppCompatActivity() {
         searchContainer.visibility = View.GONE
         searchIconButton.visibility = View.VISIBLE
         searchEditText.setText("")
-
-        // 隐藏键盘
         val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
         imm.hideSoftInputFromWindow(searchEditText.windowToken, 0)
-
-        // 恢复列表
         performSearch("")
     }
 
     private fun setupSearch() {
         searchEditText.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 performSearch(s.toString())
             }
-
             override fun afterTextChanged(s: Editable?) {}
         })
-
-        clearSearchButton.setOnClickListener {
-            searchEditText.setText("")
-            performSearch("")
-        }
-
-        // 初始隐藏清除按钮
+        clearSearchButton.setOnClickListener { searchEditText.setText("") }
         clearSearchButton.visibility = View.GONE
     }
 
     private fun performSearch(query: String) {
         val searchQuery = query.trim()
-
-        // 显示/隐藏清除按钮
-        clearSearchButton.visibility = if (searchQuery.isNotEmpty()) {
-            View.VISIBLE
-        } else {
-            View.GONE
-        }
+        clearSearchButton.visibility = if (searchQuery.isNotEmpty()) View.VISIBLE else View.GONE
 
         when (currentTab) {
             TabType.SONGS -> {
-                // 搜索音频
-                filteredAudioList.clear()
-
-                if (searchQuery.isEmpty()) {
-                    filteredAudioList.addAll(audioList)
-                } else {
-                    filteredAudioList.addAll(audioList.filter { audio ->
-                        audio.name.contains(searchQuery, true) ||
-                                audio.extension.contains(searchQuery, true)
-                    })
-                }
-
-                audioAdapter.notifyDataSetChanged()
-
-                // 更新状态文本
-                if (searchQuery.isNotEmpty()) {
-                    statusText.text = "找到 ${filteredAudioList.size} 个匹配的音频文件"
-                } else {
-                    statusText.text = "共找到 ${audioList.size} 个音频文件"
-                }
+                filteredAudioTracks.clear()
+                filteredAudioTracks.addAll(if (searchQuery.isEmpty()) audioTracks else audioTracks.filter { track ->
+                    track.name.contains(searchQuery, true) ||
+                            (track.title?.contains(searchQuery, true) == true) ||
+                            (track.artist?.contains(searchQuery, true) == true) ||
+                            (track.album?.contains(searchQuery, true) == true)
+                })
+                audioAdapter.updateData(filteredAudioTracks)
+                statusText.text = if (searchQuery.isNotEmpty()) "找到 ${filteredAudioTracks.size} 个匹配的音频文件"
+                else "共找到 ${audioTracks.size} 个音频文件"
             }
-
             TabType.PLAYLISTS -> {
-                // 搜索歌单
-                // TODO: 实现歌单搜索逻辑
-                if (searchQuery.isEmpty()) {
-                    // 显示所有歌单
-                    updatePlaylistUI()
-                } else {
-                    // 过滤歌单
-                    val filteredPlaylists = playlistList.filter { playlist ->
-                        playlist.name.contains(searchQuery, true)
-                    }
-                    playlistAdapter.updateData(filteredPlaylists)
-
-                    // 更新状态文本
-                    statusText.text = "找到 ${filteredPlaylists.size} 个匹配的歌单"
-                }
+                val filtered = if (searchQuery.isEmpty()) playlistList else playlistList.filter { it.name.contains(searchQuery, true) }
+                playlistAdapter.updateData(filtered)
+                statusText.text = if (searchQuery.isNotEmpty()) "找到 ${filtered.size} 个匹配的歌单" else "共 ${playlistList.size} 个歌单"
             }
         }
     }
@@ -406,35 +287,34 @@ class AudioLibraryActivity : AppCompatActivity() {
     private fun loadAudios() {
         coroutineScope.launch {
             statusText.text = "正在加载音频..."
-
             try {
-                Log.d(TAG, "开始加载音频目录: $audioLibraryPath")
-
                 val allItems = withContext(Dispatchers.IO) {
                     fileServerService.getFileList(currentServerUrl, audioLibraryPath)
                 }
+                audioFileItems.clear()
+                audioFileItems.addAll(allItems.filter { !it.isDirectory && AudioUtils.isAudioFile(it) })
 
-                Log.d(TAG, "获取到 ${allItems.size} 个项目")
-
-                // 过滤出音频文件
-                audioList.clear()
-                audioList.addAll(allItems.filter { item ->
-                    !item.isDirectory && AudioUtils.isAudioFile(item)
-                })
-
-                Log.d(TAG, "过滤后得到 ${audioList.size} 个音频文件")
-
-                // 更新过滤列表
-                filteredAudioList.clear()
-                filteredAudioList.addAll(audioList)
-
-                if (audioList.isEmpty()) {
-                    statusText.text = "没有找到音频文件"
-                } else {
-                    statusText.text = "共找到 ${audioList.size} 个音频文件"
-                    audioAdapter.notifyDataSetChanged()
+                // 转换为 AudioTrack 并填充元数据
+                val tracks = audioFileItems.map { item ->
+                    AudioTrack.fromFileSystemItem(item, currentServerUrl)
                 }
 
+                val updatedTracks = tracks.map { track ->
+                    async(Dispatchers.IO) {
+                        val metadata = metadataManager.getMetadata(currentServerUrl, track.path)
+                        if (metadata != null) AudioTrack.fromMetadata(track, metadata) else track
+                    }
+                }.awaitAll()
+
+                audioTracks.clear()
+                audioTracks.addAll(updatedTracks)
+                filteredAudioTracks.clear()
+                filteredAudioTracks.addAll(audioTracks)
+
+                audioAdapter.updateData(filteredAudioTracks)
+
+                if (audioTracks.isEmpty()) statusText.text = "没有找到音频文件"
+                else statusText.text = "共找到 ${audioTracks.size} 个音频文件"
             } catch (e: Exception) {
                 statusText.text = "加载失败: ${e.message}"
                 Log.e(TAG, "加载音频异常", e)
@@ -443,76 +323,45 @@ class AudioLibraryActivity : AppCompatActivity() {
     }
 
     private fun updatePlaylistUI() {
-        // TODO: 从数据库或SharedPreferences加载用户歌单
-        // 暂时显示空状态
-        if (playlistList.isEmpty()) {
-            statusText.text = "暂无歌单，点击右下角按钮创建"
-        } else {
-            statusText.text = "共 ${playlistList.size} 个歌单"
-        }
-
-        playlistAdapter.notifyDataSetChanged()
+        if (playlistList.isEmpty()) statusText.text = "暂无歌单，点击右下角按钮创建"
+        else statusText.text = "共 ${playlistList.size} 个歌单"
+        playlistAdapter.updateData(playlistList)
     }
 
     private fun showCreatePlaylistDialog() {
-        val builder = AlertDialog.Builder(this)
-        builder.setTitle("新建歌单")
-
         val input = EditText(this)
         input.hint = "输入歌单名称"
-        builder.setView(input)
-
-        builder.setPositiveButton("创建") { dialog, which ->
-            val playlistName = input.text.toString().trim()
-            if (playlistName.isNotEmpty()) {
-                createNewPlaylist(playlistName)
+        AlertDialog.Builder(this)
+            .setTitle("新建歌单")
+            .setView(input)
+            .setPositiveButton("创建") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    val newPlaylist = PlaylistManager.createPlaylist(name)
+                    playlistList.add(newPlaylist)
+                    updatePlaylistUI()
+                    showToast("歌单 '$name' 创建成功")
+                }
             }
-        }
-
-        builder.setNegativeButton("取消") { dialog, which ->
-            dialog.cancel()
-        }
-
-        builder.show()
+            .setNegativeButton("取消", null)
+            .show()
     }
 
-    private fun createNewPlaylist(name: String) {
-        val newPlaylist = PlaylistManager.createPlaylist(name)
-        playlistList.add(newPlaylist)
-        playlistAdapter.notifyItemInserted(playlistList.size - 1)
-        updatePlaylistUI()
-        showToast("歌单 '$name' 创建成功")
-    }
-
-    private fun playAudio(audioItem: FileSystemItem) {
+    private fun playAudio(audioTrack: AudioTrack) {
         try {
-            // 转换为AudioTrack
-            val audioTrack = AudioTrack.fromFileSystemItem(audioItem, currentServerUrl)
+            val audioTracksList = AudioUtils.convertToAudioTracks(audioFileItems, currentServerUrl)
+            val currentIndex = audioTracks.indexOfFirst { it.id == audioTrack.id }.takeIf { it >= 0 } ?: 0
 
-            // 获取音频文件列表并转换为AudioTrack列表
-            val audioTracks = AudioUtils.convertToAudioTracks(filteredAudioList, currentServerUrl)
-            val currentIndex = filteredAudioList.indexOf(audioItem)
-
-            // 获取音频文件所在目录
-            val directory = getDirectoryFromPath(audioItem.path)
-            Log.d(TAG, "音频目录: $directory")
-
-            // 设置自动连播 - 传递AudioTrack列表
             val intent = Intent(this, PreviewActivity::class.java).apply {
-                putExtra("FILE_NAME", audioItem.name)
+                putExtra("FILE_NAME", audioTrack.name)
                 putExtra("FILE_URL", audioTrack.url)
                 putExtra("FILE_TYPE", "audio")
-                putExtra("FILE_PATH", audioItem.path)  // 完整路径，用于歌词查找
-
-                // 关键：传递AudioTrack列表，这会触发音频模式
+                putExtra("FILE_PATH", audioTrack.path)
                 putExtra("AUDIO_TRACK", audioTrack)
-                putExtra("AUDIO_TRACKS", ArrayList(audioTracks))
-
+                putExtra("AUDIO_TRACKS", ArrayList(audioTracksList))
                 putExtra("CURRENT_INDEX", currentIndex)
                 putExtra("SERVER_URL", currentServerUrl)
-                putExtra("CURRENT_PATH", directory)
-
-                // 从音乐库进入的标志
+                putExtra("CURRENT_PATH", getDirectoryFromPath(audioTrack.path))
                 putExtra("FROM_MUSIC_LIBRARY", true)
                 putExtra("SHOULD_AUTO_PLAY", true)
             }
@@ -522,15 +371,10 @@ class AudioLibraryActivity : AppCompatActivity() {
         }
     }
 
-    // 辅助方法：从路径中提取目录
     private fun getDirectoryFromPath(filePath: String): String {
         return try {
-            val file = java.io.File(filePath)
-            val parent = file.parent ?: ""
-            Log.d(TAG, "从路径 $filePath 提取目录: $parent")
-            parent
+            java.io.File(filePath).parent ?: ""
         } catch (e: Exception) {
-            Log.e(TAG, "提取目录失败", e)
             ""
         }
     }
@@ -539,14 +383,8 @@ class AudioLibraryActivity : AppCompatActivity() {
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 
-    override fun onResume() {
-        super.onResume()
-        Log.d(TAG, "onResume")
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         coroutineScope.cancel()
-        Log.d(TAG, "onDestroy")
     }
 }

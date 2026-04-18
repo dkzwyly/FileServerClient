@@ -2,9 +2,10 @@ package com.dkc.fileserverclient
 
 import android.os.Parcelable
 import kotlinx.parcelize.Parcelize
+import java.net.URLEncoder
 
 /**
- * 音频播放数据模型
+ * 音频播放数据模型（增强版，支持元数据）
  */
 @Parcelize
 data class AudioTrack(
@@ -12,56 +13,58 @@ data class AudioTrack(
     val name: String,
     val url: String,
     val serverUrl: String,
-    val path: String,           // 用于歌词查找
-    val duration: Long = 0L,    // 时长（毫秒）
+    val path: String,
+    val duration: Long = 0L,
     val artist: String? = null,
     val album: String? = null,
+    val title: String? = null,
     val coverUrl: String? = null,
     val fileExtension: String = "",
     val sizeFormatted: String = ""
 ) : Parcelable {
+
     companion object {
         fun fromFileSystemItem(item: FileSystemItem, serverUrl: String): AudioTrack {
             return AudioTrack(
                 id = "audio_${item.path.hashCode().toString().replace("-", "n")}",
                 name = item.name,
-                url = "${serverUrl.removeSuffix("/")}/api/fileserver/preview/${java.net.URLEncoder.encode(item.path, "UTF-8")}",
+                url = "${serverUrl.removeSuffix("/")}/api/fileserver/preview/${URLEncoder.encode(item.path, "UTF-8")}",
                 serverUrl = serverUrl,
                 path = item.path,
-                duration = 0L, // 需要从元数据获取
+                duration = 0L,
+                artist = null,
+                album = null,
+                title = null,
+                coverUrl = null,
                 fileExtension = item.extension,
                 sizeFormatted = item.sizeFormatted
+            )
+        }
+
+        /**
+         * 使用服务器返回的元数据更新 AudioTrack
+         */
+        fun fromMetadata(track: AudioTrack, metadata: SongMetadata): AudioTrack {
+            return track.copy(
+                title = if (metadata.title.isNotEmpty()) metadata.title else track.name,
+                artist = if (metadata.artist.isNotEmpty()) metadata.artist else track.artist,
+                album = if (metadata.album.isNotEmpty()) metadata.album else track.album,
+                coverUrl = if (metadata.hasCover && !metadata.customCoverPath.isNullOrEmpty()) {
+                    "${track.serverUrl}/covers/${metadata.customCoverPath}"
+                } else null
             )
         }
     }
 }
 
-/**
- * 播放状态枚举
- */
 enum class PlaybackState {
-    IDLE,           // 空闲
-    LOADING,        // 加载中
-    READY,          // 准备就绪
-    PLAYING,        // 播放中
-    PAUSED,         // 已暂停
-    BUFFERING,      // 缓冲中
-    ENDED,          // 播放结束
-    ERROR           // 错误
+    IDLE, LOADING, READY, PLAYING, PAUSED, BUFFERING, ENDED, ERROR
 }
 
-/**
- * 重复模式
- */
 enum class RepeatMode {
-    NONE,           // 不重复
-    ONE,            // 单曲循环
-    ALL             // 列表循环
+    NONE, ONE, ALL
 }
 
-/**
- * 播放列表数据
- */
 data class Playlist(
     val id: String,
     val name: String,
@@ -69,14 +72,11 @@ data class Playlist(
     val currentIndex: Int = 0
 )
 
-/**
- * 音频播放状态
- */
 data class AudioPlaybackStatus(
     val state: PlaybackState,
     val currentTrack: AudioTrack? = null,
-    val position: Long = 0L,           // 当前播放位置（毫秒）
-    val duration: Long = 0L,           // 总时长（毫秒）
+    val position: Long = 0L,
+    val duration: Long = 0L,
     val isPlaying: Boolean = false,
     val playbackSpeed: Float = 1.0f,
     val repeatMode: RepeatMode = RepeatMode.NONE,

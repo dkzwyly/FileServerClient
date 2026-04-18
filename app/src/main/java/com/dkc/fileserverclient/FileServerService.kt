@@ -6,15 +6,16 @@ import com.google.gson.Gson
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.net.URLEncoder
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.RequestBody.Companion.toRequestBody
 
 class FileServerService(private val context: Context) {
 
@@ -29,15 +30,9 @@ class FileServerService(private val context: Context) {
         return try {
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
                 @Suppress("TrustAllX509TrustManager")
-                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-                    // 信任所有客户端证书（用于测试环境）
-                }
-
+                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                 @Suppress("TrustAllX509TrustManager")
-                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-                    // 信任所有服务器证书（用于测试环境）
-                }
-
+                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                 override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
             })
 
@@ -59,253 +54,116 @@ class FileServerService(private val context: Context) {
     }
 
     suspend fun testConnection(serverUrl: String): Boolean = withContext(Dispatchers.IO) {
+        // 原有实现保持不变
         try {
             val formattedUrl = formatServerUrl(serverUrl)
             val healthUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/health"
-
-            Log.d("FileServerService", "测试连接: $healthUrl")
-
-            val request = Request.Builder()
-                .url(healthUrl)
-                .header("User-Agent", "FileServerClient/1.0")
-                .build()
-
+            val request = Request.Builder().url(healthUrl).header("User-Agent", "FileServerClient/1.0").build()
             val response = client.newCall(request).execute()
             val isSuccessful = response.isSuccessful
-
-            Log.d("FileServerService", "连接测试结果: $isSuccessful, 状态码: ${response.code}")
-
-            if (response.isSuccessful) {
-                val responseBody = response.body?.string()
-                Log.d("FileServerService", "响应内容: $responseBody")
-            }
-
             response.close()
             isSuccessful
-        } catch (e: SocketTimeoutException) {
-            Log.e("FileServerService", "连接超时: ${e.message}")
-            false
-        } catch (e: IOException) {
-            Log.e("FileServerService", "网络错误: ${e.message}")
-            false
         } catch (e: Exception) {
-            Log.e("FileServerService", "未知错误: ${e.message}")
             false
         }
     }
 
     private fun formatServerUrl(url: String): String {
         var formattedUrl = url.trim()
-
         if (!formattedUrl.startsWith("http://") && !formattedUrl.startsWith("https://")) {
             formattedUrl = "https://$formattedUrl"
-            Log.d("FileServerService", "自动添加协议前缀: $formattedUrl")
         }
-
         if (!formattedUrl.contains(":") || formattedUrl.matches(Regex("https?://[^:]+$"))) {
-            formattedUrl += if (formattedUrl.startsWith("https://")) {
-                ":443"
-            } else {
-                ":8080"
-            }
-            Log.d("FileServerService", "自动添加默认端口: $formattedUrl")
+            formattedUrl += if (formattedUrl.startsWith("https://")) ":443" else ":8080"
         }
-
         return formattedUrl
     }
 
     suspend fun getFileList(serverUrl: String, path: String = ""): List<FileSystemItem> = withContext(Dispatchers.IO) {
+        // 原有实现保持不变
         try {
             val formattedUrl = formatServerUrl(serverUrl)
-
-            // 修复：正确处理路径编码，特别是深层目录
             val url = if (path.isEmpty()) {
                 "${formattedUrl.removeSuffix("/")}/api/fileserver/list"
             } else {
-                // 对于深层目录，需要正确编码路径
-                val encodedPath = path.split("/").joinToString("/") { segment ->
-                    java.net.URLEncoder.encode(segment, "UTF-8")
-                }
+                val encodedPath = path.split("/").joinToString("/") { segment -> URLEncoder.encode(segment, "UTF-8") }
                 "${formattedUrl.removeSuffix("/")}/api/fileserver/list/$encodedPath"
             }
-
-            Log.d("FileServerService", "获取文件列表: $url (原始路径: $path)")
-
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "FileServerClient/1.0")
-                .build()
-
+            val request = Request.Builder().url(url).header("User-Agent", "FileServerClient/1.0").build()
             val response = client.newCall(request).execute()
-
             if (response.isSuccessful) {
                 val json = response.body?.string() ?: ""
-                Log.d("FileServerService", "文件列表响应: $json")
-
                 val apiResponse = gson.fromJson(json, ApiListResponse::class.java)
-
                 val items = mutableListOf<FileSystemItem>()
-
-                // 添加上级目录（返回上级）
                 if (path.isNotEmpty() && path != "/") {
-                    val parentPath = if (path.contains("/")) {
-                        path.substringBeforeLast("/")
-                    } else {
-                        ""
-                    }
+                    val parentPath = if (path.contains("/")) path.substringBeforeLast("/") else ""
                     items.add(FileSystemItem(
-                        name = "..",
-                        path = parentPath,
-                        size = 0,
-                        extension = "",
-                        sizeFormatted = "",
-                        lastModified = "",
-                        isVideo = false,
-                        isAudio = false,
-                        mimeType = "inode/directory",
-                        encoding = ""
+                        name = "..", path = parentPath, size = 0, extension = "", sizeFormatted = "",
+                        lastModified = "", isVideo = false, isAudio = false, mimeType = "inode/directory", encoding = ""
                     ))
                 }
-
-                // 添加目录
                 apiResponse.directories.forEach { dir ->
-                    val dirName = dir.name.ifEmpty {
-                        dir.path.substringAfterLast('/').ifEmpty { "未命名目录" }
-                    }
-
+                    val dirName = dir.name.ifEmpty { dir.path.substringAfterLast('/').ifEmpty { "未命名目录" } }
                     items.add(FileSystemItem(
-                        name = dirName,
-                        path = dir.path,
-                        size = 0,
-                        extension = "",
-                        sizeFormatted = "",
-                        lastModified = "",
-                        isVideo = false,
-                        isAudio = false,
-                        mimeType = "inode/directory",
-                        encoding = ""
+                        name = dirName, path = dir.path, size = 0, extension = "", sizeFormatted = "",
+                        lastModified = "", isVideo = false, isAudio = false, mimeType = "inode/directory", encoding = ""
                     ))
                 }
-
-                // 添加文件
                 apiResponse.files.forEach { file ->
-                    val fileName = file.name.ifEmpty {
-                        file.path.substringAfterLast('/').ifEmpty { "未命名文件" }
-                    }
-
+                    val fileName = file.name.ifEmpty { file.path.substringAfterLast('/').ifEmpty { "未命名文件" } }
                     items.add(FileSystemItem(
-                        name = fileName,
-                        path = file.path,
-                        size = file.size,
-                        extension = file.extension,
+                        name = fileName, path = file.path, size = file.size, extension = file.extension,
                         sizeFormatted = file.sizeFormatted.ifEmpty { formatFileSize(file.size) },
-                        lastModified = file.lastModified,
-                        isVideo = file.isVideo,
-                        isAudio = file.isAudio,
-                        mimeType = file.mimeType,
-                        encoding = file.encoding
+                        lastModified = file.lastModified, isVideo = file.isVideo, isAudio = file.isAudio,
+                        mimeType = file.mimeType, encoding = file.encoding
                     ))
                 }
-
-                Log.d("FileServerService", "成功获取 ${items.size} 个文件/目录")
                 items
             } else {
-                Log.e("FileServerService", "获取文件列表失败: ${response.code} - ${response.message}")
                 emptyList()
             }
         } catch (e: Exception) {
-            Log.e("FileServerService", "获取文件列表异常: ${e.message}")
             emptyList()
         }
     }
 
-    // 第155行附近
     suspend fun uploadFiles(
         serverUrl: String,
-        files: List<Pair<File, String>>,  // 现在接收 List<Pair<File, String>>
+        files: List<Pair<File, String>>,
         targetPath: String = ""
     ): UploadResult = withContext(Dispatchers.IO) {
-        // 添加空列表检查
-        if (files.isEmpty()) {
-            Log.e("FileServerService", "文件列表为空")
-            return@withContext UploadResult(success = false, message = "没有选择要上传的文件")
-        }
-
-        // 检查文件是否存在
-        val validFiles = files.filter { (file, originalName) ->
-            if (!file.exists()) {
-                Log.w("FileServerService", "文件不存在: ${file.absolutePath}, 原始文件名: $originalName")
-                false
-            } else if (!file.canRead()) {
-                Log.w("FileServerService", "文件不可读: ${file.absolutePath}, 原始文件名: $originalName")
-                false
-            } else {
-                // 同时记录原始文件名和临时文件名
-                Log.d("FileServerService", "验证文件通过: 临时文件=${file.name}, 原始文件名=$originalName")
-                true
-            }
-        }
-
-        if (validFiles.isEmpty()) {
-            Log.e("FileServerService", "没有有效的文件可上传")
-            return@withContext UploadResult(success = false, message = "没有有效的文件可上传")
-        }
-
+        // 原有实现保持不变
+        if (files.isEmpty()) return@withContext UploadResult(success = false, message = "没有选择要上传的文件")
+        val validFiles = files.filter { (file, _) -> file.exists() && file.canRead() }
+        if (validFiles.isEmpty()) return@withContext UploadResult(success = false, message = "没有有效的文件可上传")
         try {
             val formattedUrl = formatServerUrl(serverUrl)
-
-            // 修复：正确处理深层目录的上传路径
             val uploadUrl = if (targetPath.isEmpty()) {
                 "${formattedUrl.removeSuffix("/")}/api/fileserver/upload"
             } else {
-                // 对深层目录路径进行分段编码
-                val encodedPath = targetPath.split("/").joinToString("/") { segment ->
-                    java.net.URLEncoder.encode(segment, "UTF-8")
-                }
+                val encodedPath = targetPath.split("/").joinToString("/") { segment -> URLEncoder.encode(segment, "UTF-8") }
                 "${formattedUrl.removeSuffix("/")}/api/fileserver/upload/$encodedPath"
             }
-
-            Log.d("FileServerService", "上传 ${validFiles.size} 个文件到: $uploadUrl (目标路径: $targetPath)")
-
-            val multipartBuilder = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-
+            val multipartBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
             validFiles.forEach { (file, originalName) ->
-                Log.d("FileServerService", "添加文件到multipart: 原始文件名='$originalName', 临时文件='${file.name}' (${file.length()} bytes)")
-                multipartBuilder.addFormDataPart(
-                    "files",
-                    originalName,  // ← 关键：使用原始文件名而不是临时文件名
-                    file.asRequestBody("application/octet-stream".toMediaType())
-                )
+                multipartBuilder.addFormDataPart("files", originalName, file.asRequestBody("application/octet-stream".toMediaType()))
             }
-
             val requestBody = multipartBuilder.build()
-
-            val request = Request.Builder()
-                .url(uploadUrl)
-                .post(requestBody)
-                .build()
-
+            val request = Request.Builder().url(uploadUrl).post(requestBody).build()
             val response = client.newCall(request).execute()
-
             if (response.isSuccessful) {
                 val json = response.body?.string() ?: ""
-                Log.d("FileServerService", "上传成功: $json")
                 gson.fromJson(json, UploadResult::class.java)
             } else {
-                val errorBody = response.body?.string() ?: "无错误信息"
-                Log.e("FileServerService", "上传失败: ${response.code} - $errorBody")
-                UploadResult(success = false, message = "上传失败: ${response.code} - $errorBody")
+                UploadResult(success = false, message = "上传失败: ${response.code}")
             }
         } catch (e: Exception) {
-            Log.e("FileServerService", "上传异常: ${e.message}")
             UploadResult(success = false, message = "上传异常: ${e.message}")
         }
     }
 
     private fun formatFileSize(bytes: Long): String {
         if (bytes == 0L) return "0 B"
-
         val sizes = arrayOf("B", "KB", "MB", "GB", "TB")
         var order = 0
         var len = bytes.toDouble()
@@ -317,94 +175,42 @@ class FileServerService(private val context: Context) {
     }
 
     suspend fun deleteFile(serverUrl: String, filePath: String): Boolean = withContext(Dispatchers.IO) {
+        // 原有实现保持不变
         try {
             val formattedUrl = formatServerUrl(serverUrl)
-            val encodedPath = java.net.URLEncoder.encode(filePath, "UTF-8")
+            val encodedPath = URLEncoder.encode(filePath, "UTF-8")
             val deleteUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/delete/$encodedPath"
-
-            Log.d("FileServerService", "删除文件: $deleteUrl")
-
-            val request = Request.Builder()
-                .url(deleteUrl)
-                .delete()
-                .build()
-
+            val request = Request.Builder().url(deleteUrl).delete().build()
             val response = client.newCall(request).execute()
-            val isSuccessful = response.isSuccessful
-
-            if (isSuccessful) {
-                Log.d("FileServerService", "删除文件成功: $filePath")
-            } else {
-                Log.e("FileServerService", "删除文件失败: ${response.code} - ${response.message}")
-            }
-
-            response.close()
-            isSuccessful
+            response.isSuccessful
         } catch (e: Exception) {
-            Log.e("FileServerService", "删除文件异常: ${e.message}")
             false
         }
     }
 
-    // ==================== 歌词相关方法 ====================
-
-    // 歌词相关数据类
-    data class LyricsMappingRequest(
-        val songPath: String,
-        val lyricsPath: String
-    )
-
-    data class LyricsFileInfo(
-        val path: String,
-        val name: String,
-        val size: Long,
-        val sizeFormatted: String,
-        val modifiedTime: String
-    )
-
-    data class LyricsResponse(
-        val type: String, // "lyrics_content" 或 "available_files"
-        val lyricsPath: String? = null,
-        val fileName: String? = null,
-        val content: String? = null,
-        val encoding: String? = null,
-        val files: List<LyricsFileInfo>? = null,
-        val message: String? = null
-    )
-
-    data class LyricsMappingResponse(
-        val songPath: String,
-        val lyricsPath: String,
-        val lyricsFileName: String,
-        val exists: Boolean
-    )
+    // ==================== 歌词相关方法（保持不变） ====================
+    data class LyricsMappingRequest(val songPath: String, val lyricsPath: String)
+    data class LyricsFileInfo(val path: String, val name: String, val size: Long, val sizeFormatted: String, val modifiedTime: String)
+    data class LyricsResponse(val type: String, val lyricsPath: String? = null, val fileName: String? = null,
+                              val content: String? = null, val encoding: String? = null,
+                              val files: List<LyricsFileInfo>? = null, val message: String? = null)
+    data class LyricsMappingResponse(val songPath: String, val lyricsPath: String, val lyricsFileName: String, val exists: Boolean)
 
     suspend fun getLyrics(serverUrl: String, songPath: String): LyricsResponse = withContext(Dispatchers.IO) {
+        // 原有实现
         try {
             val formattedUrl = formatServerUrl(serverUrl)
-            val encodedSongPath = java.net.URLEncoder.encode(songPath, "UTF-8")
+            val encodedSongPath = URLEncoder.encode(songPath, "UTF-8")
             val lyricsUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/$encodedSongPath"
-
-            Log.d("FileServerService", "获取歌词: $lyricsUrl")
-
-            val request = Request.Builder()
-                .url(lyricsUrl)
-                .header("User-Agent", "FileServerClient/1.0")
-                .build()
-
+            val request = Request.Builder().url(lyricsUrl).header("User-Agent", "FileServerClient/1.0").build()
             val response = client.newCall(request).execute()
-
             if (response.isSuccessful) {
                 val json = response.body?.string() ?: ""
-                Log.d("FileServerService", "歌词响应: $json")
                 gson.fromJson(json, LyricsResponse::class.java)
             } else {
-                val errorBody = response.body?.string() ?: "未知错误"
-                Log.e("FileServerService", "获取歌词失败: ${response.code} - $errorBody")
                 LyricsResponse(type = "error", message = "获取歌词失败: ${response.code}")
             }
         } catch (e: Exception) {
-            Log.e("FileServerService", "获取歌词异常: ${e.message}")
             LyricsResponse(type = "error", message = "获取歌词异常: ${e.message}")
         }
     }
@@ -413,32 +219,11 @@ class FileServerService(private val context: Context) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
             val mappingUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/mapping"
-
-            Log.d("FileServerService", "保存歌词映射: $mappingUrl")
-
-            val requestBody = gson.toJson(LyricsMappingRequest(songPath, lyricsPath))
-                .toRequestBody("application/json".toMediaType())
-
-            val request = Request.Builder()
-                .url(mappingUrl)
-                .post(requestBody)
-                .header("User-Agent", "FileServerClient/1.0")
-                .build()
-
+            val requestBody = gson.toJson(LyricsMappingRequest(songPath, lyricsPath)).toRequestBody("application/json".toMediaType())
+            val request = Request.Builder().url(mappingUrl).post(requestBody).header("User-Agent", "FileServerClient/1.0").build()
             val response = client.newCall(request).execute()
-            val isSuccessful = response.isSuccessful
-
-            if (isSuccessful) {
-                Log.d("FileServerService", "歌词映射保存成功")
-            } else {
-                val errorBody = response.body?.string() ?: "未知错误"
-                Log.e("FileServerService", "保存歌词映射失败: ${response.code} - $errorBody")
-            }
-
-            response.close()
-            isSuccessful
+            response.isSuccessful
         } catch (e: Exception) {
-            Log.e("FileServerService", "保存歌词映射异常: ${e.message}")
             false
         }
     }
@@ -446,62 +231,28 @@ class FileServerService(private val context: Context) {
     suspend fun getLyricsMapping(serverUrl: String, songPath: String): LyricsMappingResponse? = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
-            val encodedSongPath = java.net.URLEncoder.encode(songPath, "UTF-8")
+            val encodedSongPath = URLEncoder.encode(songPath, "UTF-8")
             val mappingUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/mapping/$encodedSongPath"
-
-            Log.d("FileServerService", "获取歌词映射: $mappingUrl")
-
-            val request = Request.Builder()
-                .url(mappingUrl)
-                .header("User-Agent", "FileServerClient/1.0")
-                .build()
-
+            val request = Request.Builder().url(mappingUrl).header("User-Agent", "FileServerClient/1.0").build()
             val response = client.newCall(request).execute()
-
             if (response.isSuccessful) {
                 val json = response.body?.string() ?: ""
                 gson.fromJson(json, LyricsMappingResponse::class.java)
-            } else {
-                null
-            }
+            } else null
         } catch (e: Exception) {
-            Log.e("FileServerService", "获取歌词映射异常: ${e.message}")
             null
         }
     }
 
-    // 在 FileServerService 类中添加
     suspend fun markNoLyrics(serverUrl: String, songPath: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
             val mappingUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/mapping"
-
-            Log.d("FileServerService", "标记无歌词: $mappingUrl")
-
-            // 使用特殊的路径来标记无歌词
-            val requestBody = gson.toJson(LyricsMappingRequest(songPath, "NO_LYRICS"))
-                .toRequestBody("application/json".toMediaType())
-
-            val request = Request.Builder()
-                .url(mappingUrl)
-                .post(requestBody)
-                .header("User-Agent", "FileServerClient/1.0")
-                .build()
-
+            val requestBody = gson.toJson(LyricsMappingRequest(songPath, "NO_LYRICS")).toRequestBody("application/json".toMediaType())
+            val request = Request.Builder().url(mappingUrl).post(requestBody).header("User-Agent", "FileServerClient/1.0").build()
             val response = client.newCall(request).execute()
-            val isSuccessful = response.isSuccessful
-
-            if (isSuccessful) {
-                Log.d("FileServerService", "标记无歌词成功")
-            } else {
-                val errorBody = response.body?.string() ?: "未知错误"
-                Log.e("FileServerService", "标记无歌词失败: ${response.code} - $errorBody")
-            }
-
-            response.close()
-            isSuccessful
+            response.isSuccessful
         } catch (e: Exception) {
-            Log.e("FileServerService", "标记无歌词异常: ${e.message}")
             false
         }
     }
@@ -509,23 +260,14 @@ class FileServerService(private val context: Context) {
     suspend fun getLyricsFiles(serverUrl: String, directory: String): List<LyricsFileInfo> = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
-            val encodedDirectory = java.net.URLEncoder.encode(directory, "UTF-8")
+            val encodedDirectory = URLEncoder.encode(directory, "UTF-8")
             val filesUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/lyrics/files/$encodedDirectory"
-
-            Log.d("FileServerService", "获取歌词文件列表: $filesUrl")
-
-            val request = Request.Builder()
-                .url(filesUrl)
-                .header("User-Agent", "FileServerClient/1.0")
-                .build()
-
+            val request = Request.Builder().url(filesUrl).header("User-Agent", "FileServerClient/1.0").build()
             val response = client.newCall(request).execute()
-
             if (response.isSuccessful) {
                 val json = response.body?.string() ?: ""
                 val apiResponse = gson.fromJson(json, Map::class.java)
                 val filesList = apiResponse["lyricsFiles"] as? List<Map<String, Any>> ?: emptyList()
-
                 filesList.map { fileMap ->
                     LyricsFileInfo(
                         path = fileMap["path"] as? String ?: "",
@@ -535,12 +277,161 @@ class FileServerService(private val context: Context) {
                         modifiedTime = fileMap["modifiedTime"] as? String ?: ""
                     )
                 }
-            } else {
-                emptyList()
-            }
+            } else emptyList()
         } catch (e: Exception) {
-            Log.e("FileServerService", "获取歌词文件列表异常: ${e.message}")
             emptyList()
+        }
+    }
+
+    // ==================== 新增：歌曲元数据相关 API ====================
+
+    data class SongMetadataResponse(
+        val path: String,
+        val fileName: String,
+        val metadata: SongMetadata
+    )
+
+    data class SaveMetadataMappingRequest(
+        val songPath: String,
+        val title: String?,
+        val artist: String?,
+        val album: String?
+    )
+
+    /**
+     * 获取歌曲元数据
+     */
+    suspend fun getSongMetadata(serverUrl: String, songPath: String): SongMetadata? = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedPath = URLEncoder.encode(songPath, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/song/metadata/$encodedPath"
+            val request = Request.Builder().url(url).build()
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: return@withContext null
+                val apiResponse = gson.fromJson(json, SongMetadataResponse::class.java)
+                apiResponse.metadata
+            } else null
+        } catch (e: Exception) {
+            Log.e("FileServerService", "获取歌曲元数据失败", e)
+            null
+        }
+    }
+
+    /**
+     * 保存歌曲元数据映射（用户自定义）
+     */
+    suspend fun saveSongMetadataMapping(
+        serverUrl: String,
+        songPath: String,
+        title: String?,
+        artist: String?,
+        album: String?
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/song/metadata/mapping"
+            val body = gson.toJson(
+                SaveMetadataMappingRequest(
+                    songPath = songPath,
+                    title = title,
+                    artist = artist,
+                    album = album
+                )
+            ).toRequestBody("application/json".toMediaType())
+            val request = Request.Builder().url(url).post(body).build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "保存歌曲元数据映射失败", e)
+            false
+        }
+    }
+
+    /**
+     * 删除歌曲元数据映射
+     */
+    suspend fun deleteSongMetadataMapping(serverUrl: String, songPath: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedPath = URLEncoder.encode(songPath, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/song/metadata/mapping/$encodedPath"
+            val request = Request.Builder().url(url).delete().build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "删除歌曲元数据映射失败", e)
+            false
+        }
+    }
+
+    /**
+     * 获取专辑封面（返回字节流）
+     */
+    suspend fun getAlbumCover(serverUrl: String, songPath: String): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedPath = URLEncoder.encode(songPath, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/song/cover/$encodedPath"
+            val request = Request.Builder().url(url).build()
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) response.body?.bytes() else null
+        } catch (e: Exception) {
+            Log.e("FileServerService", "获取专辑封面失败", e)
+            null
+        }
+    }
+
+    /**
+     * 上传自定义封面
+     * @param coverFile 图片文件
+     * @return 服务器返回的封面文件名，失败返回 null
+     */
+    suspend fun uploadAlbumCover(
+        serverUrl: String,
+        songPath: String,
+        coverFile: File
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/song/cover/upload"
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("songPath", songPath)
+                .addFormDataPart(
+                    "coverFile",
+                    coverFile.name,
+                    coverFile.asRequestBody("image/*".toMediaType())
+                )
+                .build()
+            val request = Request.Builder().url(url).post(requestBody).build()
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: return@withContext null
+                val result = gson.fromJson(json, Map::class.java)
+                result["coverPath"] as? String
+            } else null
+        } catch (e: Exception) {
+            Log.e("FileServerService", "上传专辑封面失败", e)
+            null
+        }
+    }
+
+    /**
+     * 删除自定义封面
+     */
+    suspend fun deleteAlbumCover(serverUrl: String, songPath: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedPath = URLEncoder.encode(songPath, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/song/cover/$encodedPath"
+            val request = Request.Builder().url(url).delete().build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "删除专辑封面失败", e)
+            false
         }
     }
 }

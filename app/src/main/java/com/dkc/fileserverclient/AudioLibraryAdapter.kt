@@ -6,18 +6,19 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import coil.load
 
 class AudioLibraryAdapter(
     private val serverUrl: String,
-    private val audioItems: List<FileSystemItem>,
-    private val onAudioClick: (FileSystemItem) -> Unit,
-    private val onAudioLongClick: (FileSystemItem) -> Unit
+    private var audioTracks: List<AudioTrack>,
+    private val onAudioClick: (AudioTrack) -> Unit,
+    private val onAudioLongClick: (AudioTrack) -> Unit
 ) : RecyclerView.Adapter<AudioLibraryAdapter.AudioViewHolder>() {
 
     class AudioViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val audioIcon: ImageView = view.findViewById(R.id.audioIcon)
         val fileName: TextView = view.findViewById(R.id.audioFileName)
-        val artistAlbum: TextView = view.findViewById(R.id.audioArtistAlbum) // 重命名为artistAlbum
+        val artistAlbum: TextView = view.findViewById(R.id.audioArtistAlbum)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): AudioViewHolder {
@@ -27,47 +28,46 @@ class AudioLibraryAdapter(
     }
 
     override fun onBindViewHolder(holder: AudioViewHolder, position: Int) {
-        val audioItem = audioItems[position]
+        val track = audioTracks[position]
+        val displayTitle = track.title ?: removeExtension(track.name)
+        holder.fileName.text = displayTitle
 
-        // 移除扩展名，只显示文件名
-        val displayName = removeExtension(audioItem.name)
-        holder.fileName.text = displayName
+        val artistAlbumText = when {
+            !track.artist.isNullOrEmpty() && !track.album.isNullOrEmpty() -> "${track.artist} · ${track.album}"
+            !track.artist.isNullOrEmpty() -> track.artist!!
+            !track.album.isNullOrEmpty() -> track.album!!
+            else -> "未知艺术家 · 未知专辑"
+        }
+        holder.artistAlbum.text = artistAlbumText
 
-        // 设置音频图标
-        holder.audioIcon.setImageResource(R.drawable.ic_music_image_placeholder)
-
-        // 设置艺术家/专辑信息（目前显示未知）
-        holder.artistAlbum.text = "未知艺术家 · 未知专辑"
-
-        // 设置点击事件
-        holder.itemView.setOnClickListener {
-            onAudioClick(audioItem)
+        // 加载封面
+        if (!track.coverUrl.isNullOrEmpty()) {
+            holder.audioIcon.load(track.coverUrl) {
+                crossfade(true)
+                placeholder(R.drawable.ic_music_image_placeholder)
+                error(R.drawable.ic_music_image_placeholder)
+            }
+        } else {
+            holder.audioIcon.setImageResource(R.drawable.ic_music_image_placeholder)
         }
 
-        holder.itemView.setOnLongClickListener {
-            onAudioLongClick(audioItem)
-            true
-        }
+        holder.itemView.setOnClickListener { onAudioClick(track) }
+        holder.itemView.setOnLongClickListener { onAudioLongClick(track); true }
     }
 
-    override fun getItemCount(): Int = audioItems.size
+    override fun getItemCount(): Int = audioTracks.size
 
-    /**
-     * 从文件名中移除扩展名
-     */
     private fun removeExtension(fileName: String): String {
         return try {
-            // 找到最后一个点号的位置
             val lastDotIndex = fileName.lastIndexOf(".")
-            if (lastDotIndex > 0) {
-                // 移除点号及其后面的内容
-                fileName.substring(0, lastDotIndex)
-            } else {
-                // 如果没有点号，返回原文件名
-                fileName
-            }
+            if (lastDotIndex > 0) fileName.substring(0, lastDotIndex) else fileName
         } catch (e: Exception) {
             fileName
         }
+    }
+
+    fun updateData(newTracks: List<AudioTrack>) {
+        audioTracks = newTracks
+        notifyDataSetChanged()
     }
 }
