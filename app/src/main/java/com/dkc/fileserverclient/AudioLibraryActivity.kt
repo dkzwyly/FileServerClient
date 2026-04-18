@@ -302,7 +302,19 @@ class AudioLibraryActivity : AppCompatActivity() {
                 val updatedTracks = tracks.map { track ->
                     async(Dispatchers.IO) {
                         val metadata = metadataManager.getMetadata(currentServerUrl, track.path)
-                        if (metadata != null) AudioTrack.fromMetadata(track, metadata) else track
+                        if (metadata != null) {
+                            // 生成封面 URL（用于列表显示）
+                            val coverUrl = metadataManager.getCoverUrl(currentServerUrl, track.path, addTimestamp = false)
+                            // 使用 copy 创建新的 AudioTrack，添加 coverUrl
+                            track.copy(
+                                title = metadata.title.ifEmpty { track.title },
+                                artist = metadata.artist.ifEmpty { track.artist },
+                                album = metadata.album.ifEmpty { track.album },
+                                coverUrl = coverUrl
+                            )
+                        } else {
+                            track
+                        }
                     }
                 }.awaitAll()
 

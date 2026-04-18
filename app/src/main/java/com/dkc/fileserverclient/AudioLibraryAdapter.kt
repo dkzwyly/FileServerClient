@@ -6,7 +6,9 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import coil.load
+import coil.ImageLoader
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 
 class AudioLibraryAdapter(
     private val serverUrl: String,
@@ -40,13 +42,22 @@ class AudioLibraryAdapter(
         }
         holder.artistAlbum.text = artistAlbumText
 
-        // 加载封面
+        // 加载封面：每次创建新的 ImageLoader（使用不验证证书的 OkHttpClient）
         if (!track.coverUrl.isNullOrEmpty()) {
-            holder.audioIcon.load(track.coverUrl) {
-                crossfade(true)
-                placeholder(R.drawable.ic_music_image_placeholder)
-                error(R.drawable.ic_music_image_placeholder)
-            }
+            // 创建信任所有证书的 ImageLoader
+            val imageLoader = ImageLoader.Builder(holder.itemView.context)
+                .okHttpClient(UnsafeHttpClient.createUnsafeOkHttpClient())
+                .build()
+
+            val request = ImageRequest.Builder(holder.itemView.context)
+                .data(track.coverUrl)
+                .target(holder.audioIcon)   // 指定目标 ImageView
+                .placeholder(R.drawable.ic_music_image_placeholder)
+                .error(R.drawable.ic_music_image_placeholder)
+                .diskCachePolicy(CachePolicy.DISABLED)
+                .memoryCachePolicy(CachePolicy.DISABLED)
+                .build()
+            imageLoader.enqueue(request)
         } else {
             holder.audioIcon.setImageResource(R.drawable.ic_music_image_placeholder)
         }
