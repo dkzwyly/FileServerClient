@@ -75,7 +75,12 @@ class AudioLibraryActivity : AppCompatActivity() {
         setupTabs()
         loadAudios()
         loadPlaylists()
+    }
 
+    override fun onResume() {
+        super.onResume()
+        // 从歌单详情页返回时刷新歌单列表（歌曲数量、封面可能已变化）
+        loadPlaylists()
     }
 
     private fun initViews() {
@@ -114,6 +119,7 @@ class AudioLibraryActivity : AppCompatActivity() {
 
         playlistAdapter = PlaylistAdapter(
             playlists = playlistList,
+            serverUrl = currentServerUrl,
             onPlaylistClick = { playlist ->
                 val intent = Intent(this, PlaylistDetailActivity::class.java).apply {
                     putExtra("PLAYLIST_ID", playlist.id)
@@ -192,8 +198,13 @@ class AudioLibraryActivity : AppCompatActivity() {
             .setItems(playlistNames) { _, which ->
                 val selectedPlaylist = playlists[which]
                 val added = PlaylistManager.addTrackToPlaylist(selectedPlaylist.id, audioTrack)
-                if (added) showToast("已添加到歌单 \"${selectedPlaylist.name}\"")
-                else showToast("歌曲已存在于该歌单")
+                if (added) {
+                    showToast("已添加到歌单 \"${selectedPlaylist.name}\"")
+                    // 添加成功后立即刷新歌单列表（更新歌曲数量和封面）
+                    loadPlaylists()
+                } else {
+                    showToast("歌曲已存在于该歌单")
+                }
             }
             .setNegativeButton("取消", null)
             .show()
@@ -294,7 +305,6 @@ class AudioLibraryActivity : AppCompatActivity() {
                 audioFileItems.clear()
                 audioFileItems.addAll(allItems.filter { !it.isDirectory && AudioUtils.isAudioFile(it) })
 
-                // 转换为 AudioTrack 并填充元数据
                 val tracks = audioFileItems.map { item ->
                     AudioTrack.fromFileSystemItem(item, currentServerUrl)
                 }
@@ -303,9 +313,7 @@ class AudioLibraryActivity : AppCompatActivity() {
                     async(Dispatchers.IO) {
                         val metadata = metadataManager.getMetadata(currentServerUrl, track.path)
                         if (metadata != null) {
-                            // 生成封面 URL（用于列表显示）
                             val coverUrl = metadataManager.getCoverUrl(currentServerUrl, track.path, addTimestamp = false)
-                            // 使用 copy 创建新的 AudioTrack，添加 coverUrl
                             track.copy(
                                 title = metadata.title.ifEmpty { track.title },
                                 artist = metadata.artist.ifEmpty { track.artist },
