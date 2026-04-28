@@ -54,7 +54,7 @@ class ImageGalleryActivity : AppCompatActivity() {
     private var isAllSelected = false
 
     private var currentSortBy = "dateTaken"
-    private var currentSortOrder = "asc"
+    private var currentSortOrder = "desc"
 
     // 日期映射缓存（仅 dateTaken 排序时使用）
     private val dateTakenMap = mutableMapOf<String, String?>()
