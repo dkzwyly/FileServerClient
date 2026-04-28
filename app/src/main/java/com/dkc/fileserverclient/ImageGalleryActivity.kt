@@ -17,9 +17,8 @@ import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
-import androidx.core.app.ActivityCompat
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.media3.common.util.UnstableApi
@@ -38,6 +37,8 @@ class ImageGalleryActivity : AppCompatActivity() {
     private lateinit var titleText: TextView
     private lateinit var backButton: ImageButton
     private lateinit var cameraButton: ImageButton
+    private lateinit var sortButton: ImageButton
+    private lateinit var reindexButton: ImageButton
     private lateinit var deleteSelectedButton: ImageButton
     private lateinit var selectionToolbar: View
     private lateinit var selectedCountText: TextView
@@ -45,15 +46,18 @@ class ImageGalleryActivity : AppCompatActivity() {
     private lateinit var cancelSelectionButton: Button
 
     private val fileServerService by lazy { FileServerService(this) }
-    private val imageList = mutableListOf<FileSystemItem>()
     private lateinit var adapter: ImageGalleryAdapter
     private var currentServerUrl = ""
     private var isMultiSelectionMode = false
-    private val selectedItems = mutableSetOf<String>() // 存储选中图片的路径
+    private val selectedItems = mutableSetOf<String>()
     private var isAllSelected = false
 
-    private val coroutineScope = CoroutineScope(Dispatchers.Main)
-    private val imageGalleryPath = "data/图片"  // 根据日志，图片目录在这里
+    // 排序状态
+    private var currentSortBy = "name"
+    private var currentSortOrder = "asc"
+
+    private val coroutineScope = CoroutineScope(Dispatchers.Main + Job())
+    private val imageGalleryPath = "data/图片"
 
     // 相机相关变量
     private lateinit var currentPhotoPath: String
@@ -79,16 +83,7 @@ class ImageGalleryActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        Log.d(TAG, "onResume")
-        // 确保从其他页面返回时数据是最新的
-        refreshImagesIfNeeded()
-    }
-
-    private fun refreshImagesIfNeeded() {
-        // 这里可以根据需要添加刷新逻辑
-        // 例如，可以设置一个标志位来判断是否需要刷新
-        // 目前先注释掉，避免频繁刷新
-        // loadImages()
+        loadImages()
     }
 
     private fun initViews() {
@@ -97,6 +92,8 @@ class ImageGalleryActivity : AppCompatActivity() {
         titleText = findViewById(R.id.galleryTitleText)
         backButton = findViewById(R.id.backButton)
         cameraButton = findViewById(R.id.cameraButton)
+        sortButton = findViewById(R.id.sortButton)
+        reindexButton = findViewById(R.id.reindexButton)
         deleteSelectedButton = findViewById(R.id.deleteSelectedButton)
         selectionToolbar = findViewById(R.id.selectionToolbar)
         selectedCountText = findViewById(R.id.selectedCountText)
@@ -105,327 +102,227 @@ class ImageGalleryActivity : AppCompatActivity() {
 
         titleText.text = "图片库"
 
-        // 设置返回按钮
         backButton.setOnClickListener {
-            if (isMultiSelectionMode) {
-                exitMultiSelectionMode()
-            } else {
-                finish()
-            }
+            if (isMultiSelectionMode) exitMultiSelectionMode() else finish()
         }
 
-        // 相机按钮 - 拍照并上传
-        cameraButton.setOnClickListener {
-            checkAndRequestPermissions()
-        }
+        cameraButton.setOnClickListener { checkAndRequestPermissions() }
+        sortButton.setOnClickListener { showSortDialog() }
+        reindexButton.setOnClickListener { startReindex() }
+        deleteSelectedButton.setOnClickListener { showDeleteConfirmation() }
+        selectAllButton.setOnClickListener { toggleSelectAll() }
+        cancelSelectionButton.setOnClickListener { exitMultiSelectionMode() }
 
-        // 多选删除按钮
-        deleteSelectedButton.setOnClickListener {
-            showDeleteConfirmation()
-        }
-
-        // 全选按钮
-        selectAllButton.setOnClickListener {
-            toggleSelectAll()
-        }
-
-        // 取消选择按钮
-        cancelSelectionButton.setOnClickListener {
-            exitMultiSelectionMode()
-        }
-
-        // 使用网格布局，每行3个图片
         recyclerView.layoutManager = GridLayoutManager(this, 3)
 
-        adapter = ImageGalleryAdapter(currentServerUrl,
+        adapter = ImageGalleryAdapter(
+            serverUrl = currentServerUrl,
             isMultiSelectionMode = { isMultiSelectionMode },
-            isItemSelected = { itemPath -> selectedItems.contains(itemPath) },
+            isItemSelected = { selectedItems.contains(it) },
             onImageClick = { imageItem ->
-                if (isMultiSelectionMode) {
-                    // 多选模式下，点击切换选中状态
-                    toggleItemSelection(imageItem)
-                } else {
-                    // 普通模式下，预览图片
-                    previewImage(imageItem)
-                }
+                if (isMultiSelectionMode) toggleItemSelection(imageItem)
+                else previewImage(imageItem)
             },
             onImageLongClick = { imageItem ->
-                // 长按进入多选模式
-                if (!isMultiSelectionMode) {
-                    enterMultiSelectionMode()
-                }
-                // 选中长按的项
+                if (!isMultiSelectionMode) enterMultiSelectionMode()
                 toggleItemSelection(imageItem)
             }
         )
         recyclerView.adapter = adapter
     }
 
-    private fun loadImages() {
+    private fun showSortDialog() {
+        val options = arrayOf(
+            "按名称 (升序)", "按名称 (降序)",
+            "按修改时间 (升序)", "按修改时间 (降序)",
+            "按文件大小 (升序)", "按文件大小 (降序)",
+            "按拍摄时间 (升序)", "按拍摄时间 (降序)"
+        )
+        val index = when (currentSortBy) {
+            "name" -> if (currentSortOrder == "asc") 0 else 1
+            "modified" -> if (currentSortOrder == "asc") 2 else 3
+            "size" -> if (currentSortOrder == "asc") 4 else 5
+            "dateTaken" -> if (currentSortOrder == "asc") 6 else 7
+            else -> 0
+        }
+        AlertDialog.Builder(this)
+            .setTitle("排序方式")
+            .setSingleChoiceItems(options, index) { _, which ->
+                val (sortBy, sortOrder) = when (which) {
+                    0 -> "name" to "asc"
+                    1 -> "name" to "desc"
+                    2 -> "modified" to "asc"
+                    3 -> "modified" to "desc"
+                    4 -> "size" to "asc"
+                    5 -> "size" to "desc"
+                    6 -> "dateTaken" to "asc"
+                    7 -> "dateTaken" to "desc"
+                    else -> "name" to "asc"
+                }
+                loadImages(sortBy, sortOrder)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun loadImages(sortBy: String = currentSortBy, sortOrder: String = currentSortOrder) {
+        currentSortBy = sortBy
+        currentSortOrder = sortOrder
         coroutineScope.launch {
-            statusText.text = "正在加载图片..."
-
+            statusText.text = "加载中..."
             try {
-                Log.d(TAG, "开始加载图片目录: $imageGalleryPath")
-
-                val allItems = withContext(Dispatchers.IO) {
-                    fileServerService.getFileList(currentServerUrl, imageGalleryPath)
+                val items = withContext(Dispatchers.IO) {
+                    fileServerService.getFileList(currentServerUrl, imageGalleryPath, sortBy, sortOrder)
                 }
-
-                Log.d(TAG, "获取到 ${allItems.size} 个项目")
-
-                // 过滤出图片文件
-                val newImageList = allItems.filter { item ->
-                    !item.isDirectory && item.isImage
-                }
-
-                Log.d(TAG, "过滤后得到 ${newImageList.size} 张图片")
-
-                // 使用DiffUtil更新列表，避免UI闪烁
-                adapter.submitList(newImageList)
-
-                if (newImageList.isEmpty()) {
-                    statusText.text = "没有找到图片文件"
-                } else {
-                    statusText.text = "共找到 ${newImageList.size} 张图片"
-
-                    // 显示第一张图片的信息用于调试
-                    if (newImageList.isNotEmpty()) {
-                        val firstImage = newImageList[0]
-                        Log.d(TAG, "第一张图片: ${firstImage.name}, 路径: ${firstImage.path}, 有缩略图: ${firstImage.hasThumbnail}")
-                    }
-                }
-
+                val images = items.filter { !it.isDirectory && it.isImage }
+                adapter.submitList(images)
+                statusText.text = if (images.isEmpty()) "无图片" else "共 ${images.size} 张"
             } catch (e: Exception) {
-                statusText.text = "加载失败: ${e.message}"
-                Log.e(TAG, "加载图片异常", e)
+                statusText.text = "加载失败"
+                Log.e(TAG, "loadImages error", e)
             }
         }
     }
 
-    // 在ImageGalleryActivity.kt中修改previewImage方法
-    @UnstableApi
-    private fun previewImage(imageItem: FileSystemItem) {
-        try {
-            val encodedPath = java.net.URLEncoder.encode(imageItem.path, "UTF-8")
-            val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
-
-            Log.d(TAG, "启动ImageActivity预览图片: ${imageItem.name}")
-
-            val intent = Intent(this, ImageActivity::class.java).apply {
-                putExtra("FILE_NAME", imageItem.name)
-                putExtra("FILE_URL", fileUrl)
-                putExtra("FILE_PATH", imageItem.path)
-                putExtra("SERVER_URL", currentServerUrl)
-                // 对于图片库，当前路径就是图片目录
-                putExtra("CURRENT_PATH", imageGalleryPath)
+    private fun startReindex() {
+        reindexButton.isEnabled = false
+        Toast.makeText(this, "请求重建元数据...", Toast.LENGTH_SHORT).show()
+        coroutineScope.launch {
+            try {
+                val success = fileServerService.reindexPhotoMetadata(currentServerUrl)
+                if (success) {
+                    Toast.makeText(this@ImageGalleryActivity, "重建任务已启动，稍后刷新", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this@ImageGalleryActivity, "重建请求失败", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@ImageGalleryActivity, "异常: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                delay(5000)
+                reindexButton.isEnabled = true
             }
-            startActivity(intent)
+        }
+    }
+
+    private fun previewImage(item: FileSystemItem) {
+        try {
+            val encoded = java.net.URLEncoder.encode(item.path, "UTF-8")
+            val url = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encoded"
+            startActivity(Intent(this, ImageActivity::class.java).apply {
+                putExtra("FILE_NAME", item.name)
+                putExtra("FILE_URL", url)
+                putExtra("FILE_PATH", item.path)
+                putExtra("SERVER_URL", currentServerUrl)
+                putExtra("CURRENT_PATH", imageGalleryPath)
+            })
         } catch (e: Exception) {
-            Log.e(TAG, "启动ImageActivity失败", e)
             Toast.makeText(this, "预览失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
-    // ==================== 相机拍照上传功能 ====================
-
-    // 简化权限检查 - 一次性检查所有所需权限
+    // ==================== 相机权限及拍照 ====================
     private fun checkAndRequestPermissions() {
-        // Android 13+ 需要单独请求媒体权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+ 请求相机权限
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                 requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             } else {
-                // 已经有相机权限，检查是否有文件访问权限
-                if (checkStoragePermissions()) {
-                    takePhoto()
-                }
+                if (checkStoragePermissions()) takePhoto()
             }
         } else {
-            // Android 12 及以下，一次性请求所有权限
             val permissionsToRequest = mutableListOf<String>()
-
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.CAMERA)
             }
-
-            // 检查存储权限
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
-
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
-
-            if (permissionsToRequest.isEmpty()) {
-                // 已有所有权限，直接拍照
-                takePhoto()
-            } else {
-                // 请求缺失的权限
-                requestMultiplePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
-            }
+            if (permissionsToRequest.isEmpty()) takePhoto()
+            else requestMultiplePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 
-    // Android 13+ 相机权限请求
-    private val requestCameraPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            // 相机权限已授予，检查存储权限
-            if (checkStoragePermissions()) {
-                takePhoto()
-            }
-        } else {
-            Toast.makeText(this, "需要相机权限才能拍照", Toast.LENGTH_SHORT).show()
-        }
+    private val requestCameraPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted && checkStoragePermissions()) takePhoto()
+        else Toast.makeText(this, "需要相机权限", Toast.LENGTH_SHORT).show()
     }
 
-    // Android 12 及以下的多权限请求
-    private val requestMultiplePermissionsLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val allGranted = permissions.entries.all { it.value }
-        if (allGranted) {
-            // 所有权限已授予，拍照
-            takePhoto()
-        } else {
-            Toast.makeText(this, "需要相机和存储权限才能拍照", Toast.LENGTH_SHORT).show()
-        }
+    private val requestMultiplePermissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        if (permissions.entries.all { it.value }) takePhoto()
+        else Toast.makeText(this, "需要相机和存储权限", Toast.LENGTH_SHORT).show()
     }
 
-    // 检查存储权限
     private fun checkStoragePermissions(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+ 不需要额外的存储权限来访问应用私有目录
-            true
-        } else {
-            // Android 12 及以下，检查存储权限
-            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED &&
-                    ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-        }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) true
+        else ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun takePhoto() {
-        // 创建图片文件
         val photoFile = createImageFile()
         if (photoFile == null) {
             Toast.makeText(this, "无法创建图片文件", Toast.LENGTH_SHORT).show()
             return
         }
-
-        // 保存文件路径，用于后续上传
         currentPhotoPath = photoFile.absolutePath
         currentPhotoFile = photoFile
-
-        // 创建FileProvider的Uri
-        val photoUri = FileProvider.getUriForFile(
-            this,
-            "${packageName}.fileprovider", // 需要在AndroidManifest.xml中配置FileProvider
-            photoFile
-        )
-
-        // 启动相机Intent
-        val takePictureIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-        takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoUri)
-        takePictureIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-
-        // 确保有可用的相机应用
-        if (takePictureIntent.resolveActivity(packageManager) != null) {
-            takePictureLauncher.launch(takePictureIntent)
+        val photoUri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", photoFile)
+        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, photoUri)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+        if (intent.resolveActivity(packageManager) != null) {
+            takePictureLauncher.launch(intent)
         } else {
-            Toast.makeText(this, "没有可用的相机应用", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "无相机应用", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun createImageFile(): File? {
-        try {
-            // 创建文件名
-            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val imageFileName = "IMG_${timeStamp}"
-
-            // 获取存储目录
-            val storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-
-            // 创建文件
-            val imageFile = File.createTempFile(
-                imageFileName,
-                ".jpg",
-                storageDir
-            )
-
-            return imageFile
-        } catch (e: Exception) {
-            Log.e(TAG, "创建图片文件失败", e)
-            return null
-        }
-    }
-
-    // 使用Activity Result API处理相机结果
     private val takePictureLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            // 拍照成功，上传图片
-            currentPhotoFile?.let { photoFile ->
-                uploadPhotoToServer(photoFile)
-            }
+            currentPhotoFile?.let { uploadPhotoToServer(it) }
         } else {
-            // 用户取消了拍照
-            currentPhotoFile?.delete() // 删除临时文件
+            currentPhotoFile?.delete()
             currentPhotoFile = null
         }
     }
 
+    private fun createImageFile(): File? {
+        return try {
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val fileName = "IMG_${timeStamp}"
+            val storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+            File.createTempFile(fileName, ".jpg", storageDir)
+        } catch (e: Exception) {
+            Log.e(TAG, "创建图片文件失败", e)
+            null
+        }
+    }
+
     private fun uploadPhotoToServer(photoFile: File) {
-        if (!photoFile.exists()) {
-            Toast.makeText(this, "照片文件不存在", Toast.LENGTH_SHORT).show()
-            return
-        }
-
+        if (!photoFile.exists()) return
         coroutineScope.launch {
-            statusText.text = "正在上传照片..."
-
+            statusText.text = "上传中..."
             try {
-                Log.d(TAG, "开始上传照片: ${photoFile.name} 到目录: $imageGalleryPath")
-
-                // 使用现有的uploadFiles方法上传单个文件
-                val uploadResult = withContext(Dispatchers.IO) {
-                    // 创建Pair列表，包含文件和原始文件名
-                    val files = listOf(Pair(photoFile, photoFile.name))
-                    fileServerService.uploadFiles(currentServerUrl, files, imageGalleryPath)
+                val result = withContext(Dispatchers.IO) {
+                    fileServerService.uploadFiles(currentServerUrl, listOf(photoFile to photoFile.name), imageGalleryPath)
                 }
-
-                if (uploadResult.success) {
-                    statusText.text = "照片上传成功"
-                    Toast.makeText(this@ImageGalleryActivity, "照片上传成功", Toast.LENGTH_SHORT).show()
-
-                    // 完全重新加载图片列表
+                if (result.success) {
+                    Toast.makeText(this@ImageGalleryActivity, "上传成功", Toast.LENGTH_SHORT).show()
                     loadImages()
-
                 } else {
-                    statusText.text = "照片上传失败: ${uploadResult.message}"
-                    Toast.makeText(this@ImageGalleryActivity, "照片上传失败: ${uploadResult.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@ImageGalleryActivity, "上传失败: ${result.message}", Toast.LENGTH_SHORT).show()
                 }
-
             } catch (e: Exception) {
-                statusText.text = "上传异常: ${e.message}"
-                Log.e(TAG, "上传照片异常", e)
-                Toast.makeText(this@ImageGalleryActivity, "上传异常: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@ImageGalleryActivity, "上传异常", Toast.LENGTH_SHORT).show()
             }
+            statusText.text = if (adapter.itemCount == 0) "无图片" else "共 ${adapter.itemCount} 张"
         }
     }
 
-    private fun formatFileSize(bytes: Long): String {
-        return when {
-            bytes < 1024 -> "$bytes B"
-            bytes < 1024 * 1024 -> String.format("%.2f KB", bytes.toDouble() / 1024)
-            bytes < 1024 * 1024 * 1024 -> String.format("%.2f MB", bytes.toDouble() / (1024 * 1024))
-            else -> String.format("%.2f GB", bytes.toDouble() / (1024 * 1024 * 1024))
-        }
-    }
-
-    // 进入多选模式
+    // ==================== 多选模式 ====================
     private fun enterMultiSelectionMode() {
         isMultiSelectionMode = true
         selectionToolbar.visibility = View.VISIBLE
@@ -436,7 +333,6 @@ class ImageGalleryActivity : AppCompatActivity() {
         adapter.notifyDataSetChanged()
     }
 
-    // 退出多选模式
     private fun exitMultiSelectionMode() {
         isMultiSelectionMode = false
         selectionToolbar.visibility = View.GONE
@@ -447,121 +343,62 @@ class ImageGalleryActivity : AppCompatActivity() {
         adapter.notifyDataSetChanged()
     }
 
-    // 切换项的选择状态
-    private fun toggleItemSelection(imageItem: FileSystemItem) {
-        val itemPath = imageItem.path
-        if (selectedItems.contains(itemPath)) {
-            selectedItems.remove(itemPath)
-        } else {
-            selectedItems.add(itemPath)
-        }
+    private fun toggleItemSelection(item: FileSystemItem) {
+        val path = item.path
+        if (selectedItems.contains(path)) selectedItems.remove(path) else selectedItems.add(path)
         updateSelectionUI()
-
-        // 找到当前列表中对应的位置并通知更新
-        val currentList = adapter.currentList
-        val position = currentList.indexOfFirst { it.path == itemPath }
-        if (position != -1) {
-            adapter.notifyItemChanged(position, "selection")
-        }
+        val pos = adapter.currentList.indexOfFirst { it.path == path }
+        if (pos != -1) adapter.notifyItemChanged(pos, "selection")
     }
 
-    // 全选/取消全选
     private fun toggleSelectAll() {
         if (isAllSelected) {
-            // 取消全选
             selectedItems.clear()
             isAllSelected = false
         } else {
-            // 全选
             selectedItems.clear()
-            selectedItems.addAll(imageList.map { it.path })
+            selectedItems.addAll(adapter.currentList.map { it.path })
             isAllSelected = true
         }
         updateSelectionUI()
         adapter.notifyDataSetChanged()
     }
 
-    // 更新选择UI
     private fun updateSelectionUI() {
         selectedCountText.text = "已选择 ${selectedItems.size} 项"
         deleteSelectedButton.isEnabled = selectedItems.isNotEmpty()
         selectAllButton.text = if (isAllSelected) "取消全选" else "全选"
     }
 
-    // 显示删除确认对话框
     private fun showDeleteConfirmation() {
         if (selectedItems.isEmpty()) return
-
-        val message = if (selectedItems.size == 1) {
-            "确定要删除选中的1张图片吗？"
-        } else {
-            "确定要删除选中的${selectedItems.size}张图片吗？"
-        }
-
+        val message = if (selectedItems.size == 1) "确定删除选中的1张图片？" else "确定删除选中的${selectedItems.size}张图片？"
         AlertDialog.Builder(this)
             .setTitle("删除图片")
             .setMessage(message)
-            .setPositiveButton("删除") { _, _ ->
-                deleteSelectedImages()
-            }
+            .setPositiveButton("删除") { _, _ -> deleteSelectedImages() }
             .setNegativeButton("取消", null)
             .show()
     }
 
-    // 删除选中的图片
     private fun deleteSelectedImages() {
-        if (selectedItems.isEmpty()) return
-
         coroutineScope.launch {
-            statusText.text = "正在删除 ${selectedItems.size} 张图片..."
-
+            statusText.text = "删除中..."
             var successCount = 0
-            var failCount = 0
-
-            // 逐个删除选中的图片
-            for (itemPath in selectedItems) {
+            selectedItems.forEach { path ->
                 try {
-                    val success = withContext(Dispatchers.IO) {
-                        fileServerService.deleteFile(currentServerUrl, itemPath)
-                    }
-
-                    if (success) {
-                        successCount++
-                    } else {
-                        failCount++
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "删除图片失败: $itemPath", e)
-                    failCount++
-                }
+                    if (withContext(Dispatchers.IO) { fileServerService.deleteFile(currentServerUrl, path) }) successCount++
+                } catch (e: Exception) { Log.e(TAG, "删除失败", e) }
             }
-
-            // 重新加载图片列表
             loadImages()
-
-            // 退出多选模式
             exitMultiSelectionMode()
-
-            // 显示结果
-            val resultMessage = StringBuilder()
-            resultMessage.append("删除完成：")
-            if (successCount > 0) {
-                resultMessage.append("成功删除 $successCount 张图片")
-            }
-            if (failCount > 0) {
-                if (successCount > 0) resultMessage.append("，")
-                resultMessage.append("$failCount 张删除失败")
-            }
-
-            Toast.makeText(this@ImageGalleryActivity, resultMessage.toString(), Toast.LENGTH_SHORT).show()
+            Toast.makeText(this@ImageGalleryActivity, "已删除 $successCount 张", Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         coroutineScope.cancel()
-        // 清理适配器资源
         adapter.dispose()
-        Log.d(TAG, "onDestroy")
     }
 }

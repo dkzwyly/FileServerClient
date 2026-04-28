@@ -8,7 +8,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
-import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.URLEncoder
 import java.security.cert.X509Certificate
@@ -54,7 +53,6 @@ class FileServerService(private val context: Context) {
     }
 
     suspend fun testConnection(serverUrl: String): Boolean = withContext(Dispatchers.IO) {
-        // 原有实现保持不变
         try {
             val formattedUrl = formatServerUrl(serverUrl)
             val healthUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/health"
@@ -79,43 +77,82 @@ class FileServerService(private val context: Context) {
         return formattedUrl
     }
 
-    suspend fun getFileList(serverUrl: String, path: String = ""): List<FileSystemItem> = withContext(Dispatchers.IO) {
-        // 原有实现保持不变
+    suspend fun getFileList(
+        serverUrl: String,
+        path: String = "",
+        sortBy: String = "name",
+        sortOrder: String = "asc"
+    ): List<FileSystemItem> = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
-            val url = if (path.isEmpty()) {
-                "${formattedUrl.removeSuffix("/")}/api/fileserver/list"
+            val baseUrl = formattedUrl.removeSuffix("/")
+            val encodedPath = if (path.isNotEmpty()) {
+                path.split("/").joinToString("/") { segment -> URLEncoder.encode(segment, "UTF-8") }
+            } else ""
+
+            val url = if (encodedPath.isEmpty()) {
+                "$baseUrl/api/fileserver/list?sortBy=$sortBy&sortOrder=$sortOrder"
             } else {
-                val encodedPath = path.split("/").joinToString("/") { segment -> URLEncoder.encode(segment, "UTF-8") }
-                "${formattedUrl.removeSuffix("/")}/api/fileserver/list/$encodedPath"
+                "$baseUrl/api/fileserver/list/$encodedPath?sortBy=$sortBy&sortOrder=$sortOrder"
             }
-            val request = Request.Builder().url(url).header("User-Agent", "FileServerClient/1.0").build()
+
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "FileServerClient/1.0")
+                .build()
+
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
                 val json = response.body?.string() ?: ""
                 val apiResponse = gson.fromJson(json, ApiListResponse::class.java)
+
                 val items = mutableListOf<FileSystemItem>()
+
                 if (path.isNotEmpty() && path != "/") {
                     val parentPath = if (path.contains("/")) path.substringBeforeLast("/") else ""
                     items.add(FileSystemItem(
-                        name = "..", path = parentPath, size = 0, extension = "", sizeFormatted = "",
-                        lastModified = "", isVideo = false, isAudio = false, mimeType = "inode/directory", encoding = ""
+                        name = "..",
+                        path = parentPath,
+                        size = 0,
+                        extension = "",
+                        sizeFormatted = "",
+                        lastModified = "",
+                        isVideo = false,
+                        isAudio = false,
+                        mimeType = "inode/directory",
+                        encoding = ""
                     ))
                 }
+
                 apiResponse.directories.forEach { dir ->
                     val dirName = dir.name.ifEmpty { dir.path.substringAfterLast('/').ifEmpty { "未命名目录" } }
                     items.add(FileSystemItem(
-                        name = dirName, path = dir.path, size = 0, extension = "", sizeFormatted = "",
-                        lastModified = "", isVideo = false, isAudio = false, mimeType = "inode/directory", encoding = ""
+                        name = dirName,
+                        path = dir.path,
+                        size = 0,
+                        extension = "",
+                        sizeFormatted = "",
+                        lastModified = "",
+                        isVideo = false,
+                        isAudio = false,
+                        mimeType = "inode/directory",
+                        encoding = ""
                     ))
                 }
+
                 apiResponse.files.forEach { file ->
                     val fileName = file.name.ifEmpty { file.path.substringAfterLast('/').ifEmpty { "未命名文件" } }
                     items.add(FileSystemItem(
-                        name = fileName, path = file.path, size = file.size, extension = file.extension,
+                        name = fileName,
+                        path = file.path,
+                        size = file.size,
+                        extension = file.extension,
                         sizeFormatted = file.sizeFormatted.ifEmpty { formatFileSize(file.size) },
-                        lastModified = file.lastModified, isVideo = file.isVideo, isAudio = file.isAudio,
-                        mimeType = file.mimeType, encoding = file.encoding
+                        lastModified = file.lastModified,
+                        isVideo = file.isVideo,
+                        isAudio = file.isAudio,
+                        mimeType = file.mimeType,
+                        encoding = file.encoding
                     ))
                 }
                 items
@@ -123,6 +160,7 @@ class FileServerService(private val context: Context) {
                 emptyList()
             }
         } catch (e: Exception) {
+            Log.e("FileServerService", "获取文件列表失败", e)
             emptyList()
         }
     }
@@ -132,7 +170,6 @@ class FileServerService(private val context: Context) {
         files: List<Pair<File, String>>,
         targetPath: String = ""
     ): UploadResult = withContext(Dispatchers.IO) {
-        // 原有实现保持不变
         if (files.isEmpty()) return@withContext UploadResult(success = false, message = "没有选择要上传的文件")
         val validFiles = files.filter { (file, _) -> file.exists() && file.canRead() }
         if (validFiles.isEmpty()) return@withContext UploadResult(success = false, message = "没有有效的文件可上传")
@@ -175,7 +212,6 @@ class FileServerService(private val context: Context) {
     }
 
     suspend fun deleteFile(serverUrl: String, filePath: String): Boolean = withContext(Dispatchers.IO) {
-        // 原有实现保持不变
         try {
             val formattedUrl = formatServerUrl(serverUrl)
             val encodedPath = URLEncoder.encode(filePath, "UTF-8")
@@ -197,7 +233,6 @@ class FileServerService(private val context: Context) {
     data class LyricsMappingResponse(val songPath: String, val lyricsPath: String, val lyricsFileName: String, val exists: Boolean)
 
     suspend fun getLyrics(serverUrl: String, songPath: String): LyricsResponse = withContext(Dispatchers.IO) {
-        // 原有实现
         try {
             val formattedUrl = formatServerUrl(serverUrl)
             val encodedSongPath = URLEncoder.encode(songPath, "UTF-8")
@@ -283,8 +318,7 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    // ==================== 新增：歌曲元数据相关 API ====================
-
+    // ==================== 歌曲元数据相关 API ====================
     data class SongMetadataResponse(
         val path: String,
         val fileName: String,
@@ -298,9 +332,6 @@ class FileServerService(private val context: Context) {
         val album: String?
     )
 
-    /**
-     * 获取歌曲元数据
-     */
     suspend fun getSongMetadata(serverUrl: String, songPath: String): SongMetadata? = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
@@ -319,9 +350,6 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    /**
-     * 保存歌曲元数据映射（用户自定义）
-     */
     suspend fun saveSongMetadataMapping(
         serverUrl: String,
         songPath: String,
@@ -349,9 +377,6 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    /**
-     * 删除歌曲元数据映射
-     */
     suspend fun deleteSongMetadataMapping(serverUrl: String, songPath: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
@@ -366,9 +391,6 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    /**
-     * 获取专辑封面（返回字节流）
-     */
     suspend fun getAlbumCover(serverUrl: String, songPath: String): ByteArray? = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
@@ -383,11 +405,6 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    /**
-     * 上传自定义封面
-     * @param coverFile 图片文件
-     * @return 服务器返回的封面文件名，失败返回 null
-     */
     suspend fun uploadAlbumCover(
         serverUrl: String,
         songPath: String,
@@ -418,9 +435,6 @@ class FileServerService(private val context: Context) {
         }
     }
 
-    /**
-     * 删除自定义封面
-     */
     suspend fun deleteAlbumCover(serverUrl: String, songPath: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
@@ -431,6 +445,23 @@ class FileServerService(private val context: Context) {
             response.isSuccessful
         } catch (e: Exception) {
             Log.e("FileServerService", "删除专辑封面失败", e)
+            false
+        }
+    }
+
+    // ==================== 图片元数据重建 ====================
+    suspend fun reindexPhotoMetadata(serverUrl: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/photo-metadata/reindex"
+            val request = Request.Builder()
+                .url(url)
+                .post(RequestBody.create(null, ""))
+                .build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "重建元数据请求失败", e)
             false
         }
     }
