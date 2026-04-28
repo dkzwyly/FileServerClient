@@ -50,6 +50,7 @@
         android:textSize="12sp"
         android:maxLines="1"
         android:ellipsize="end"
+        android:visibility="gone"
         android:textColor="#666666" />
 
 </LinearLayout>

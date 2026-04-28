@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tv_date_header"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="10dp"
+    android:background="#F5F5F5"
+    android:textSize="14sp"
+    android:textColor="#555555"
+    android:textStyle="bold"
+    android:gravity="center_vertical"
+    android:paddingStart="16dp" />

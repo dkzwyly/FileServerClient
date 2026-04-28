@@ -16,7 +16,9 @@ data class FileSystemItem(
     @SerializedName("isAudio") val isAudio: Boolean = false,
     @SerializedName("mimeType") val mimeType: String = "",
     @SerializedName("encoding") val encoding: String = "",
+    @SerializedName("dateTaken") val dateTaken: String? = null,
     @SerializedName("hasThumbnail") val hasThumbnail: Boolean = false
+
 ) : Parcelable {
     // 修复：更严格的文件夹判断
     val isDirectory: Boolean

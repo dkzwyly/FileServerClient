@@ -1,5 +1,6 @@
 package com.dkc.fileserverclient
 
+import android.content.ContentValues.TAG
 import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
@@ -463,6 +464,41 @@ class FileServerService(private val context: Context) {
         } catch (e: Exception) {
             Log.e("FileServerService", "重建元数据请求失败", e)
             false
+        }
+    }
+    // 在类内部合适位置添加（例如 reindexPhotoMetadata 方法之后）
+
+    suspend fun getBatchDateTaken(
+        serverUrl: String,
+        paths: List<String>
+    ): Map<String, String?> = withContext(Dispatchers.IO) {
+        if (paths.isEmpty()) return@withContext emptyMap()
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/photo-metadata/batch"
+
+            // 构建 JSON 请求体
+            val jsonBody = gson.toJson(paths)
+            val requestBody = jsonBody.toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .header("Content-Type", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: "{}"
+                val type = object : com.google.gson.reflect.TypeToken<Map<String, String?>>() {}.type
+                gson.fromJson(json, type)
+            } else {
+                Log.e(TAG, "获取批量拍摄日期失败: ${response.code}")
+                emptyMap()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "获取批量拍摄日期异常", e)
+            emptyMap()
         }
     }
 }

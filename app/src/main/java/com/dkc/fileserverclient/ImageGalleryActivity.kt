@@ -27,6 +27,7 @@ import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.*
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -52,14 +53,15 @@ class ImageGalleryActivity : AppCompatActivity() {
     private val selectedItems = mutableSetOf<String>()
     private var isAllSelected = false
 
-    // 排序状态
-    private var currentSortBy = "name"
+    private var currentSortBy = "dateTaken"
     private var currentSortOrder = "asc"
+
+    // 日期映射缓存（仅 dateTaken 排序时使用）
+    private val dateTakenMap = mutableMapOf<String, String?>()
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main + Job())
     private val imageGalleryPath = "data/图片"
 
-    // 相机相关变量
     private lateinit var currentPhotoPath: String
     private var currentPhotoFile: File? = null
 
@@ -113,7 +115,17 @@ class ImageGalleryActivity : AppCompatActivity() {
         selectAllButton.setOnClickListener { toggleSelectAll() }
         cancelSelectionButton.setOnClickListener { exitMultiSelectionMode() }
 
-        recyclerView.layoutManager = GridLayoutManager(this, 3)
+        val gridLayoutManager = GridLayoutManager(this, 4)
+        gridLayoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+            override fun getSpanSize(position: Int): Int {
+                return when (adapter.getItemViewType(position)) {
+                    // 日期头部占满 3 列
+                    0 -> 4   // VIEW_TYPE_HEADER = 0
+                    else -> 1 // 图片占 1 列
+                }
+            }
+        }
+        recyclerView.layoutManager = gridLayoutManager
 
         adapter = ImageGalleryAdapter(
             serverUrl = currentServerUrl,
@@ -175,7 +187,24 @@ class ImageGalleryActivity : AppCompatActivity() {
                     fileServerService.getFileList(currentServerUrl, imageGalleryPath, sortBy, sortOrder)
                 }
                 val images = items.filter { !it.isDirectory && it.isImage }
-                adapter.submitList(images)
+
+                if (sortBy == "dateTaken") {
+                    // 1. 获取所有图片的拍摄日期
+                    val paths = images.map { it.path }
+                    val dates = withContext(Dispatchers.IO) {
+                        fileServerService.getBatchDateTaken(currentServerUrl, paths)
+                    }
+                    dateTakenMap.clear()
+                    dateTakenMap.putAll(dates)
+
+                    // 2. 分组
+                    val grouped = groupByDateTaken(images)
+                    adapter.submitList(grouped)
+                } else {
+                    val entries = images.map { GalleryItem.ImageEntry(it) }
+                    adapter.submitList(entries)
+                }
+
                 statusText.text = if (images.isEmpty()) "无图片" else "共 ${images.size} 张"
             } catch (e: Exception) {
                 statusText.text = "加载失败"
@@ -184,6 +213,53 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 将图片按拍摄日期分组，生成带日期头的 GalleryItem 列表
+     */
+    private fun groupByDateTaken(images: List<FileSystemItem>): List<GalleryItem> {
+        val result = mutableListOf<GalleryItem>()
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val today = Calendar.getInstance()
+
+        var currentLabel: String? = null
+        for (image in images) {
+            val dateStr = dateTakenMap[image.path]
+            val label = if (dateStr.isNullOrEmpty()) {
+                "未知日期"
+            } else {
+                try {
+                    val isoDate = dateStr!!.substringBefore("T")
+                    val cal = Calendar.getInstance().apply {
+                        time = dateFormat.parse(isoDate)!!
+                    }
+                    when {
+                        cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+                                cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) -> "今天"
+                        cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+                                cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) - 1 -> "昨天"
+                        else -> {
+                            if (cal.get(Calendar.YEAR) == today.get(Calendar.YEAR)) {
+                                SimpleDateFormat("M月d日", Locale.getDefault()).format(cal.time)
+                            } else {
+                                SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(cal.time)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    "未知日期"
+                }
+            }
+
+            if (label != currentLabel) {
+                currentLabel = label
+                result.add(GalleryItem.DateHeader(label))
+            }
+            result.add(GalleryItem.ImageEntry(image))
+        }
+        return result
+    }
+
+    // ---------- 原有方法（相机、多选、删除等）保持不变 ----------
     private fun startReindex() {
         reindexButton.isEnabled = false
         Toast.makeText(this, "请求重建元数据...", Toast.LENGTH_SHORT).show()
@@ -220,7 +296,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
-    // ==================== 相机权限及拍照 ====================
+    // ==================== 相机权限及拍照（完全不变） ====================
     private fun checkAndRequestPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -322,7 +398,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
-    // ==================== 多选模式 ====================
+    // ==================== 多选模式（完全不变） ====================
     private fun enterMultiSelectionMode() {
         isMultiSelectionMode = true
         selectionToolbar.visibility = View.VISIBLE
@@ -347,7 +423,10 @@ class ImageGalleryActivity : AppCompatActivity() {
         val path = item.path
         if (selectedItems.contains(path)) selectedItems.remove(path) else selectedItems.add(path)
         updateSelectionUI()
-        val pos = adapter.currentList.indexOfFirst { it.path == path }
+        // 查找在适配器中的位置并通知更新
+        val pos = adapter.currentList.indexOfFirst {
+            it is GalleryItem.ImageEntry && it.image.path == path
+        }
         if (pos != -1) adapter.notifyItemChanged(pos, "selection")
     }
 
@@ -357,7 +436,9 @@ class ImageGalleryActivity : AppCompatActivity() {
             isAllSelected = false
         } else {
             selectedItems.clear()
-            selectedItems.addAll(adapter.currentList.map { it.path })
+            adapter.currentList.filterIsInstance<GalleryItem.ImageEntry>().forEach {
+                selectedItems.add(it.image.path)
+            }
             isAllSelected = true
         }
         updateSelectionUI()
