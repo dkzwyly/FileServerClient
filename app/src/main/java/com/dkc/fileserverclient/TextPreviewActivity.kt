@@ -9,6 +9,8 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.ViewModelProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,8 @@ class TextPreviewActivity : AppCompatActivity() {
     private lateinit var rootLayout: RelativeLayout
     private lateinit var chapterButton: ImageButton
     private lateinit var statusLabel: TextView
+    private lateinit var settingsButton: ImageButton
+    private lateinit var audioButton: ImageButton
 
     private lateinit var viewModel: TextPreviewViewModel
     private lateinit var gestureDetector: GestureDetector
@@ -36,7 +40,7 @@ class TextPreviewActivity : AppCompatActivity() {
     private val isFirstLayoutComplete = AtomicBoolean(false)
     private var linesPerPage = 20
     private var lastClickTime = 0L
-    private val minClickInterval = 200L  // 进一步缩短到200ms
+    private val minClickInterval = 200L
 
     // 本地历史记录文件路径
     private lateinit var readingHistoryFile: File
@@ -57,7 +61,13 @@ class TextPreviewActivity : AppCompatActivity() {
         setupLayoutListener()
         setupObservers()
 
-        // 先加载历史记录，再计算分页和加载内容
+        // 处理系统窗口内边距，确保底部不被导航栏遮挡
+        applyWindowInsets()
+
+        // 应用保存的显示设置
+        applyDisplaySettings()
+
+        // 加载历史记录
         loadReadingHistory()
         calculateLinesPerPageAndLoad()
     }
@@ -70,32 +80,41 @@ class TextPreviewActivity : AppCompatActivity() {
         rootLayout = findViewById(R.id.rootLayout)
         chapterButton = findViewById(R.id.chapterButton)
         statusLabel = findViewById(R.id.statusLabel)
+        settingsButton = findViewById(R.id.settingsButton)
+        audioButton = findViewById(R.id.audioButton)
 
         supportActionBar?.hide()
         textContentTextView.isScrollContainer = false
 
-        // 章节按钮：保持正常大小但完全透明
-        // 1. 保持按钮原始大小（48x48dp），不修改布局参数
-        // 2. 完全透明化按钮
+        // 章节按钮（右上角透明）
         chapterButton.setBackgroundResource(android.R.color.transparent)
         chapterButton.setImageResource(android.R.color.transparent)
-        chapterButton.alpha = 0.0f  // 完全透明
-
-        // 3. 将按钮提到最前面，确保它不会被其他视图遮挡
+        chapterButton.alpha = 0.0f
         chapterButton.bringToFront()
-
-        // 4. 设置点击事件
         chapterButton.setOnClickListener {
             showChapterDialog()
         }
-
-        // 5. 确保按钮可见（虽然透明）
         chapterButton.isVisible = true
 
-        // 设置页面指示器
+        // 底部透明按钮
+        setupTransparentButton(settingsButton) {
+            showDisplaySettingsDialog()
+        }
+        setupTransparentButton(audioButton) {
+            Toast.makeText(this, "听书功能即将上线", Toast.LENGTH_SHORT).show()
+        }
+
         pageIndicator.textSize = 12f
         pageIndicator.setBackgroundColor(Color.TRANSPARENT)
         pageIndicator.setTextColor(Color.parseColor("#666666"))
+    }
+
+    private fun setupTransparentButton(button: ImageButton, onClick: () -> Unit) {
+        button.setBackgroundResource(android.R.color.transparent)
+        button.setImageResource(android.R.color.transparent)
+        button.alpha = 0.0f
+        button.isVisible = true
+        button.setOnClickListener { onClick() }
     }
 
     private fun setupIntentData() {
@@ -112,7 +131,6 @@ class TextPreviewActivity : AppCompatActivity() {
             Log.d("TextPreview", "创建历史记录目录: ${historyDir.absolutePath}")
         }
 
-        // 使用更简单的文件名，避免特殊字符问题
         val safeFileName = currentFileName.replace("[^a-zA-Z0-9]".toRegex(), "_")
         readingHistoryFile = File(historyDir, "history_${safeFileName}.dat")
         Log.d("TextPreview", "历史记录文件: ${readingHistoryFile.absolutePath}, 存在: ${readingHistoryFile.exists()}")
@@ -120,25 +138,21 @@ class TextPreviewActivity : AppCompatActivity() {
 
     private fun initViewModel() {
         viewModel = ViewModelProvider(this).get(TextPreviewViewModel::class.java)
-        // 传递文件信息给ViewModel
         viewModel.initialize(currentFileName, currentFileUrl, currentFilePath)
     }
 
     private fun setupObservers() {
-        // 观察页面内容
         viewModel.pageContent.observe(this) { content ->
             textContentTextView.text = content
             Log.d("TextPreview", "页面内容更新: ${content.length} 字符")
         }
 
-        // 观察页面信息
         viewModel.pageInfo.observe(this) { pageInfo ->
             val progressText = "${pageInfo.currentPage}/${pageInfo.totalPages} (${pageInfo.progress}%)"
             pageIndicator.text = progressText
             Log.d("TextPreview", "页面信息更新: $progressText")
         }
 
-        // 观察加载状态
         viewModel.loadingState.observe(this) { loadingState ->
             if (loadingState.isLoading) {
                 showLoadingState(loadingState.message)
@@ -149,7 +163,6 @@ class TextPreviewActivity : AppCompatActivity() {
             }
         }
 
-        // 观察错误信息
         viewModel.errorMessage.observe(this) { errorMessage ->
             if (errorMessage != null) {
                 showErrorState(errorMessage)
@@ -157,7 +170,6 @@ class TextPreviewActivity : AppCompatActivity() {
             }
         }
 
-        // 观察章节列表
         viewModel.chapters.observe(this) { chapters ->
             if (chapters.isNotEmpty()) {
                 Log.d("TextPreview", "获取到章节列表: ${chapters.size} 个章节")
@@ -168,7 +180,6 @@ class TextPreviewActivity : AppCompatActivity() {
             }
         }
 
-        // 观察当前页面变化，自动保存历史记录
         viewModel.currentPageState.observe(this) { pageState ->
             pageState?.let {
                 Log.d("TextPreview", "页面状态变化: 服务器页=${it.serverPage}, 客户端页=${it.clientPage}")
@@ -191,7 +202,6 @@ class TextPreviewActivity : AppCompatActivity() {
         if (isFirstLayoutComplete.get()) {
             linesPerPage = calculateMaxLines()
             Log.d("TextPreview", "开始加载内容，每页行数: $linesPerPage")
-            // 先从ViewModel获取历史记录，然后加载内容
             viewModel.loadTextContent(linesPerPage)
         }
     }
@@ -214,7 +224,7 @@ class TextPreviewActivity : AppCompatActivity() {
             safeMaxLines
         } catch (e: Exception) {
             Log.e("TextPreview", "计算最大行数失败", e)
-            18 // 默认值
+            18
         }
     }
 
@@ -230,21 +240,19 @@ class TextPreviewActivity : AppCompatActivity() {
                 val screenWidth = resources.displayMetrics.widthPixels
                 val x = e.x
 
-                // 检查是否点击在章节按钮区域（右上角48x48dp区域）
+                // 章节按钮区域（右上角）
                 val chapterButtonRect = android.graphics.Rect(
-                    screenWidth - 150,  // 150像素约为48dp
+                    screenWidth - 150,
                     0,
                     screenWidth,
                     150
                 )
-
-                // 如果点击在章节按钮区域，让按钮处理点击
                 if (chapterButtonRect.contains(x.toInt(), e.y.toInt())) {
                     Log.d("TextPreview", "点击在章节按钮区域")
-                    return false  // 返回false，让按钮处理点击
+                    return false
                 }
 
-                // 否则处理翻页
+                // 翻页区域
                 if (x < screenWidth / 3) {
                     Log.d("TextPreview", "点击左侧，上一页")
                     viewModel.previousPage()
@@ -258,17 +266,13 @@ class TextPreviewActivity : AppCompatActivity() {
             }
         })
 
-        // 直接监听触摸事件，简化手势处理
         rootLayout.setOnTouchListener { _, event ->
-            // 处理触摸事件
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    // 记录触摸位置，但不立即处理
                     return@setOnTouchListener true
                 }
                 MotionEvent.ACTION_UP -> {
                     val currentTime = System.currentTimeMillis()
-                    // 如果距离上次点击时间太短，不处理
                     if (currentTime - lastClickTime < minClickInterval) {
                         return@setOnTouchListener true
                     }
@@ -278,42 +282,180 @@ class TextPreviewActivity : AppCompatActivity() {
                     val x = event.x
                     val y = event.y
 
-                    // 检查是否点击在章节按钮区域（右上角48x48dp区域）
+                    // 章节按钮区域（右上角）
                     val chapterButtonRect = android.graphics.Rect(
-                        screenWidth - 150,  // 150像素约为48dp
+                        screenWidth - 150,
                         0,
                         screenWidth,
                         150
                     )
-
-                    // 如果点击在章节按钮区域，触发章节按钮点击
                     if (chapterButtonRect.contains(x.toInt(), y.toInt())) {
                         Log.d("TextPreview", "点击在章节按钮区域，触发章节按钮")
                         chapterButton.performClick()
                         return@setOnTouchListener true
                     }
 
-                    // 否则处理翻页
+                    // 翻页
                     if (x < screenWidth / 3) {
-                        // 点击左侧1/3区域，上一页
                         Log.d("TextPreview", "点击左侧区域，上一页")
                         viewModel.previousPage()
                         return@setOnTouchListener true
                     } else if (x > screenWidth * 2 / 3) {
-                        // 点击右侧1/3区域，下一页
                         Log.d("TextPreview", "点击右侧区域，下一页")
                         viewModel.nextPage()
                         return@setOnTouchListener true
                     }
-                    // 中间区域不处理翻页，但允许其他操作
                 }
             }
-
-            // 将事件传递给GestureDetector处理其他手势
             gestureDetector.onTouchEvent(event)
         }
     }
 
+    // ---------- 显示设置 ----------
+    private fun showDisplaySettingsDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("阅读设置")
+            .setItems(arrayOf("字体大小", "背景颜色")) { _, which ->
+                when (which) {
+                    0 -> showFontSizeDialog()
+                    1 -> showBackgroundColorDialog()
+                }
+            }
+            .show()
+    }
+
+    private fun showFontSizeDialog() {
+        val currentSize = ReadingSettings.getFontSize(this)
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(40, 30, 40, 10)
+        }
+
+        val previewText = TextView(this).apply {
+            text = "预览字体大小：${currentSize.toInt()}sp"
+            textSize = currentSize
+            setPadding(0, 0, 0, 20)
+            gravity = android.view.Gravity.CENTER
+        }
+
+        val seekBar = SeekBar(this).apply {
+            max = 30
+            progress = currentSize.toInt()
+        }
+
+        val rangeLabel = TextView(this).apply {
+            text = "10sp                             30sp"
+            setPadding(0, 0, 0, 10)
+            textSize = 11f
+            gravity = android.view.Gravity.CENTER
+        }
+
+        layout.addView(previewText)
+        layout.addView(seekBar)
+        layout.addView(rangeLabel)
+
+        // 实时改变字号并保存，但不重新分页
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val selectedSize = progress.coerceAtLeast(10).toFloat()
+                previewText.text = "预览字体大小：${selectedSize.toInt()}sp"
+                previewText.textSize = selectedSize
+                // 实时应用到正文
+                textContentTextView.textSize = selectedSize
+                ReadingSettings.setFontSize(this@TextPreviewActivity, selectedSize)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("调整字体大小")
+            .setView(layout)
+            .setCancelable(true)   // 允许点击外部关闭
+            .create()
+
+        // 对话框关闭时，重新计算分页使内容适配新字号
+        dialog.setOnDismissListener {
+            recalculatePagingAfterSettingsChange()
+        }
+
+        dialog.show()
+    }
+
+    private fun showBackgroundColorDialog() {
+        val colors = arrayOf("纯白", "护眼米色", "深色", "纯黑")
+        val bgValues = arrayOf(
+            ReadingSettings.BG_WHITE,
+            ReadingSettings.BG_EYE_CARE,
+            ReadingSettings.BG_DARK,
+            ReadingSettings.BG_BLACK
+        )
+        val currentColor = ReadingSettings.getBackgroundColor(this)
+        val checked = bgValues.indexOfFirst { it == currentColor }.let { if (it >= 0) it else 0 }
+
+        AlertDialog.Builder(this)
+            .setTitle("选择背景颜色")
+            .setSingleChoiceItems(colors, checked) { dialog, which ->
+                val bgColor = bgValues[which]
+                ReadingSettings.setBackgroundColor(this, bgColor)
+                applyBackgroundColor(bgColor)
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun applyDisplaySettings() {
+        val fontSize = ReadingSettings.getFontSize(this)
+        textContentTextView.textSize = fontSize
+
+        val bgColor = ReadingSettings.getBackgroundColor(this)
+        applyBackgroundColor(bgColor)
+    }
+
+    private fun applyBackgroundColor(bgColor: Int) {
+        rootLayout.setBackgroundColor(bgColor)
+        val textColor = ReadingSettings.getTextColorForBg(bgColor)
+        textContentTextView.setTextColor(textColor)
+        pageIndicator.setTextColor(textColor)
+    }
+
+    /**
+     * 字体大小变化后需要重新测量并重新加载内容分页
+     */
+    private fun recalculatePagingAfterSettingsChange() {
+        rootLayout.post {
+            linesPerPage = calculateMaxLines()
+            Log.d("TextPreview", "设置改变后重新计算，每页行数: $linesPerPage")
+            viewModel.loadTextContent(linesPerPage)
+        }
+    }
+
+    // ---------- 系统窗口内边距处理 ----------
+    private fun applyWindowInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // 为底部栏添加底部内边距，防止被导航栏遮挡
+            val bottomBar = findViewById<LinearLayout>(R.id.bottomBar)
+            bottomBar.setPadding(
+                bottomBar.paddingLeft,
+                bottomBar.paddingTop,
+                bottomBar.paddingRight,
+                systemBars.bottom
+            )
+            view.setPadding(
+                systemBars.left,
+                systemBars.top,
+                systemBars.right,
+                0 // 底部内边距已由 bottomBar 处理
+            )
+            insets
+        }
+    }
+
+    // ---------- 章节对话框 ----------
     private fun showChapterDialog() {
         Log.d("TextPreview", "显示章节对话框")
         statusLabel.isVisible = true
@@ -353,7 +495,6 @@ class TextPreviewActivity : AppCompatActivity() {
         textContentTextView.isVisible = false
         pageIndicator.isVisible = false
         errorTextView.isVisible = false
-        // 章节按钮保持透明但可见
         chapterButton.isVisible = true
         statusLabel.isVisible = true
         statusLabel.text = message ?: "正在加载..."
@@ -364,7 +505,6 @@ class TextPreviewActivity : AppCompatActivity() {
         textContentTextView.isVisible = true
         pageIndicator.isVisible = true
         errorTextView.isVisible = false
-        // 章节按钮保持透明但可见
         chapterButton.isVisible = true
         statusLabel.isVisible = false
     }
@@ -375,12 +515,11 @@ class TextPreviewActivity : AppCompatActivity() {
         pageIndicator.isVisible = false
         errorTextView.isVisible = true
         errorTextView.text = message
-        // 章节按钮保持透明但可见
         chapterButton.isVisible = true
         statusLabel.isVisible = false
     }
 
-    // 修复：本地历史记录方法
+    // 历史记录
     private fun loadReadingHistory() {
         Log.d("TextPreview", "尝试加载历史记录: ${readingHistoryFile.absolutePath}")
 
@@ -391,7 +530,6 @@ class TextPreviewActivity : AppCompatActivity() {
                     history?.let {
                         Log.d("TextPreview", "找到历史记录: 文件名=${it.fileName}, 服务器页=${it.serverPage}, 客户端页=${it.clientPage}")
 
-                        // 检查是否是同一文件（比较文件名或URL）
                         if (it.fileName == currentFileName || it.fileUrl == currentFileUrl) {
                             Log.d("TextPreview", "恢复历史记录: 服务器页=${it.serverPage}, 客户端页=${it.clientPage}")
                             viewModel.restoreFromHistory(it.serverPage, it.clientPage)
@@ -435,8 +573,6 @@ class TextPreviewActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         Log.d("TextPreview", "Activity暂停，保存当前状态")
-
-        // 获取当前页面状态并保存
         viewModel.getCurrentPageState()?.let {
             saveReadingHistory(it.serverPage, it.clientPage)
         }
@@ -445,15 +581,13 @@ class TextPreviewActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d("TextPreview", "Activity销毁")
-
-        // 获取当前页面状态并保存
         viewModel.getCurrentPageState()?.let {
             saveReadingHistory(it.serverPage, it.clientPage)
         }
     }
 }
 
-// 历史记录数据类
+// 历史记录数据类（必须与 Activity 在同一个文件中）
 data class ReadingHistory(
     val fileName: String,
     val fileUrl: String,

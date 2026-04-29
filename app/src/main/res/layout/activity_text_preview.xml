@@ -3,16 +3,16 @@
     android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background"
-    android:padding="0dp">
+    android:background="@color/background">
 
-    <!-- 文本内容区域 - 增加底部边距避免被切 -->
+    <!-- 文本内容区域 -->
     <TextView
         android:id="@+id/textContentTextView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:layout_above="@id/bottomBar"
         android:paddingTop="16dp"
-        android:paddingBottom="24dp"
+        android:paddingBottom="8dp"
         android:paddingLeft="16dp"
         android:paddingRight="16dp"
         android:gravity="top"
@@ -24,7 +24,7 @@
         android:fontFamily="monospace"
         android:scrollbars="none" />
 
-    <!-- 章节跳转按钮 -->
+    <!-- 章节跳转按钮（右上角透明） -->
     <ImageButton
         android:id="@+id/chapterButton"
         android:layout_width="48dp"
@@ -33,37 +33,66 @@
         android:layout_alignParentRight="true"
         android:layout_marginTop="8dp"
         android:layout_marginRight="8dp"
-        android:background="?android:attr/selectableItemBackground"
-        android:src="@android:drawable/ic_menu_sort_by_size"
+        android:background="@android:color/transparent"
+        android:src="@android:color/transparent"
+        android:alpha="0.0"
         android:contentDescription="章节跳转"
-        android:visibility="gone" />
+        android:visibility="visible" />
 
-    <!-- 页面指示器 - 调整到真正的右下角 -->
-    <TextView
-        android:id="@+id/pageIndicator"
-        android:layout_width="wrap_content"
+    <!-- 底部控制栏 -->
+    <LinearLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_alignParentBottom="true"
-        android:layout_alignParentRight="true"
-        android:layout_marginBottom="8dp"
-        android:layout_marginRight="8dp"
-        android:padding="4dp"
-        android:text="0%"
-        android:textSize="12sp"
-        android:minWidth="40dp"
-        android:gravity="center"
-        android:background="@android:color/transparent"
-        android:textColor="@color/text_primary"
-        android:visibility="gone" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="4dp"
+        android:background="@android:color/transparent">
 
-    <!-- 加载进度 -->
+        <!-- 听书按钮（透明） -->
+        <ImageButton
+            android:id="@+id/audioButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@android:color/transparent"
+            android:src="@android:drawable/ic_media_play"
+            android:alpha="0.0"
+            android:contentDescription="听书"
+            android:visibility="visible" />
+
+        <!-- 页码指示器（中间弹性空间） -->
+        <TextView
+            android:id="@+id/pageIndicator"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="0%"
+            android:textSize="12sp"
+            android:textColor="#666666"
+            android:background="@android:color/transparent" />
+
+        <!-- 显示设置按钮（透明） -->
+        <ImageButton
+            android:id="@+id/settingsButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@android:color/transparent"
+            android:src="@android:drawable/ic_menu_manage"
+            android:alpha="0.0"
+            android:contentDescription="显示设置"
+            android:visibility="visible" />
+    </LinearLayout>
+
+    <!-- 加载、错误等状态控件保持原有位置 -->
     <ProgressBar
         android:id="@+id/loadingProgress"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_centerInParent="true" />
 
-    <!-- 状态标签 -->
     <TextView
         android:id="@+id/statusLabel"
         android:layout_width="match_parent"
@@ -77,7 +106,6 @@
         android:gravity="center"
         android:visibility="gone" />
 
-    <!-- 错误信息 -->
     <TextView
         android:id="@+id/errorTextView"
         android:layout_width="match_parent"
