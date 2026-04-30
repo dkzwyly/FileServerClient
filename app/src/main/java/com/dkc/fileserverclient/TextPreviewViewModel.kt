@@ -103,17 +103,43 @@ class TextPreviewViewModel : ViewModel() {
      */
     fun calculateMaxLinesPerPage(maxHeight: Int): Int {
         if (textWidth <= 0 || textPaint == null || maxHeight <= 0) return 0
-        val testText = "测试文字\n测试文字\n"
-        val layout = StaticLayout.Builder.obtain(testText, 0, testText.length, textPaint!!, textWidth)
+
+        // 1. 先估算一个上限（理论行数 + 1），避免构建过多行浪费内存
+        val testLine = "T\n"          // 最简单的一行文本，保证布局稳定
+        val sampleLayout = buildStaticLayout(testLine.repeat(1))
+        val lineHeight = sampleLayout.getLineBottom(0) - sampleLayout.getLineTop(0)
+        if (lineHeight <= 0) return 0
+        val maxPossibleLines = (maxHeight / lineHeight).toInt() + 2  // 上限
+
+        // 2. 准备一个足够长的测试文本（至少 maxPossibleLines 行）
+        val testLines = List(maxPossibleLines) { "T" }.joinToString("\n")
+
+        // 3. 二分查找最大行数，使得 layout.height ≤ maxHeight
+        var low = 1
+        var high = maxPossibleLines
+        var best = 1
+        while (low <= high) {
+            val mid = (low + high) / 2
+            val text = testLines.lines().take(mid).joinToString("\n")
+            val layout = buildStaticLayout(text)
+            when {
+                layout.height <= maxHeight -> {
+                    best = mid
+                    low = mid + 1
+                }
+                else -> high = mid - 1
+            }
+        }
+        return best.coerceAtLeast(1)
+    }
+
+    // 辅助函数：使用当前显示参数构建 StaticLayout
+    private fun buildStaticLayout(text: String): StaticLayout {
+        return StaticLayout.Builder.obtain(text, 0, text.length, textPaint!!, textWidth)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setLineSpacing(lineSpacingExtra, lineSpacingMultiplier)
             .setIncludePad(true)
             .build()
-        val lineHeight = layout.getLineBottom(0) - layout.getLineTop(0)
-        if (lineHeight <= 0) return 0
-        val theoreticalLines = maxHeight / lineHeight
-        // 保守减 2，防止底部裁剪
-        return (theoreticalLines - 2).coerceAtLeast(1)
     }
 
 
