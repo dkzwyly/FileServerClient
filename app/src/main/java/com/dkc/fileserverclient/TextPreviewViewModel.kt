@@ -116,6 +116,8 @@ class TextPreviewViewModel : ViewModel() {
         return (theoreticalLines - 2).coerceAtLeast(1)
     }
 
+
+
     fun setLinesPerPage(lines: Int) {
         val safeLines = if (lines < 2) {
             Log.w("ViewModel", "linesPerPage 无效 ($lines)，使用 20")
