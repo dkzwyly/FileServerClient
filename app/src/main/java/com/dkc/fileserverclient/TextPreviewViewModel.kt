@@ -60,14 +60,28 @@ class TextPreviewViewModel : ViewModel() {
     private var restoredSubPage = 1
     private var isHistoryRestored = false
 
+    // 章节跳转暂存目标字符偏移
+    private var pendingCharOffset: Int? = null
+
     private val httpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
 
     // 数据类
     data class PageInfo(val currentPage: Int, val totalPages: Int, val progress: Int)
     data class LoadingState(val isLoading: Boolean, val message: String? = null)
-    data class ChapterInfo(val title: String, val serverPage: Int, val lineNumber: Int)
+    data class ChapterInfo(
+        val title: String,
+        val serverPage: Int,
+        val lineNumber: Int,
+        val startCharOffset: Int   // 新增：章节标题在全文中的绝对字符偏移
+    )
     data class PageState(val blockPage: Int, val subPage: Int, val totalBlockPages: Int, val totalSubPages: Int)
-    data class BlockData(val fullText: String, val blockPage: Int, val totalBlockPages: Int)
+    data class BlockData(
+        val fullText: String,
+        val blockPage: Int,
+        val totalBlockPages: Int,
+        val startChar: Int,        // 新增：本块在全文中的起始字符偏移
+        val endChar: Int           // 新增：本块在全文中的结束字符偏移(不含)
+    )
 
     // ---------- 公共方法 ----------
     fun initialize(fileName: String, fileUrl: String, filePath: String) {
@@ -172,7 +186,9 @@ class TextPreviewViewModel : ViewModel() {
     }
 
     fun jumpToChapter(chapter: ChapterInfo) {
-        loadBlock(chapter.serverPage, goToFirstSubPage = true)
+        // 记录目标绝对字符偏移，然后加载对应服务器大页
+        pendingCharOffset = chapter.startCharOffset
+        loadBlock(chapter.serverPage, goToFirstSubPage = false)
     }
 
     // ---------- 私有方法 ----------
@@ -182,12 +198,19 @@ class TextPreviewViewModel : ViewModel() {
             try {
                 val url = buildBlockUrl(page)
                 val json = fetchJson(url)
-                val (fullText, currentPage, totalPages) = parseBlockResponse(json)
+                val block = parseBlockResponse(json)
 
-                currentBlock = BlockData(fullText, currentPage, totalPages)
-                rebuildSubPages(fullText)
+                currentBlock = block
+                rebuildSubPages(block.fullText)
 
+                // 确定当前子页
+                val targetOffset = pendingCharOffset
+                pendingCharOffset = null
                 when {
+                    targetOffset != null -> {
+                        // 章节跳转：根据绝对偏移定位子页
+                        currentSubPage = findSubPageForCharOffset(block.fullText, block.startChar, targetOffset)
+                    }
                     goToFirstSubPage -> currentSubPage = 1
                     goToLastSubPage -> currentSubPage = totalSubPages
                     isHistoryRestored && page == restoredBlockPage -> {
@@ -219,13 +242,15 @@ class TextPreviewViewModel : ViewModel() {
         response.body?.string() ?: throw Exception("空响应")
     }
 
-    private fun parseBlockResponse(json: String): Triple<String, Int, Int> {
+    private fun parseBlockResponse(json: String): BlockData {
         val obj = JSONObject(json)
         val content = obj.getString("content")
         val pagination = obj.getJSONObject("pagination")
         val currentPage = pagination.getInt("currentPage")
         val totalPages = pagination.getInt("totalPages")
-        return Triple(content, currentPage, totalPages)
+        val startChar = pagination.optInt("startChar", 0)          // 新增
+        val endChar = pagination.optInt("endChar", content.length)  // 新增
+        return BlockData(content, currentPage, totalPages, startChar, endChar)
     }
 
     /**
@@ -265,6 +290,32 @@ class TextPreviewViewModel : ViewModel() {
         Log.d("ViewModel", "重建子页完成: 总物理行=$totalLines, 每页行数=$linesPerPage, 子页数=$totalSubPages")
     }
 
+    /**
+     * 在 fullText 中查找绝对字符偏移 absCharOffset 所在的子页索引（从1开始）
+     * blockStartChar 是当前块在全文中的起始偏移
+     */
+    private fun findSubPageForCharOffset(fullText: String, blockStartChar: Int, absCharOffset: Int): Int {
+        if (fullText.isEmpty() || subPageBoundaries.isEmpty()) return 1
+        val relativeOffset = (absCharOffset - blockStartChar).coerceIn(0, fullText.length)
+        // 构建 StaticLayout 以确定相对偏移位于哪一行
+        val layout = StaticLayout.Builder.obtain(fullText, 0, fullText.length, textPaint!!, textWidth)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setLineSpacing(lineSpacingExtra, lineSpacingMultiplier)
+            .setIncludePad(true)
+            .build()
+
+        val line = layout.getLineForOffset(relativeOffset)
+        // 在 subPageBoundaries 中查找包含该行的子页
+        for ((index, boundaries) in subPageBoundaries.withIndex()) {
+            val (startLine, endLine) = boundaries
+            if (line in startLine until endLine) {
+                return index + 1
+            }
+        }
+        // 默认第一子页
+        return 1
+    }
+
     private fun showCurrentSubPage() {
         if (currentBlock == null) return
         val fullText = currentBlock!!.fullText
@@ -275,7 +326,7 @@ class TextPreviewViewModel : ViewModel() {
         }
         val (startLine, endLine) = subPageBoundaries.getOrNull(currentSubPage - 1) ?: return
 
-        // 重新构建 StaticLayout 以获取字符索引（或者可以缓存 layout，但简单起见每次都新建）
+        // 重新构建 StaticLayout 以获取字符索引
         val layout = StaticLayout.Builder.obtain(fullText, 0, fullText.length, textPaint!!, textWidth)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setLineSpacing(lineSpacingExtra, lineSpacingMultiplier)
@@ -302,7 +353,6 @@ class TextPreviewViewModel : ViewModel() {
     // ---------- 章节加载 ----------
     private suspend fun fetchChaptersFromServer(): List<ChapterInfo> = withContext(Dispatchers.IO) {
         try {
-            // 1. 计算基础 URL（与原实现一致）
             val baseUrl = if (fileUrl.contains("/preview/")) {
                 fileUrl.substringBefore("/preview/")
             } else {
@@ -314,7 +364,6 @@ class TextPreviewViewModel : ViewModel() {
                 }
             }
 
-            // 2. 提取文件名（与原实现一致）
             val fileNameFromUrl = if (fileUrl.contains("/preview/")) {
                 fileUrl.substringAfter("/preview/").substringBefore("?")
             } else {
@@ -363,8 +412,9 @@ class TextPreviewViewModel : ViewModel() {
                     val title = chapterObj.optString("title", "未知章节")
                     val serverPage = chapterObj.optInt("page", 1)
                     val lineNumber = chapterObj.optInt("lineNumber", 0)
-                    chapters.add(ChapterInfo(title, serverPage, lineNumber))
-                    Log.d("TextPreviewViewModel", "解析章节: $title, 服务器页=$serverPage")
+                    val startCharOffset = chapterObj.optInt("startCharOffset", 0) // 新增
+                    chapters.add(ChapterInfo(title, serverPage, lineNumber, startCharOffset))
+                    Log.d("TextPreviewViewModel", "解析章节: $title, 服务器页=$serverPage, 偏移=$startCharOffset")
                 }
             }
         } catch (e: Exception) {
