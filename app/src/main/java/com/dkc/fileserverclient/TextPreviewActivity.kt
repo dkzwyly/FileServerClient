@@ -26,7 +26,6 @@ class TextPreviewActivity : AppCompatActivity() {
     private lateinit var textContentTextView: TextView
     private lateinit var loadingProgress: ProgressBar
     private lateinit var errorTextView: TextView
-    private lateinit var pageIndicator: TextView
     private lateinit var rootLayout: RelativeLayout
     private lateinit var chapterButton: ImageButton
     private lateinit var statusLabel: TextView
@@ -66,7 +65,6 @@ class TextPreviewActivity : AppCompatActivity() {
         textContentTextView = findViewById(R.id.textContentTextView)
         loadingProgress = findViewById(R.id.loadingProgress)
         errorTextView = findViewById(R.id.errorTextView)
-        pageIndicator = findViewById(R.id.pageIndicator)
         rootLayout = findViewById(R.id.rootLayout)
         chapterButton = findViewById(R.id.chapterButton)
         statusLabel = findViewById(R.id.statusLabel)
@@ -81,10 +79,6 @@ class TextPreviewActivity : AppCompatActivity() {
         chapterButton.bringToFront()
         chapterButton.setOnClickListener { showChapterDialog() }
         chapterButton.isVisible = true
-
-        pageIndicator.textSize = 12f
-        pageIndicator.setBackgroundColor(Color.TRANSPARENT)
-        pageIndicator.setTextColor(Color.parseColor("#666666"))
     }
 
     private fun setupIntentData() {
@@ -107,9 +101,7 @@ class TextPreviewActivity : AppCompatActivity() {
         viewModel.pageContent.observe(this) { content ->
             textContentTextView.text = content
         }
-        viewModel.pageInfo.observe(this) { info ->
-            pageIndicator.text = "${info.currentPage}/${info.totalPages} (${info.progress}%)"
-        }
+        // 移除页面信息观察者
         viewModel.loadingState.observe(this) { state ->
             if (state.isLoading) showLoadingState(state.message) else showContentState()
         }
@@ -214,7 +206,6 @@ class TextPreviewActivity : AppCompatActivity() {
     private fun showLoadingState(message: String? = null) {
         loadingProgress.isVisible = true
         textContentTextView.isVisible = false
-        pageIndicator.isVisible = false
         errorTextView.isVisible = false
         chapterButton.isVisible = true
         statusLabel.isVisible = true
@@ -224,7 +215,6 @@ class TextPreviewActivity : AppCompatActivity() {
     private fun showContentState() {
         loadingProgress.isVisible = false
         textContentTextView.isVisible = true
-        pageIndicator.isVisible = true
         errorTextView.isVisible = false
         chapterButton.isVisible = true
         statusLabel.isVisible = false
@@ -233,7 +223,6 @@ class TextPreviewActivity : AppCompatActivity() {
     private fun showErrorState(message: String) {
         loadingProgress.isVisible = false
         textContentTextView.isVisible = false
-        pageIndicator.isVisible = false
         errorTextView.isVisible = true
         errorTextView.text = message
         chapterButton.isVisible = true

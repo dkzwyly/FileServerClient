@@ -112,8 +112,8 @@ class TextPreviewViewModel : ViewModel() {
         val lineHeight = layout.getLineBottom(0) - layout.getLineTop(0)
         if (lineHeight <= 0) return 0
         val theoreticalLines = maxHeight / lineHeight
-        // 保守减 1，防止底部裁剪
-        return (theoreticalLines - 1).coerceAtLeast(1)
+        // 保守减 2，防止底部裁剪
+        return (theoreticalLines - 2).coerceAtLeast(1)
     }
 
     fun setLinesPerPage(lines: Int) {
