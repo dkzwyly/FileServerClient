@@ -1,10 +1,12 @@
 package com.dkc.fileserverclient
 
+import android.content.SharedPreferences
 import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewTreeObserver
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
@@ -28,6 +30,8 @@ class TextPreviewActivity : AppCompatActivity() {
     private lateinit var errorTextView: TextView
     private lateinit var rootLayout: RelativeLayout
     private lateinit var chapterButton: ImageButton
+    private lateinit var settingsButton: ImageButton
+    private lateinit var progressTextView: TextView
     private lateinit var statusLabel: TextView
 
     private lateinit var viewModel: TextPreviewViewModel
@@ -42,9 +46,18 @@ class TextPreviewActivity : AppCompatActivity() {
     private lateinit var currentFileUrl: String
     private lateinit var currentFilePath: String
 
+    // 字体与背景偏好
+    private var currentFontSize: Float = 16f
+    private var currentBackgroundColor: Int = Color.WHITE
+    private lateinit var prefs: SharedPreferences
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableImmersiveMode()
         setContentView(R.layout.activity_text_preview)
+
+        prefs = getSharedPreferences("reading_prefs", MODE_PRIVATE)
+        loadAppearancePrefs()
 
         initViews()
         setupIntentData()
@@ -52,7 +65,8 @@ class TextPreviewActivity : AppCompatActivity() {
         setupGestureDetector()
         setupObservers()
         setupLayoutListener()
-        // 监听布局变化（例如屏幕旋转）
+        applyAppearance()
+
         textContentTextView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             if (textContentTextView.height > 0) {
                 recalcLinesPerPage()
@@ -61,24 +75,61 @@ class TextPreviewActivity : AppCompatActivity() {
         loadReadingHistory()
     }
 
+    private fun enableImmersiveMode() {
+        window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                        or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                )
+    }
+
+    private fun loadAppearancePrefs() {
+        currentFontSize = prefs.getFloat("font_size", 16f)
+        currentBackgroundColor = prefs.getInt("bg_color", Color.WHITE)
+    }
+
+    private fun saveAppearancePrefs() {
+        prefs.edit()
+            .putFloat("font_size", currentFontSize)
+            .putInt("bg_color", currentBackgroundColor)
+            .apply()
+    }
+
+    private fun applyAppearance() {
+        textContentTextView.textSize = currentFontSize
+        rootLayout.setBackgroundColor(currentBackgroundColor)
+    }
+
     private fun initViews() {
         textContentTextView = findViewById(R.id.textContentTextView)
         loadingProgress = findViewById(R.id.loadingProgress)
         errorTextView = findViewById(R.id.errorTextView)
         rootLayout = findViewById(R.id.rootLayout)
         chapterButton = findViewById(R.id.chapterButton)
+        settingsButton = findViewById(R.id.settingsButton)
+        progressTextView = findViewById(R.id.progressTextView)
         statusLabel = findViewById(R.id.statusLabel)
 
         supportActionBar?.hide()
         textContentTextView.isScrollContainer = false
 
-        // 透明章节按钮（仅保留点击热区）
+        // 章节按钮透明化
         chapterButton.setBackgroundResource(android.R.color.transparent)
         chapterButton.setImageResource(android.R.color.transparent)
         chapterButton.alpha = 0.0f
         chapterButton.bringToFront()
         chapterButton.setOnClickListener { showChapterDialog() }
         chapterButton.isVisible = true
+
+        // 设置按钮透明化（与章节按钮一致）
+        settingsButton.setBackgroundResource(android.R.color.transparent)
+        settingsButton.setImageResource(android.R.color.transparent)
+        settingsButton.alpha = 0.0f
+        settingsButton.bringToFront()
+        settingsButton.setOnClickListener { showAppearanceDialog() }
+        settingsButton.isVisible = true
+
+        progressTextView.bringToFront()
     }
 
     private fun setupIntentData() {
@@ -101,7 +152,6 @@ class TextPreviewActivity : AppCompatActivity() {
         viewModel.pageContent.observe(this) { content ->
             textContentTextView.text = content
         }
-        // 移除页面信息观察者
         viewModel.loadingState.observe(this) { state ->
             if (state.isLoading) showLoadingState(state.message) else showContentState()
         }
@@ -114,6 +164,9 @@ class TextPreviewActivity : AppCompatActivity() {
         }
         viewModel.currentPageState.observe(this) { state ->
             state?.let { saveReadingHistory(it.blockPage, it.subPage) }
+        }
+        viewModel.pageInfo.observe(this) { info ->
+            progressTextView.text = "${info.progress}%"
         }
     }
 
@@ -130,10 +183,7 @@ class TextPreviewActivity : AppCompatActivity() {
                     val multiplier = textContentTextView.lineSpacingMultiplier
                     viewModel.setDisplayParams(width, paint, extra, multiplier)
 
-                    // 计算每页行数并通知 ViewModel
                     recalcLinesPerPage()
-
-                    // 开始加载内容
                     viewModel.loadTextContent()
                 }
             }
@@ -159,8 +209,14 @@ class TextPreviewActivity : AppCompatActivity() {
                 val screenWidth = resources.displayMetrics.widthPixels
                 val x = e.x
 
+                // 右上角章节按钮
                 if (x > screenWidth - 150 && e.y < 150) {
                     chapterButton.performClick()
+                    return true
+                }
+                // 右下角设置按钮
+                if (x > screenWidth - 150 && e.y > resources.displayMetrics.heightPixels - 150) {
+                    settingsButton.performClick()
                     return true
                 }
 
@@ -176,6 +232,77 @@ class TextPreviewActivity : AppCompatActivity() {
         }
     }
 
+    private fun showAppearanceDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_reading_settings, null)
+        val seekBarFontSize = dialogView.findViewById<SeekBar>(R.id.seekBarFontSize)
+        val fontSizeValue = dialogView.findViewById<TextView>(R.id.fontSizeValue)
+        val btnColorWhite = dialogView.findViewById<Button>(R.id.btnColorWhite)
+        val btnColorCream = dialogView.findViewById<Button>(R.id.btnColorCream)
+        val btnColorGreen = dialogView.findViewById<Button>(R.id.btnColorGreen)
+        val btnColorBlack = dialogView.findViewById<Button>(R.id.btnColorBlack)
+        val btnCancel = dialogView.findViewById<Button>(R.id.btnCancel)
+        val btnApply = dialogView.findViewById<Button>(R.id.btnApply)
+
+        // 记录原始值，用于取消时恢复
+        val originalFontSize = currentFontSize
+        val originalBgColor = currentBackgroundColor
+
+        seekBarFontSize.max = 30 - 12
+        seekBarFontSize.progress = (currentFontSize - 12).toInt()
+        fontSizeValue.text = "${currentFontSize.toInt()}sp"
+
+        seekBarFontSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val size = (progress + 12).toFloat()
+                textContentTextView.textSize = size
+                fontSizeValue.text = "${size.toInt()}sp"
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        // 背景色按钮点击立即预览
+        btnColorWhite.setOnClickListener {
+            currentBackgroundColor = Color.WHITE
+            rootLayout.setBackgroundColor(Color.WHITE)
+        }
+        btnColorCream.setOnClickListener {
+            currentBackgroundColor = Color.parseColor("#FAF0D7")
+            rootLayout.setBackgroundColor(currentBackgroundColor)
+        }
+        btnColorGreen.setOnClickListener {
+            currentBackgroundColor = Color.parseColor("#C8E6C9")
+            rootLayout.setBackgroundColor(currentBackgroundColor)
+        }
+        btnColorBlack.setOnClickListener {
+            currentBackgroundColor = Color.DKGRAY
+            rootLayout.setBackgroundColor(currentBackgroundColor)
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .setCancelable(false)
+            .create()
+
+        btnCancel.setOnClickListener {
+            // 恢复原始值
+            currentFontSize = originalFontSize
+            currentBackgroundColor = originalBgColor
+            applyAppearance()
+            dialog.dismiss()
+        }
+
+        btnApply.setOnClickListener {
+            currentFontSize = (seekBarFontSize.progress + 12).toFloat()
+            saveAppearancePrefs()
+            applyAppearance()
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    // ---------- 原有方法保持不变 ----------
     private fun showChapterDialog() {
         statusLabel.isVisible = true
         statusLabel.text = "正在从服务器加载章节..."
@@ -208,6 +335,8 @@ class TextPreviewActivity : AppCompatActivity() {
         textContentTextView.isVisible = false
         errorTextView.isVisible = false
         chapterButton.isVisible = true
+        settingsButton.isVisible = true
+        progressTextView.isVisible = true
         statusLabel.isVisible = true
         statusLabel.text = message ?: "正在加载..."
     }
@@ -217,6 +346,8 @@ class TextPreviewActivity : AppCompatActivity() {
         textContentTextView.isVisible = true
         errorTextView.isVisible = false
         chapterButton.isVisible = true
+        settingsButton.isVisible = true
+        progressTextView.isVisible = true
         statusLabel.isVisible = false
     }
 
@@ -226,10 +357,11 @@ class TextPreviewActivity : AppCompatActivity() {
         errorTextView.isVisible = true
         errorTextView.text = message
         chapterButton.isVisible = true
+        settingsButton.isVisible = true
+        progressTextView.isVisible = true
         statusLabel.isVisible = false
     }
 
-    // ---------- 历史记录 ----------
     private fun loadReadingHistory() {
         if (readingHistoryFile.exists()) {
             try {
@@ -279,12 +411,11 @@ class TextPreviewActivity : AppCompatActivity() {
             saveReadingHistory(it.blockPage, it.subPage)
         }
     }
+    data class ReadingHistory(
+        val fileName: String,
+        val fileUrl: String,
+        val blockPage: Int,
+        val subPage: Int,
+        val timestamp: Long
+    ) : java.io.Serializable
 }
-
-data class ReadingHistory(
-    val fileName: String,
-    val fileUrl: String,
-    val blockPage: Int,
-    val subPage: Int,
-    val timestamp: Long
-) : java.io.Serializable

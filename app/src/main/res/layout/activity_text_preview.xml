@@ -38,6 +38,34 @@
         android:contentDescription="章节跳转"
         android:visibility="gone" />
 
+    <!-- 左下角进度 -->
+    <TextView
+        android:id="@+id/progressTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentLeft="true"
+        android:layout_marginBottom="8dp"
+        android:layout_marginLeft="16dp"
+        android:text="0%"
+        android:textSize="12sp"
+        android:textColor="#80FFFFFF"
+        android:textStyle="bold" />
+
+    <!-- 右下角设置按钮 -->
+    <ImageButton
+        android:id="@+id/settingsButton"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentRight="true"
+        android:layout_marginBottom="8dp"
+        android:layout_marginRight="8dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:src="@android:drawable/ic_menu_manage"
+        android:contentDescription="阅读设置"
+        android:visibility="visible" />
+
     <!-- 加载进度 -->
     <ProgressBar
         android:id="@+id/loadingProgress"
