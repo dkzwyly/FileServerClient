@@ -2,8 +2,12 @@ package com.dkc.fileserverclient
 
 import android.graphics.Paint
 import android.text.Layout
+import android.text.SpannableString
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.style.AlignmentSpan
+import android.text.style.RelativeSizeSpan
+import android.text.style.StyleSpan
 import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -18,8 +22,9 @@ import java.net.URLEncoder
 
 class TextPreviewViewModel : ViewModel() {
 
-    private val _pageContent = MutableLiveData<String>()
-    val pageContent: LiveData<String> = _pageContent
+    // 改为 CharSequence 以支持富文本
+    private val _pageContent = MutableLiveData<CharSequence>()
+    val pageContent: LiveData<CharSequence> = _pageContent
 
     private val _pageInfo = MutableLiveData<PageInfo>()
     val pageInfo: LiveData<PageInfo> = _pageInfo
@@ -36,7 +41,6 @@ class TextPreviewViewModel : ViewModel() {
     private val _currentPageState = MutableLiveData<PageState?>()
     val currentPageState: LiveData<PageState?> = _currentPageState
 
-    // 新增：当前显示内容的起始绝对字符偏移
     private val _currentAbsoluteCharOffset = MutableLiveData<Int>()
     val currentAbsoluteCharOffset: LiveData<Int> = _currentAbsoluteCharOffset
 
@@ -60,6 +64,9 @@ class TextPreviewViewModel : ViewModel() {
     private var isHistoryRestored = false
 
     private var pendingCharOffset: Int? = null
+
+    // 缓存章节列表，用于富文本渲染
+    private var cachedChapters: List<ChapterInfo>? = null
 
     private val httpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
 
@@ -213,6 +220,8 @@ class TextPreviewViewModel : ViewModel() {
             _loadingState.value = LoadingState(true, "正在加载章节...")
             try {
                 val list = withContext(Dispatchers.IO) { fetchChaptersFromServer() }
+                // 缓存章节并发布 LiveData
+                cachedChapters = list.sortedBy { it.startCharOffset }  // 排序便于查找
                 _chapters.value = list
             } catch (e: Exception) {
                 _errorMessage.value = "章节加载失败: ${e.message}"
@@ -337,11 +346,12 @@ class TextPreviewViewModel : ViewModel() {
         return 1
     }
 
+    // ─── 核心改进：富文本渲染 ───
     private fun showCurrentSubPage() {
         if (currentBlock == null) return
         val fullText = currentBlock!!.fullText
         if (subPageBoundaries.isEmpty()) {
-            _pageContent.value = fullText
+            _pageContent.value = fullText  // 可直接显示纯文本，但也可尝试渲染
             updatePageInfo()
             _currentAbsoluteCharOffset.value = currentBlock!!.startChar
             return
@@ -357,10 +367,72 @@ class TextPreviewViewModel : ViewModel() {
         val startChar = layout.getLineStart(startLine)
         val endChar = layout.getLineEnd(endLine - 1)
         val pageText = fullText.substring(startChar, endChar)
-        _pageContent.value = pageText
+
+        // 尝试应用章节标题富文本
+        val spannable = applyChapterStyles(fullText, pageText, startChar, currentBlock!!.startChar)
+
+        _pageContent.value = spannable
         updatePageInfo()
-        // 更新当前绝对偏移
         _currentAbsoluteCharOffset.value = currentBlock!!.startChar + startChar
+    }
+
+    /**
+     * 在 pageText 上应用章节标题样式（居中、大字体、粗体）
+     * @param fullText 块全文
+     * @param pageText 当前子页的纯文本
+     * @param pageStartInBlock 当前子页在块中的起始字符偏移
+     * @param blockStartAbsolute 块在全文中的绝对起始偏移（同 BlockData.startChar）
+     */
+    private fun applyChapterStyles(
+        fullText: String,
+        pageText: String,
+        pageStartInBlock: Int,
+        blockStartAbsolute: Int
+    ): CharSequence {
+        val chapters = cachedChapters ?: return pageText  // 无章节数据则直接返回纯文本
+        if (chapters.isEmpty()) return pageText
+
+        val spannable = SpannableString(pageText)
+
+        for (chapter in chapters) {
+            // 章节标题在全文中的绝对偏移
+            val absOffset = chapter.startCharOffset
+            // 转换为块全文中的相对偏移
+            val relOffset = absOffset - blockStartAbsolute
+            // 检查是否落在当前子页范围内
+            if (relOffset < pageStartInBlock || relOffset >= pageStartInBlock + pageText.length) {
+                // 标题不在当前页，跳过
+                continue
+            }
+            // 标题在 pageText 中的起始位置
+            val startInPage = relOffset - pageStartInBlock
+            // 获取标题文本长度（从 fullText 中截取）
+            val titleEndInBlock = minOf(relOffset + chapter.title.length, fullText.length)
+            val titleLenInBlock = titleEndInBlock - relOffset
+            // 标题在 pageText 中的结束位置
+            val endInPage = minOf(startInPage + titleLenInBlock, pageText.length)
+
+            // 应用样式：居中、相对大小1.5倍、粗体
+            spannable.setSpan(
+                AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+                startInPage,
+                endInPage,
+                SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            spannable.setSpan(
+                RelativeSizeSpan(1.5f),
+                startInPage,
+                endInPage,
+                SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            spannable.setSpan(
+                StyleSpan(android.graphics.Typeface.BOLD),
+                startInPage,
+                endInPage,
+                SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        return spannable
     }
 
     private fun updatePageInfo() {
@@ -373,6 +445,7 @@ class TextPreviewViewModel : ViewModel() {
         }
     }
 
+    // ─── 章节加载（无需改动） ───
     private suspend fun fetchChaptersFromServer(): List<ChapterInfo> = withContext(Dispatchers.IO) {
         try {
             val baseUrl = if (fileUrl.contains("/preview/")) {
