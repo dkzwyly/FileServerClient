@@ -22,7 +22,6 @@ import java.net.URLEncoder
 
 class TextPreviewViewModel : ViewModel() {
 
-    // 改为 CharSequence 以支持富文本
     private val _pageContent = MutableLiveData<CharSequence>()
     val pageContent: LiveData<CharSequence> = _pageContent
 
@@ -43,6 +42,9 @@ class TextPreviewViewModel : ViewModel() {
 
     private val _currentAbsoluteCharOffset = MutableLiveData<Int>()
     val currentAbsoluteCharOffset: LiveData<Int> = _currentAbsoluteCharOffset
+
+    private val _showChapterDialogEvent = MutableLiveData<List<ChapterInfo>>()
+    val showChapterDialogEvent: LiveData<List<ChapterInfo>> = _showChapterDialogEvent
 
     private lateinit var fileName: String
     private lateinit var fileUrl: String
@@ -65,11 +67,13 @@ class TextPreviewViewModel : ViewModel() {
 
     private var pendingCharOffset: Int? = null
 
-    // 缓存章节列表，用于富文本渲染
+    // 章节数据缓存与加载状态
     private var cachedChapters: List<ChapterInfo>? = null
+    private var chaptersLoading = false
 
     private val httpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
 
+    // --- 数据类 ---
     data class PageInfo(val currentPage: Int, val totalPages: Int, val progress: Int)
     data class LoadingState(val isLoading: Boolean, val message: String? = null)
     data class ChapterInfo(
@@ -87,6 +91,7 @@ class TextPreviewViewModel : ViewModel() {
         val endChar: Int
     )
 
+    // ---------- 公开初始化与参数 ----------
     fun initialize(fileName: String, fileUrl: String, filePath: String) {
         this.fileName = fileName
         this.fileUrl = fileUrl
@@ -215,14 +220,19 @@ class TextPreviewViewModel : ViewModel() {
         }
     }
 
+    // 手动加载章节（供章节按钮调用，可刷新数据）
     fun loadChapters() {
         viewModelScope.launch {
             _loadingState.value = LoadingState(true, "正在加载章节...")
             try {
                 val list = withContext(Dispatchers.IO) { fetchChaptersFromServer() }
-                // 缓存章节并发布 LiveData
-                cachedChapters = list.sortedBy { it.startCharOffset }  // 排序便于查找
+                cachedChapters = list.sortedBy { it.startCharOffset }
                 _chapters.value = list
+                _showChapterDialogEvent.value = list  // 触发弹窗事件
+                // 如果当前有内容显示，刷新以应用章节标题样式
+                if (currentBlock != null) {
+                    showCurrentSubPage()
+                }
             } catch (e: Exception) {
                 _errorMessage.value = "章节加载失败: ${e.message}"
             } finally {
@@ -236,6 +246,7 @@ class TextPreviewViewModel : ViewModel() {
         loadBlock(chapter.serverPage, goToFirstSubPage = false)
     }
 
+    // ---------- 内部核心 ----------
     private fun loadBlock(page: Int, goToFirstSubPage: Boolean = false, goToLastSubPage: Boolean = false) {
         _loadingState.value = LoadingState(true, "正在加载...")
         viewModelScope.launch {
@@ -246,6 +257,9 @@ class TextPreviewViewModel : ViewModel() {
 
                 currentBlock = block
                 rebuildSubPages(block.fullText)
+
+                // 👇 等待章节数据就绪（若未缓存则自动请求）
+                ensureChaptersLoaded()
 
                 val targetOffset = pendingCharOffset
                 pendingCharOffset = null
@@ -272,6 +286,20 @@ class TextPreviewViewModel : ViewModel() {
         }
     }
 
+    /**
+     * 确保章节数据已缓存，若没有则从服务器获取。
+     * 此函数是挂起函数，可在协程中安全调用。
+     */
+    private suspend fun ensureChaptersLoaded() {
+        if (cachedChapters != null) return
+        try {
+            val list = withContext(Dispatchers.IO) { fetchChaptersFromServer() }
+            cachedChapters = list.sortedBy { it.startCharOffset }
+            _chapters.value = list
+        } catch (e: Exception) {
+            Log.e("ViewModel", "预加载章节失败", e)
+        }
+    }
     private fun buildBlockUrl(page: Int): String {
         val base = if (fileUrl.contains("?")) "$fileUrl&" else "$fileUrl?"
         return "${base}page=$page"
@@ -346,29 +374,24 @@ class TextPreviewViewModel : ViewModel() {
         return 1
     }
 
-    // ─── 核心改进：富文本渲染 ───
+    // ─── 章节标题富文本渲染 ───
     private fun showCurrentSubPage() {
         if (currentBlock == null) return
         val fullText = currentBlock!!.fullText
         if (subPageBoundaries.isEmpty()) {
-            _pageContent.value = fullText  // 可直接显示纯文本，但也可尝试渲染
+            _pageContent.value = fullText
             updatePageInfo()
             _currentAbsoluteCharOffset.value = currentBlock!!.startChar
             return
         }
         val (startLine, endLine) = subPageBoundaries.getOrNull(currentSubPage - 1) ?: return
 
-        val layout = StaticLayout.Builder.obtain(fullText, 0, fullText.length, textPaint!!, textWidth)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .setLineSpacing(lineSpacingExtra, lineSpacingMultiplier)
-            .setIncludePad(true)
-            .build()
-
+        val layout = buildStaticLayout(fullText)
         val startChar = layout.getLineStart(startLine)
         val endChar = layout.getLineEnd(endLine - 1)
         val pageText = fullText.substring(startChar, endChar)
 
-        // 尝试应用章节标题富文本
+        // 应用章节标题样式
         val spannable = applyChapterStyles(fullText, pageText, startChar, currentBlock!!.startChar)
 
         _pageContent.value = spannable
@@ -376,59 +399,40 @@ class TextPreviewViewModel : ViewModel() {
         _currentAbsoluteCharOffset.value = currentBlock!!.startChar + startChar
     }
 
-    /**
-     * 在 pageText 上应用章节标题样式（居中、大字体、粗体）
-     * @param fullText 块全文
-     * @param pageText 当前子页的纯文本
-     * @param pageStartInBlock 当前子页在块中的起始字符偏移
-     * @param blockStartAbsolute 块在全文中的绝对起始偏移（同 BlockData.startChar）
-     */
     private fun applyChapterStyles(
         fullText: String,
         pageText: String,
         pageStartInBlock: Int,
         blockStartAbsolute: Int
     ): CharSequence {
-        val chapters = cachedChapters ?: return pageText  // 无章节数据则直接返回纯文本
+        val chapters = cachedChapters ?: return pageText
         if (chapters.isEmpty()) return pageText
 
         val spannable = SpannableString(pageText)
 
         for (chapter in chapters) {
-            // 章节标题在全文中的绝对偏移
             val absOffset = chapter.startCharOffset
-            // 转换为块全文中的相对偏移
             val relOffset = absOffset - blockStartAbsolute
-            // 检查是否落在当前子页范围内
-            if (relOffset < pageStartInBlock || relOffset >= pageStartInBlock + pageText.length) {
-                // 标题不在当前页，跳过
-                continue
-            }
-            // 标题在 pageText 中的起始位置
+            if (relOffset < pageStartInBlock || relOffset >= pageStartInBlock + pageText.length) continue
+
             val startInPage = relOffset - pageStartInBlock
-            // 获取标题文本长度（从 fullText 中截取）
             val titleEndInBlock = minOf(relOffset + chapter.title.length, fullText.length)
             val titleLenInBlock = titleEndInBlock - relOffset
-            // 标题在 pageText 中的结束位置
             val endInPage = minOf(startInPage + titleLenInBlock, pageText.length)
 
-            // 应用样式：居中、相对大小1.5倍、粗体
             spannable.setSpan(
                 AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
-                startInPage,
-                endInPage,
+                startInPage, endInPage,
                 SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
             )
             spannable.setSpan(
                 RelativeSizeSpan(1.5f),
-                startInPage,
-                endInPage,
+                startInPage, endInPage,
                 SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
             )
             spannable.setSpan(
                 StyleSpan(android.graphics.Typeface.BOLD),
-                startInPage,
-                endInPage,
+                startInPage, endInPage,
                 SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
             )
         }
@@ -445,7 +449,28 @@ class TextPreviewViewModel : ViewModel() {
         }
     }
 
-    // ─── 章节加载（无需改动） ───
+    // ─── 自动加载章节 ───
+    private fun autoLoadChapters() {
+        if (cachedChapters != null || chaptersLoading) return
+        chaptersLoading = true
+        viewModelScope.launch {
+            try {
+                val list = withContext(Dispatchers.IO) { fetchChaptersFromServer() }
+                cachedChapters = list.sortedBy { it.startCharOffset }
+                _chapters.value = list
+                // 章节加载成功，刷新当前页以应用标题样式
+                if (currentBlock != null) {
+                    showCurrentSubPage()
+                }
+            } catch (e: Exception) {
+                Log.e("ViewModel", "自动加载章节失败", e)
+            } finally {
+                chaptersLoading = false
+            }
+        }
+    }
+
+    // ─── 网络请求：获取章节 ───
     private suspend fun fetchChaptersFromServer(): List<ChapterInfo> = withContext(Dispatchers.IO) {
         try {
             val baseUrl = if (fileUrl.contains("/preview/")) {

@@ -164,7 +164,8 @@ class TextPreviewActivity : AppCompatActivity() {
         viewModel.errorMessage.observe(this) { error ->
             error?.let { showErrorState(it) }
         }
-        viewModel.chapters.observe(this) { chapters ->
+        // 只响应手动请求的章节弹窗事件
+        viewModel.showChapterDialogEvent.observe(this) { chapters ->
             if (chapters.isNotEmpty()) showChapterList(chapters)
             else showNoChaptersDialog()
         }
