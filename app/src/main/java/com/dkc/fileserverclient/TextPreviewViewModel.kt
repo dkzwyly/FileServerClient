@@ -56,9 +56,11 @@ class TextPreviewViewModel : ViewModel() {
     private var lineSpacingMultiplier = 1f
     private var linesPerPage = 20
 
-    private var currentBlock: BlockData? = null
+    // 当前使用的合并文本块（拼接当前大页与下一个大页）
+    private var combinedBlock: CombinedBlock? = null
+    // 当前显示的子页索引（基于 combinedBlock 的子页边界）
     private var currentSubPage = 1
-    private var totalSubPages = 1
+    // 子页边界列表（基于合并文本）
     private val subPageBoundaries = mutableListOf<Pair<Int, Int>>()
 
     private var restoredBlockPage = 1
@@ -67,13 +69,15 @@ class TextPreviewViewModel : ViewModel() {
 
     private var pendingCharOffset: Int? = null
 
-    // 章节数据缓存与加载状态
     private var cachedChapters: List<ChapterInfo>? = null
-    private var chaptersLoading = false
+
+    // 预加载相关
+    private var nextBlockAfterCombined: BlockData? = null   // 当下一个合并块中的第二个大页
+    private var isPreloading = false
 
     private val httpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
 
-    // --- 数据类 ---
+    // 数据类
     data class PageInfo(val currentPage: Int, val totalPages: Int, val progress: Int)
     data class LoadingState(val isLoading: Boolean, val message: String? = null)
     data class ChapterInfo(
@@ -90,8 +94,15 @@ class TextPreviewViewModel : ViewModel() {
         val startChar: Int,
         val endChar: Int
     )
+    // 合并块：由当前大页和下一个大页拼接而成
+    data class CombinedBlock(
+        val firstBlock: BlockData,      // 当前大页
+        val secondBlock: BlockData?,    // 下一个大页（如果存在）
+        val fullText: String,           // 拼接後的全文
+        val firstBlockEndChar: Int      // 第一个块在 fullText 中的结束字符索引（用于判断是否跨页）
+    )
 
-    // ---------- 公开初始化与参数 ----------
+    // ---------- 公开初始化 ----------
     fun initialize(fileName: String, fileUrl: String, filePath: String) {
         this.fileName = fileName
         this.fileUrl = fileUrl
@@ -107,15 +118,11 @@ class TextPreviewViewModel : ViewModel() {
 
     fun calculateMaxLinesPerPage(maxHeight: Int): Int {
         if (textWidth <= 0 || textPaint == null || maxHeight <= 0) return 0
-
-        val testLine = "T\n"
-        val sampleLayout = buildStaticLayout(testLine.repeat(1))
+        val sampleLayout = buildStaticLayout("T\n")
         val lineHeight = sampleLayout.getLineBottom(0) - sampleLayout.getLineTop(0)
         if (lineHeight <= 0) return 0
         val maxPossibleLines = (maxHeight / lineHeight).toInt() + 2
-
         val testLines = List(maxPossibleLines) { "T" }.joinToString("\n")
-
         var low = 1
         var high = maxPossibleLines
         var best = 1
@@ -124,10 +131,7 @@ class TextPreviewViewModel : ViewModel() {
             val text = testLines.lines().take(mid).joinToString("\n")
             val layout = buildStaticLayout(text)
             when {
-                layout.height <= maxHeight -> {
-                    best = mid
-                    low = mid + 1
-                }
+                layout.height <= maxHeight -> { best = mid; low = mid + 1 }
                 else -> high = mid - 1
             }
         }
@@ -143,42 +147,29 @@ class TextPreviewViewModel : ViewModel() {
     }
 
     fun setLinesPerPage(lines: Int) {
-        val safeLines = if (lines < 2) {
-            Log.w("ViewModel", "linesPerPage 无效 ($lines)，使用 20")
-            20
-        } else {
-            lines
-        }
+        val safeLines = if (lines < 2) 20 else lines
         if (linesPerPage != safeLines) {
             linesPerPage = safeLines
-            currentBlock?.let {
-                rebuildSubPages(it.fullText)
-                showCurrentSubPage()
-            }
+            combinedBlock?.let { rebuildSubPages(it) }
         }
     }
 
     fun onFontSizeChanged(newLinesPerPage: Int) {
-        if (currentBlock == null) return
+        if (combinedBlock == null) return
         val currentStartChar = getCurrentVisibleStartChar()
         linesPerPage = newLinesPerPage.coerceAtLeast(2)
-        currentBlock?.let { block ->
-            rebuildSubPages(block.fullText)
-            currentSubPage = findSubPageForCharOffset(block.fullText, block.startChar, currentStartChar)
+        combinedBlock?.let { block ->
+            rebuildSubPages(block)
+            currentSubPage = findSubPageForCharOffset(block.fullText, currentStartChar)
             showCurrentSubPage()
         }
     }
 
     private fun getCurrentVisibleStartChar(): Int {
-        val block = currentBlock ?: return 0
-        val fullText = block.fullText
-        if (subPageBoundaries.isEmpty() || currentSubPage < 1 || currentSubPage > subPageBoundaries.size) {
-            return block.startChar
-        }
-        val (startLine, _) = subPageBoundaries[currentSubPage - 1]
-        val layout = buildStaticLayout(fullText)
-        val startChar = layout.getLineStart(startLine)
-        return block.startChar + startChar
+        val block = combinedBlock ?: return 0
+        val (startLine, _) = subPageBoundaries.getOrElse(currentSubPage - 1) { return 0 }
+        val layout = buildStaticLayout(block.fullText)
+        return layout.getLineStart(startLine)
     }
 
     fun restoreFromHistory(blockPage: Int, subPage: Int) {
@@ -188,39 +179,48 @@ class TextPreviewViewModel : ViewModel() {
     }
 
     fun getCurrentPageState(): PageState? {
-        return currentBlock?.let {
-            PageState(it.blockPage, currentSubPage, it.totalBlockPages, totalSubPages)
-        }
+        val com = combinedBlock ?: return null
+        return PageState(com.firstBlock.blockPage, currentSubPage, com.firstBlock.totalBlockPages, subPageBoundaries.size)
     }
 
     fun loadTextContent() {
-        if (textWidth <= 0 || textPaint == null) {
-            Log.d("ViewModel", "等待显示参数初始化")
-            return
-        }
+        if (textWidth <= 0 || textPaint == null) return
         val targetPage = if (isHistoryRestored) restoredBlockPage else 1
-        loadBlock(targetPage)
+        loadCombinedBlock(targetPage)
     }
 
     fun previousPage() {
+        val com = combinedBlock ?: return
         if (currentSubPage > 1) {
             currentSubPage--
             showCurrentSubPage()
-        } else if (currentBlock != null && currentBlock!!.blockPage > 1) {
-            loadBlock(currentBlock!!.blockPage - 1, goToLastSubPage = true)
+            // 检查是否完全退回到上一大页
+            if (isSubPageBeforeFirstBlock()) {
+                // 需要加载前一个大页
+                loadCombinedBlock(com.firstBlock.blockPage - 1, goToLastSubPage = true)
+            }
+        } else if (com.firstBlock.blockPage > 1) {
+            loadCombinedBlock(com.firstBlock.blockPage - 1, goToLastSubPage = true)
         }
     }
 
     fun nextPage() {
-        if (currentSubPage < totalSubPages) {
+        val com = combinedBlock ?: return
+        if (currentSubPage < subPageBoundaries.size) {
             currentSubPage++
             showCurrentSubPage()
-        } else if (currentBlock != null && currentBlock!!.blockPage < currentBlock!!.totalBlockPages) {
-            loadBlock(currentBlock!!.blockPage + 1, goToFirstSubPage = true)
+        } else if (com.secondBlock != null && com.firstBlock.blockPage < com.firstBlock.totalBlockPages) {
+            // 已经消耗了第一个块，跨到下一个块
+            if (isSubPageBeyondFirstBlock()) {
+                // 当前子页的起点已经在第二个块内，这时应切换到下一个合并块
+                loadCombinedBlock(com.firstBlock.blockPage + 1, goToFirstSubPage = true)
+            }
+        } else if (com.firstBlock.blockPage < com.firstBlock.totalBlockPages) {
+            // 没有第二个块，但还有后续页
+            loadCombinedBlock(com.firstBlock.blockPage + 1, goToFirstSubPage = true)
         }
     }
 
-    // 手动加载章节（供章节按钮调用，可刷新数据）
     fun loadChapters() {
         viewModelScope.launch {
             _loadingState.value = LoadingState(true, "正在加载章节...")
@@ -228,11 +228,8 @@ class TextPreviewViewModel : ViewModel() {
                 val list = withContext(Dispatchers.IO) { fetchChaptersFromServer() }
                 cachedChapters = list.sortedBy { it.startCharOffset }
                 _chapters.value = list
-                _showChapterDialogEvent.value = list  // 触发弹窗事件
-                // 如果当前有内容显示，刷新以应用章节标题样式
-                if (currentBlock != null) {
-                    showCurrentSubPage()
-                }
+                _showChapterDialogEvent.value = list
+                if (combinedBlock != null) showCurrentSubPage()
             } catch (e: Exception) {
                 _errorMessage.value = "章节加载失败: ${e.message}"
             } finally {
@@ -243,53 +240,79 @@ class TextPreviewViewModel : ViewModel() {
 
     fun jumpToChapter(chapter: ChapterInfo) {
         pendingCharOffset = chapter.startCharOffset
-        loadBlock(chapter.serverPage, goToFirstSubPage = false)
+        // 根据章节所在服务器页号加载对应的合并块
+        loadCombinedBlock(chapter.serverPage, goToFirstSubPage = false)
     }
 
-    // ---------- 内部核心 ----------
-    private fun loadBlock(page: Int, goToFirstSubPage: Boolean = false, goToLastSubPage: Boolean = false) {
+    // ---------- 内部 ----------
+    private fun loadCombinedBlock(page: Int, goToFirstSubPage: Boolean = false, goToLastSubPage: Boolean = false) {
         _loadingState.value = LoadingState(true, "正在加载...")
         viewModelScope.launch {
             try {
-                val url = buildBlockUrl(page)
-                val json = fetchJson(url)
-                val block = parseBlockResponse(json)
+                // 加载请求的页面作为第一块
+                val firstBlock = fetchBlock(page)
+                var secondBlock: BlockData? = null
+                // 如果下一页存在，加载下一页作为第二块
+                if (page < firstBlock.totalBlockPages) {
+                    try {
+                        secondBlock = fetchBlock(page + 1)
+                    } catch (e: Exception) {
+                        Log.e("ViewModel", "预加载下一页失败", e)
+                    }
+                }
 
-                currentBlock = block
-                rebuildSubPages(block.fullText)
+                // 拼接全文
+                val fullText = if (secondBlock != null) {
+                    firstBlock.fullText + secondBlock.fullText
+                } else {
+                    firstBlock.fullText
+                }
+                val combined = CombinedBlock(
+                    firstBlock = firstBlock,
+                    secondBlock = secondBlock,
+                    fullText = fullText,
+                    firstBlockEndChar = firstBlock.fullText.length
+                )
 
-                // 👇 等待章节数据就绪（若未缓存则自动请求）
+                combinedBlock = combined
+                // 等待章节数据就绪
                 ensureChaptersLoaded()
 
+                // 重新分页
+                rebuildSubPages(combined)
+
+                // 确定子页
                 val targetOffset = pendingCharOffset
                 pendingCharOffset = null
-                when {
-                    targetOffset != null -> {
-                        currentSubPage = findSubPageForCharOffset(block.fullText, block.startChar, targetOffset)
-                    }
-                    goToFirstSubPage -> currentSubPage = 1
-                    goToLastSubPage -> currentSubPage = totalSubPages
+                currentSubPage = when {
+                    targetOffset != null -> findSubPageForCharOffset(fullText, targetOffset)
+                    goToFirstSubPage -> 1
+                    goToLastSubPage -> subPageBoundaries.size
                     isHistoryRestored && page == restoredBlockPage -> {
-                        currentSubPage = restoredSubPage.coerceIn(1, totalSubPages)
-                        isHistoryRestored = false
+                        restoredSubPage.coerceIn(1, subPageBoundaries.size).also { isHistoryRestored = false }
                     }
-                    else -> currentSubPage = 1
+                    else -> 1
                 }
 
                 showCurrentSubPage()
                 _loadingState.value = LoadingState(false)
+
+                // 如果第一页之后还有内容，确保第二块存在；否则清除预加载
+                // 不再需要 explicit preload 因为已经用了
             } catch (e: Exception) {
                 _errorMessage.value = "加载失败: ${e.message}"
                 _loadingState.value = LoadingState(false)
-                Log.e("ViewModel", "loadBlock error", e)
+                Log.e("ViewModel", "loadCombinedBlock error", e)
             }
         }
     }
 
-    /**
-     * 确保章节数据已缓存，若没有则从服务器获取。
-     * 此函数是挂起函数，可在协程中安全调用。
-     */
+    private suspend fun fetchBlock(page: Int): BlockData {
+        val url = buildBlockUrl(page)
+        val json = fetchJson(url)
+        return parseBlockResponse(json)
+    }
+
     private suspend fun ensureChaptersLoaded() {
         if (cachedChapters != null) return
         try {
@@ -300,12 +323,146 @@ class TextPreviewViewModel : ViewModel() {
             Log.e("ViewModel", "预加载章节失败", e)
         }
     }
+
+    // ─── 分页（基于合并文本，标题断页） ───
+    private fun rebuildSubPages(combined: CombinedBlock) {
+        subPageBoundaries.clear()
+        if (textWidth <= 0 || textPaint == null || combined.fullText.isEmpty()) return
+
+        val layout = buildStaticLayout(combined.fullText)
+        val totalLines = layout.lineCount
+        if (totalLines == 0) return
+
+        // 获取所有章节标题在合并文本中的起始行
+        val chapterStartLines = mutableSetOf<Int>()
+        if (cachedChapters != null) {
+            val baseOffset = combined.firstBlock.startChar   // 第一个块的绝对起始偏移
+            val firstLen = combined.firstBlock.fullText.length
+            for (ch in cachedChapters!!) {
+                val absOffset = ch.startCharOffset
+                // 检查是否在当前合并文本的范围内
+                val localOffset = if (absOffset >= baseOffset && absOffset < baseOffset + combined.fullText.length) {
+                    absOffset - baseOffset
+                } else {
+                    // 章节可能在第二块中，但 baseOffset 已经是第一块的绝对偏移
+                    continue
+                }
+                if (localOffset < 0 || localOffset >= combined.fullText.length) continue
+                val line = layout.getLineForOffset(localOffset)
+                chapterStartLines.add(line)
+            }
+        }
+
+        var startLine = 0
+        while (startLine < totalLines) {
+            var endLine = minOf(startLine + linesPerPage, totalLines)
+
+            // 处理标题断页：如果 endLine 正好是标题行，则将标题留给下一页
+            if (endLine < totalLines && chapterStartLines.contains(endLine)) {
+                if (endLine > startLine + 1) endLine--
+            }
+            // 如果标题行在页面中间，则提前断开
+            for (line in startLine until endLine) {
+                if (chapterStartLines.contains(line) && line != startLine) {
+                    endLine = line
+                    break
+                }
+            }
+            // 孤行处理
+            if (endLine < totalLines && totalLines - endLine < 2 && startLine + 1 < endLine) {
+                endLine--
+            }
+            subPageBoundaries.add(Pair(startLine, endLine))
+            startLine = endLine
+        }
+    }
+
+    private fun findSubPageForCharOffset(fullText: String, absCharOffset: Int): Int {
+        if (fullText.isEmpty() || subPageBoundaries.isEmpty()) return 1
+        val layout = buildStaticLayout(fullText)
+        val line = layout.getLineForOffset(absCharOffset.coerceIn(0, fullText.length))
+        for ((i, bounds) in subPageBoundaries.withIndex()) {
+            if (line in bounds.first until bounds.second) return i + 1
+        }
+        return 1
+    }
+
+    // 判断当前子页是否完全位于第一块之前（即需要回退到前一个大页）
+    private fun isSubPageBeforeFirstBlock(): Boolean {
+        val com = combinedBlock ?: return false
+        val (startLine, _) = subPageBoundaries.getOrNull(currentSubPage - 1) ?: return false
+        val layout = buildStaticLayout(com.fullText)
+        val startChar = layout.getLineStart(startLine)
+        return startChar < 0 // 不会发生，实际上需要判断 startChar 是否小于 firstBlock.fullText.length
+    }
+
+    // 判断当前子页是否已经越过了第一块的末尾
+    private fun isSubPageBeyondFirstBlock(): Boolean {
+        val com = combinedBlock ?: return false
+        val (startLine, _) = subPageBoundaries.getOrNull(currentSubPage - 1) ?: return false
+        val layout = buildStaticLayout(com.fullText)
+        val startChar = layout.getLineStart(startLine)
+        return startChar >= com.firstBlockEndChar
+    }
+
+    // ─── 显示当前子页 ───
+    private fun showCurrentSubPage() {
+        val com = combinedBlock ?: return
+        if (subPageBoundaries.isEmpty()) {
+            _pageContent.value = com.fullText
+            updatePageInfo()
+            _currentAbsoluteCharOffset.value = com.firstBlock.startChar
+            return
+        }
+        val (startLine, endLine) = subPageBoundaries.getOrElse(currentSubPage - 1) {
+            currentSubPage = 1
+            subPageBoundaries.first()
+        }
+        val layout = buildStaticLayout(com.fullText)
+        val startChar = layout.getLineStart(startLine)
+        val endChar = if (endLine >= layout.lineCount) com.fullText.length else layout.getLineStart(endLine)
+        val pageText = com.fullText.substring(startChar, minOf(endChar, com.fullText.length))
+
+        // 应用章节标题富文本
+        val spannable = applyChapterStyles(com.fullText, pageText, startChar, com.firstBlock.startChar)
+        _pageContent.value = spannable
+        updatePageInfo()
+        _currentAbsoluteCharOffset.value = com.firstBlock.startChar + startChar
+    }
+
+    private fun applyChapterStyles(
+        fullText: String, pageText: String, pageStartInFull: Int, baseAbsoluteOffset: Int
+    ): CharSequence {
+        val chapters = cachedChapters ?: return pageText
+        val spannable = SpannableString(pageText)
+        for (ch in chapters) {
+            val localOffset = ch.startCharOffset - baseAbsoluteOffset
+            if (localOffset < pageStartInFull || localOffset >= pageStartInFull + pageText.length) continue
+            val startInPage = localOffset - pageStartInFull
+            val titleLen = minOf(ch.title.length, pageText.length - startInPage)
+            if (titleLen <= 0) continue
+            val endInPage = startInPage + titleLen
+            spannable.setSpan(AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER), startInPage, endInPage, SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(RelativeSizeSpan(1.5f), startInPage, endInPage, SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), startInPage, endInPage, SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return spannable
+    }
+
+    private fun updatePageInfo() {
+        val com = combinedBlock ?: return
+        val totalPages = com.firstBlock.totalBlockPages
+        val progress = if (totalPages > 0) ((com.firstBlock.blockPage - 1) * 100 / totalPages) else 0
+        _pageInfo.value = PageInfo(com.firstBlock.blockPage, totalPages, progress)
+        _currentPageState.value = PageState(com.firstBlock.blockPage, currentSubPage, totalPages, subPageBoundaries.size)
+    }
+
     private fun buildBlockUrl(page: Int): String {
         val base = if (fileUrl.contains("?")) "$fileUrl&" else "$fileUrl?"
         return "${base}page=$page"
     }
 
-    private suspend fun fetchJson(url: String): String = withContext(Dispatchers.IO) {
+    private suspend fun fetchJson(url: String) = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(url).build()
         val response = httpClient.newCall(request).execute()
         if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
@@ -323,223 +480,43 @@ class TextPreviewViewModel : ViewModel() {
         return BlockData(content, currentPage, totalPages, startChar, endChar)
     }
 
-    private fun rebuildSubPages(fullText: String) {
-        subPageBoundaries.clear()
-        if (textWidth <= 0 || textPaint == null || fullText.isEmpty()) {
-            totalSubPages = 1
-            return
-        }
-
-        val layout = StaticLayout.Builder.obtain(fullText, 0, fullText.length, textPaint!!, textWidth)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .setLineSpacing(lineSpacingExtra, lineSpacingMultiplier)
-            .setIncludePad(true)
-            .build()
-
-        val totalLines = layout.lineCount
-        if (totalLines == 0) {
-            totalSubPages = 1
-            return
-        }
-
-        var startLine = 0
-        while (startLine < totalLines) {
-            var endLine = minOf(startLine + linesPerPage, totalLines)
-            if (endLine < totalLines && totalLines - endLine < 2 && startLine + 1 < endLine) {
-                endLine--
-            }
-            subPageBoundaries.add(Pair(startLine, endLine))
-            startLine = endLine
-        }
-        totalSubPages = subPageBoundaries.size
-        Log.d("ViewModel", "重建子页完成: 总物理行=$totalLines, 每页行数=$linesPerPage, 子页数=$totalSubPages")
-    }
-
-    private fun findSubPageForCharOffset(fullText: String, blockStartChar: Int, absCharOffset: Int): Int {
-        if (fullText.isEmpty() || subPageBoundaries.isEmpty()) return 1
-        val relativeOffset = (absCharOffset - blockStartChar).coerceIn(0, fullText.length)
-        val layout = StaticLayout.Builder.obtain(fullText, 0, fullText.length, textPaint!!, textWidth)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .setLineSpacing(lineSpacingExtra, lineSpacingMultiplier)
-            .setIncludePad(true)
-            .build()
-
-        val line = layout.getLineForOffset(relativeOffset)
-        for ((index, boundaries) in subPageBoundaries.withIndex()) {
-            val (startLine, endLine) = boundaries
-            if (line in startLine until endLine) {
-                return index + 1
-            }
-        }
-        return 1
-    }
-
-    // ─── 章节标题富文本渲染 ───
-    private fun showCurrentSubPage() {
-        if (currentBlock == null) return
-        val fullText = currentBlock!!.fullText
-        if (subPageBoundaries.isEmpty()) {
-            _pageContent.value = fullText
-            updatePageInfo()
-            _currentAbsoluteCharOffset.value = currentBlock!!.startChar
-            return
-        }
-        val (startLine, endLine) = subPageBoundaries.getOrNull(currentSubPage - 1) ?: return
-
-        val layout = buildStaticLayout(fullText)
-        val startChar = layout.getLineStart(startLine)
-        val endChar = layout.getLineEnd(endLine - 1)
-        val pageText = fullText.substring(startChar, endChar)
-
-        // 应用章节标题样式
-        val spannable = applyChapterStyles(fullText, pageText, startChar, currentBlock!!.startChar)
-
-        _pageContent.value = spannable
-        updatePageInfo()
-        _currentAbsoluteCharOffset.value = currentBlock!!.startChar + startChar
-    }
-
-    private fun applyChapterStyles(
-        fullText: String,
-        pageText: String,
-        pageStartInBlock: Int,
-        blockStartAbsolute: Int
-    ): CharSequence {
-        val chapters = cachedChapters ?: return pageText
-        if (chapters.isEmpty()) return pageText
-
-        val spannable = SpannableString(pageText)
-
-        for (chapter in chapters) {
-            val absOffset = chapter.startCharOffset
-            val relOffset = absOffset - blockStartAbsolute
-            if (relOffset < pageStartInBlock || relOffset >= pageStartInBlock + pageText.length) continue
-
-            val startInPage = relOffset - pageStartInBlock
-            val titleEndInBlock = minOf(relOffset + chapter.title.length, fullText.length)
-            val titleLenInBlock = titleEndInBlock - relOffset
-            val endInPage = minOf(startInPage + titleLenInBlock, pageText.length)
-
-            spannable.setSpan(
-                AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
-                startInPage, endInPage,
-                SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-            spannable.setSpan(
-                RelativeSizeSpan(1.5f),
-                startInPage, endInPage,
-                SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-            spannable.setSpan(
-                StyleSpan(android.graphics.Typeface.BOLD),
-                startInPage, endInPage,
-                SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-        }
-        return spannable
-    }
-
-    private fun updatePageInfo() {
-        currentBlock?.let { block ->
-            val progress = if (block.totalBlockPages > 0) {
-                ((block.blockPage - 1) * 100 / block.totalBlockPages)
-            } else 0
-            _pageInfo.value = PageInfo(block.blockPage, block.totalBlockPages, progress)
-            _currentPageState.value = PageState(block.blockPage, currentSubPage, block.totalBlockPages, totalSubPages)
-        }
-    }
-
-    // ─── 自动加载章节 ───
-    private fun autoLoadChapters() {
-        if (cachedChapters != null || chaptersLoading) return
-        chaptersLoading = true
-        viewModelScope.launch {
-            try {
-                val list = withContext(Dispatchers.IO) { fetchChaptersFromServer() }
-                cachedChapters = list.sortedBy { it.startCharOffset }
-                _chapters.value = list
-                // 章节加载成功，刷新当前页以应用标题样式
-                if (currentBlock != null) {
-                    showCurrentSubPage()
-                }
-            } catch (e: Exception) {
-                Log.e("ViewModel", "自动加载章节失败", e)
-            } finally {
-                chaptersLoading = false
-            }
-        }
-    }
-
-    // ─── 网络请求：获取章节 ───
     private suspend fun fetchChaptersFromServer(): List<ChapterInfo> = withContext(Dispatchers.IO) {
         try {
-            val baseUrl = if (fileUrl.contains("/preview/")) {
-                fileUrl.substringBefore("/preview/")
-            } else {
-                val urlParts = fileUrl.split("/api/")
-                if (urlParts.size > 1) {
-                    "${urlParts[0]}/api"
-                } else {
-                    fileUrl.substringBeforeLast("/")
-                }
+            val baseUrl = if (fileUrl.contains("/preview/")) fileUrl.substringBefore("/preview/")
+            else {
+                val parts = fileUrl.split("/api/")
+                if (parts.size > 1) "${parts[0]}/api" else fileUrl.substringBeforeLast("/")
             }
-
-            val fileNameFromUrl = if (fileUrl.contains("/preview/")) {
-                fileUrl.substringAfter("/preview/").substringBefore("?")
-            } else {
-                fileName
-            }
-
-            val encodedFileName = URLEncoder.encode(fileNameFromUrl, "UTF-8")
-            val chaptersUrl = "$baseUrl/chapters/$encodedFileName"
-
-            Log.d("TextPreviewViewModel", "请求章节URL: $chaptersUrl")
-
-            val request = Request.Builder()
-                .url(chaptersUrl)
-                .addHeader("Accept", "application/json")
-                .build()
-
+            val fileNameFromUrl = if (fileUrl.contains("/preview/")) fileUrl.substringAfter("/preview/").substringBefore("?")
+            else fileName
+            val encoded = URLEncoder.encode(fileNameFromUrl, "UTF-8")
+            val chaptersUrl = "$baseUrl/chapters/$encoded"
+            val request = Request.Builder().url(chaptersUrl).addHeader("Accept", "application/json").build()
             val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
-                Log.w("TextPreviewViewModel", "章节请求失败: HTTP ${response.code}")
-                return@withContext emptyList()
-            }
-
-            val jsonData = response.body?.string() ?: return@withContext emptyList()
-            Log.d("TextPreviewViewModel", "章节响应: $jsonData")
-
-            parseChaptersJson(jsonData)
+            if (!response.isSuccessful) return@withContext emptyList()
+            parseChaptersJson(response.body?.string() ?: "")
         } catch (e: Exception) {
-            Log.e("TextPreviewViewModel", "加载章节失败", e)
             emptyList()
         }
     }
 
     private fun parseChaptersJson(json: String): List<ChapterInfo> {
-        val chapters = mutableListOf<ChapterInfo>()
+        val list = mutableListOf<ChapterInfo>()
         try {
-            val jsonObject = JSONObject(json)
-            var chaptersArray = jsonObject.optJSONArray("chapters")
-            if (chaptersArray == null) {
-                val data = jsonObject.optJSONObject("data")
-                chaptersArray = data?.optJSONArray("chapters")
-            }
-
-            if (chaptersArray != null) {
-                for (i in 0 until chaptersArray.length()) {
-                    val chapterObj = chaptersArray.getJSONObject(i)
-                    val title = chapterObj.optString("title", "未知章节")
-                    val serverPage = chapterObj.optInt("page", 1)
-                    val lineNumber = chapterObj.optInt("lineNumber", 0)
-                    val startCharOffset = chapterObj.optInt("startCharOffset", 0)
-                    chapters.add(ChapterInfo(title, serverPage, lineNumber, startCharOffset))
-                    Log.d("TextPreviewViewModel", "解析章节: $title, 服务器页=$serverPage, 偏移=$startCharOffset")
+            val obj = JSONObject(json)
+            var arr = obj.optJSONArray("chapters") ?: obj.optJSONObject("data")?.optJSONArray("chapters")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val ch = arr.getJSONObject(i)
+                    list.add(ChapterInfo(
+                        title = ch.optString("title", "未知"),
+                        serverPage = ch.optInt("page", 1),
+                        lineNumber = ch.optInt("lineNumber", 0),
+                        startCharOffset = ch.optInt("startCharOffset", 0)
+                    ))
                 }
             }
-        } catch (e: Exception) {
-            Log.e("TextPreviewViewModel", "解析章节JSON失败", e)
-        }
-        return chapters
+        } catch (e: Exception) { Log.e("ViewModel", "解析章节失败", e) }
+        return list
     }
 }
