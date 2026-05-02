@@ -46,7 +46,6 @@ class TextPreviewActivity : AppCompatActivity() {
     private lateinit var currentFileUrl: String
     private lateinit var currentFilePath: String
 
-    // 字体与背景偏好
     private var currentFontSize: Float = 16f
     private var currentBackgroundColor: Int = Color.WHITE
     private lateinit var prefs: SharedPreferences
@@ -98,6 +97,15 @@ class TextPreviewActivity : AppCompatActivity() {
     private fun applyAppearance() {
         textContentTextView.textSize = currentFontSize
         rootLayout.setBackgroundColor(currentBackgroundColor)
+        progressTextView.setTextColor(getContrastColor(currentBackgroundColor))
+    }
+
+    private fun getContrastColor(bgColor: Int): Int {
+        val r = Color.red(bgColor)
+        val g = Color.green(bgColor)
+        val b = Color.blue(bgColor)
+        val luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+        return if (luminance > 0.5) Color.DKGRAY else Color.argb(0x80, 0xFF, 0xFF, 0xFF)
     }
 
     private fun initViews() {
@@ -113,7 +121,6 @@ class TextPreviewActivity : AppCompatActivity() {
         supportActionBar?.hide()
         textContentTextView.isScrollContainer = false
 
-        // 章节按钮透明化
         chapterButton.setBackgroundResource(android.R.color.transparent)
         chapterButton.setImageResource(android.R.color.transparent)
         chapterButton.alpha = 0.0f
@@ -121,7 +128,6 @@ class TextPreviewActivity : AppCompatActivity() {
         chapterButton.setOnClickListener { showChapterDialog() }
         chapterButton.isVisible = true
 
-        // 设置按钮透明化（与章节按钮一致）
         settingsButton.setBackgroundResource(android.R.color.transparent)
         settingsButton.setImageResource(android.R.color.transparent)
         settingsButton.alpha = 0.0f
@@ -163,10 +169,15 @@ class TextPreviewActivity : AppCompatActivity() {
             else showNoChaptersDialog()
         }
         viewModel.currentPageState.observe(this) { state ->
-            state?.let { saveReadingHistory(it.blockPage, it.subPage) }
-        }
-        viewModel.pageInfo.observe(this) { info ->
-            progressTextView.text = "${info.progress}%"
+            if (state != null) {
+                saveReadingHistory(state.blockPage, state.subPage)
+                val progress = ((state.blockPage - 1).toFloat() +
+                        (state.subPage - 1).toFloat() / state.totalSubPages) /
+                        state.totalBlockPages * 100f
+                progressTextView.text = String.format("%.2f%%", progress)
+            } else {
+                progressTextView.text = "0.00%"
+            }
         }
     }
 
@@ -199,6 +210,21 @@ class TextPreviewActivity : AppCompatActivity() {
         }
     }
 
+    private fun recalcLinesPerPageAndKeepPosition() {
+        val width = textContentTextView.width - textContentTextView.paddingLeft - textContentTextView.paddingRight
+        val paint = textContentTextView.paint
+        val extra = textContentTextView.lineSpacingExtra
+        val multiplier = textContentTextView.lineSpacingMultiplier
+        viewModel.setDisplayParams(width, paint, extra, multiplier)   // 更新 ViewModel 的 paint
+
+        val maxHeight = textContentTextView.height - textContentTextView.paddingTop - textContentTextView.paddingBottom
+        if (maxHeight <= 0) return
+        val lines = viewModel.calculateMaxLinesPerPage(maxHeight)
+        if (lines > 0) {
+            viewModel.onFontSizeChanged(lines)   // 强制重建分页并保持位置
+        }
+    }
+
     private fun setupGestureDetector() {
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
@@ -209,12 +235,10 @@ class TextPreviewActivity : AppCompatActivity() {
                 val screenWidth = resources.displayMetrics.widthPixels
                 val x = e.x
 
-                // 右上角章节按钮
                 if (x > screenWidth - 150 && e.y < 150) {
                     chapterButton.performClick()
                     return true
                 }
-                // 右下角设置按钮
                 if (x > screenWidth - 150 && e.y > resources.displayMetrics.heightPixels - 150) {
                     settingsButton.performClick()
                     return true
@@ -243,7 +267,6 @@ class TextPreviewActivity : AppCompatActivity() {
         val btnCancel = dialogView.findViewById<Button>(R.id.btnCancel)
         val btnApply = dialogView.findViewById<Button>(R.id.btnApply)
 
-        // 记录原始值，用于取消时恢复
         val originalFontSize = currentFontSize
         val originalBgColor = currentBackgroundColor
 
@@ -261,22 +284,25 @@ class TextPreviewActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
-        // 背景色按钮点击立即预览
         btnColorWhite.setOnClickListener {
             currentBackgroundColor = Color.WHITE
             rootLayout.setBackgroundColor(Color.WHITE)
+            progressTextView.setTextColor(getContrastColor(Color.WHITE))
         }
         btnColorCream.setOnClickListener {
             currentBackgroundColor = Color.parseColor("#FAF0D7")
             rootLayout.setBackgroundColor(currentBackgroundColor)
+            progressTextView.setTextColor(getContrastColor(currentBackgroundColor))
         }
         btnColorGreen.setOnClickListener {
             currentBackgroundColor = Color.parseColor("#C8E6C9")
             rootLayout.setBackgroundColor(currentBackgroundColor)
+            progressTextView.setTextColor(getContrastColor(currentBackgroundColor))
         }
         btnColorBlack.setOnClickListener {
             currentBackgroundColor = Color.DKGRAY
             rootLayout.setBackgroundColor(currentBackgroundColor)
+            progressTextView.setTextColor(getContrastColor(currentBackgroundColor))
         }
 
         val dialog = AlertDialog.Builder(this)
@@ -285,10 +311,10 @@ class TextPreviewActivity : AppCompatActivity() {
             .create()
 
         btnCancel.setOnClickListener {
-            // 恢复原始值
             currentFontSize = originalFontSize
             currentBackgroundColor = originalBgColor
             applyAppearance()
+            recalcLinesPerPageAndKeepPosition()   // 恢复后也需要重排
             dialog.dismiss()
         }
 
@@ -296,13 +322,13 @@ class TextPreviewActivity : AppCompatActivity() {
             currentFontSize = (seekBarFontSize.progress + 12).toFloat()
             saveAppearancePrefs()
             applyAppearance()
+            recalcLinesPerPageAndKeepPosition()   // 确认后立即重新分页
             dialog.dismiss()
         }
 
         dialog.show()
     }
 
-    // ---------- 原有方法保持不变 ----------
     private fun showChapterDialog() {
         statusLabel.isVisible = true
         statusLabel.text = "正在从服务器加载章节..."
@@ -411,11 +437,12 @@ class TextPreviewActivity : AppCompatActivity() {
             saveReadingHistory(it.blockPage, it.subPage)
         }
     }
-    data class ReadingHistory(
-        val fileName: String,
-        val fileUrl: String,
-        val blockPage: Int,
-        val subPage: Int,
-        val timestamp: Long
-    ) : java.io.Serializable
 }
+
+data class ReadingHistory(
+    val fileName: String,
+    val fileUrl: String,
+    val blockPage: Int,
+    val subPage: Int,
+    val timestamp: Long
+) : java.io.Serializable
