@@ -4,10 +4,7 @@ import android.content.SharedPreferences
 import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
-import android.view.GestureDetector
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewTreeObserver
+import android.view.*
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -49,6 +46,9 @@ class TextPreviewActivity : AppCompatActivity() {
     private var currentFontSize: Float = 16f
     private var currentBackgroundColor: Int = Color.WHITE
     private lateinit var prefs: SharedPreferences
+
+    // 当前阅读位置的绝对字符偏移
+    private var currentAbsoluteOffset: Int = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -179,6 +179,9 @@ class TextPreviewActivity : AppCompatActivity() {
                 progressTextView.text = "0.00%"
             }
         }
+        viewModel.currentAbsoluteCharOffset.observe(this) { offset ->
+            currentAbsoluteOffset = offset
+        }
     }
 
     private fun setupLayoutListener() {
@@ -215,13 +218,13 @@ class TextPreviewActivity : AppCompatActivity() {
         val paint = textContentTextView.paint
         val extra = textContentTextView.lineSpacingExtra
         val multiplier = textContentTextView.lineSpacingMultiplier
-        viewModel.setDisplayParams(width, paint, extra, multiplier)   // 更新 ViewModel 的 paint
+        viewModel.setDisplayParams(width, paint, extra, multiplier)
 
         val maxHeight = textContentTextView.height - textContentTextView.paddingTop - textContentTextView.paddingBottom
         if (maxHeight <= 0) return
         val lines = viewModel.calculateMaxLinesPerPage(maxHeight)
         if (lines > 0) {
-            viewModel.onFontSizeChanged(lines)   // 强制重建分页并保持位置
+            viewModel.onFontSizeChanged(lines)
         }
     }
 
@@ -314,7 +317,7 @@ class TextPreviewActivity : AppCompatActivity() {
             currentFontSize = originalFontSize
             currentBackgroundColor = originalBgColor
             applyAppearance()
-            recalcLinesPerPageAndKeepPosition()   // 恢复后也需要重排
+            recalcLinesPerPageAndKeepPosition()
             dialog.dismiss()
         }
 
@@ -322,13 +325,14 @@ class TextPreviewActivity : AppCompatActivity() {
             currentFontSize = (seekBarFontSize.progress + 12).toFloat()
             saveAppearancePrefs()
             applyAppearance()
-            recalcLinesPerPageAndKeepPosition()   // 确认后立即重新分页
+            recalcLinesPerPageAndKeepPosition()
             dialog.dismiss()
         }
 
         dialog.show()
     }
 
+    // ---------- 章节相关 ----------
     private fun showChapterDialog() {
         statusLabel.isVisible = true
         statusLabel.text = "正在从服务器加载章节..."
@@ -336,16 +340,59 @@ class TextPreviewActivity : AppCompatActivity() {
     }
 
     private fun showChapterList(chapters: List<TextPreviewViewModel.ChapterInfo>) {
-        val titles = chapters.map { it.title }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("章节跳转 (${chapters.size}章)")
-            .setItems(titles) { _, which ->
-                val chapter = chapters[which]
-                viewModel.jumpToChapter(chapter)
-                Toast.makeText(this, "跳转到: ${chapter.title}", Toast.LENGTH_SHORT).show()
+        // 按字符偏移排序，确保顺序正确
+        val sortedChapters = chapters.sortedBy { it.startCharOffset }
+        // 根据当前绝对字符偏移找到所在章节索引
+        val currentChapterIndex = if (sortedChapters.isNotEmpty()) {
+            sortedChapters.indexOfLast { it.startCharOffset <= currentAbsoluteOffset }
+                .takeIf { it != -1 } ?: -1
+        } else -1
+
+        val dialogView = layoutInflater.inflate(R.layout.dialog_chapter_list, null)
+        val listView: ListView = dialogView.findViewById(R.id.chapterListView)
+
+        val adapter = object : ArrayAdapter<TextPreviewViewModel.ChapterInfo>(
+            this, android.R.layout.simple_list_item_1, sortedChapters
+        ) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent) as TextView
+                val chapter = getItem(position)
+                view.text = chapter?.title ?: ""
+                view.textSize = 16f
+                view.setPadding(16, 12, 16, 12)
+
+                val isCurrent = position == currentChapterIndex
+                view.setBackgroundColor(
+                    if (isCurrent) Color.parseColor("#E8F0FE") else Color.TRANSPARENT
+                )
+                view.setTextColor(
+                    if (isCurrent) Color.parseColor("#1A73E8") else Color.BLACK
+                )
+                return view
             }
+        }
+
+        listView.adapter = adapter
+        listView.choiceMode = ListView.CHOICE_MODE_SINGLE
+
+        if (currentChapterIndex >= 0) {
+            listView.setItemChecked(currentChapterIndex, true)
+            listView.setSelection(currentChapterIndex)
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
             .setNegativeButton("取消", null)
-            .show()
+            .create()
+
+        listView.onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
+            val chapter = sortedChapters[position]
+            viewModel.jumpToChapter(chapter)
+            Toast.makeText(this@TextPreviewActivity, "跳转到: ${chapter.title}", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+
+        dialog.show()
     }
 
     private fun showNoChaptersDialog() {
@@ -356,6 +403,7 @@ class TextPreviewActivity : AppCompatActivity() {
             .show()
     }
 
+    // ---------- 状态切换 ----------
     private fun showLoadingState(message: String? = null) {
         loadingProgress.isVisible = true
         textContentTextView.isVisible = false
@@ -388,6 +436,7 @@ class TextPreviewActivity : AppCompatActivity() {
         statusLabel.isVisible = false
     }
 
+    // ---------- 历史记录 ----------
     private fun loadReadingHistory() {
         if (readingHistoryFile.exists()) {
             try {

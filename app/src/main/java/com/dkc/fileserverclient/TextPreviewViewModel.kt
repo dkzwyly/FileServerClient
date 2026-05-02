@@ -36,6 +36,10 @@ class TextPreviewViewModel : ViewModel() {
     private val _currentPageState = MutableLiveData<PageState?>()
     val currentPageState: LiveData<PageState?> = _currentPageState
 
+    // 新增：当前显示内容的起始绝对字符偏移
+    private val _currentAbsoluteCharOffset = MutableLiveData<Int>()
+    val currentAbsoluteCharOffset: LiveData<Int> = _currentAbsoluteCharOffset
+
     private lateinit var fileName: String
     private lateinit var fileUrl: String
     private lateinit var filePath: String
@@ -142,13 +146,9 @@ class TextPreviewViewModel : ViewModel() {
         }
     }
 
-    /**
-     * 字体大小变化时调用，强制重建分页并保持当前阅读位置不变
-     */
     fun onFontSizeChanged(newLinesPerPage: Int) {
         if (currentBlock == null) return
         val currentStartChar = getCurrentVisibleStartChar()
-        // 直接更新行数，不管是否与前值相同
         linesPerPage = newLinesPerPage.coerceAtLeast(2)
         currentBlock?.let { block ->
             rebuildSubPages(block.fullText)
@@ -343,6 +343,7 @@ class TextPreviewViewModel : ViewModel() {
         if (subPageBoundaries.isEmpty()) {
             _pageContent.value = fullText
             updatePageInfo()
+            _currentAbsoluteCharOffset.value = currentBlock!!.startChar
             return
         }
         val (startLine, endLine) = subPageBoundaries.getOrNull(currentSubPage - 1) ?: return
@@ -358,6 +359,8 @@ class TextPreviewViewModel : ViewModel() {
         val pageText = fullText.substring(startChar, endChar)
         _pageContent.value = pageText
         updatePageInfo()
+        // 更新当前绝对偏移
+        _currentAbsoluteCharOffset.value = currentBlock!!.startChar + startChar
     }
 
     private fun updatePageInfo() {
