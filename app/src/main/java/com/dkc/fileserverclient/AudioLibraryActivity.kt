@@ -303,6 +303,7 @@ class AudioLibraryActivity : AppCompatActivity() {
         coroutineScope.launch {
             statusText.text = "正在加载音频..."
             try {
+                // 1. 获取文件列表
                 val allItems = withContext(Dispatchers.IO) {
                     fileServerService.getFileList(currentServerUrl, audioLibraryPath)
                 }
@@ -313,22 +314,28 @@ class AudioLibraryActivity : AppCompatActivity() {
                     AudioTrack.fromFileSystemItem(item, currentServerUrl)
                 }
 
+                // 2. 批量获取所有元数据（一次网络请求）
+                val metadataMap = withContext(Dispatchers.IO) {
+                    metadataManager.getBatchMetadata(currentServerUrl, tracks.map { it.path })
+                }
+
+                // 3. 填充元数据 + 本地拼接封面 URL（不再发起网络请求）
                 val updatedTracks = tracks.map { track ->
-                    async(Dispatchers.IO) {
-                        val metadata = metadataManager.getMetadata(currentServerUrl, track.path)
-                        if (metadata != null) {
-                            val coverUrl = metadataManager.getCoverUrl(currentServerUrl, track.path, addTimestamp = false)
-                            track.copy(
-                                title = metadata.title.ifEmpty { track.title },
-                                artist = metadata.artist.ifEmpty { track.artist },
-                                album = metadata.album.ifEmpty { track.album },
-                                coverUrl = coverUrl
-                            )
-                        } else {
-                            track
-                        }
-                    }
-                }.awaitAll()
+                    // 注意：metadataMap 的 key 是编码后的路径，需要匹配
+                    val encodedPath = java.net.URLEncoder.encode(track.path, "UTF-8")
+                    val meta = metadataMap[encodedPath]
+                    if (meta != null) {
+                        track.copy(
+                            title = meta.title.ifEmpty { track.title },
+                            artist = meta.artist.ifEmpty { track.artist },
+                            album = meta.album.ifEmpty { track.album },
+                            coverUrl = if (meta.hasCover) {
+                                // 封面 URL 直接拼接，不额外请求
+                                metadataManager.getCoverUrl(currentServerUrl, track.path, addTimestamp = false)
+                            } else null
+                        )
+                    } else track
+                }
 
                 audioTracks.clear()
                 audioTracks.addAll(updatedTracks)
@@ -336,9 +343,7 @@ class AudioLibraryActivity : AppCompatActivity() {
                 filteredAudioTracks.addAll(audioTracks)
 
                 audioAdapter.updateData(filteredAudioTracks)
-
-                if (audioTracks.isEmpty()) statusText.text = "没有找到音频文件"
-                else statusText.text = "共找到 ${audioTracks.size} 个音频文件"
+                statusText.text = if (audioTracks.isEmpty()) "没有找到音频文件" else "共找到 ${audioTracks.size} 个音频文件"
             } catch (e: Exception) {
                 statusText.text = "加载失败: ${e.message}"
                 Log.e(TAG, "加载音频异常", e)

@@ -122,7 +122,18 @@ class SongMetadataManager(
         }
         return success
     }
-
+    suspend fun getBatchMetadata(serverUrl: String, paths: List<String>): Map<String, SongMetadata> {
+        return withContext(Dispatchers.IO) {
+            val metadataMap = fileServerService.getBatchSongMetadata(serverUrl, paths)
+            // 更新缓存
+            for ((encodedPath, meta) in metadataMap) {
+                // 解码路径以便后续用原始路径做 key（可选，看你的缓存策略）
+                val decodedPath = java.net.URLDecoder.decode(encodedPath, "UTF-8")
+                metadataCache[decodedPath] = meta
+            }
+            metadataMap
+        }
+    }
     /**
      * 清除缓存
      */

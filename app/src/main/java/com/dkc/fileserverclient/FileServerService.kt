@@ -466,6 +466,41 @@ class FileServerService(private val context: Context) {
             false
         }
     }
+    suspend fun getBatchSongMetadata(
+        serverUrl: String,
+        paths: List<String>
+    ): Map<String, SongMetadata> = withContext(Dispatchers.IO) {
+        if (paths.isEmpty()) return@withContext emptyMap()
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/song/metadata/batch"
+
+            // 路径列表做 URL 编码，保持与单条接口一致
+            val encodedPaths = paths.map { URLEncoder.encode(it, "UTF-8") }
+            val jsonBody = gson.toJson(encodedPaths)
+            val requestBody = jsonBody.toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .header("Content-Type", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: "{}"
+                // 解析 Map<String, SongMetadata>
+                val type = object : com.google.gson.reflect.TypeToken<Map<String, SongMetadata>>() {}.type
+                gson.fromJson(json, type) ?: emptyMap()
+            } else {
+                Log.e(TAG, "获取批量歌曲元数据失败: ${response.code}")
+                emptyMap()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "获取批量歌曲元数据异常", e)
+            emptyMap()
+        }
+    }
     // 在类内部合适位置添加（例如 reindexPhotoMetadata 方法之后）
 
     suspend fun getBatchDateTaken(
