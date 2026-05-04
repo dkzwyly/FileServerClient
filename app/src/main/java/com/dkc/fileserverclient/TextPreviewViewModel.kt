@@ -70,7 +70,6 @@ class TextPreviewViewModel : ViewModel() {
     private val subPageBoundaries = mutableListOf<Pair<Int, Int>>()
 
     private var restoredBlockPage = 1
-    private var restoredSubPage = 1
     private var isHistoryRestored = false
 
     private var pendingCharOffset: Int? = null
@@ -177,10 +176,13 @@ class TextPreviewViewModel : ViewModel() {
         return block.startChar + layout.getLineStart(startLine)
     }
 
-    fun restoreFromHistory(blockPage: Int, subPage: Int) {
+    /**
+     * 通过绝对字符偏移恢复阅读位置，自动适应最新的分页规则（如标题断页）。
+     */
+    fun restoreFromHistory(blockPage: Int, absoluteCharOffset: Int) {
         restoredBlockPage = blockPage
-        restoredSubPage = subPage
         isHistoryRestored = true
+        pendingCharOffset = absoluteCharOffset
     }
 
     fun getCurrentPageState(): PageState? {
@@ -226,8 +228,19 @@ class TextPreviewViewModel : ViewModel() {
                 val list = withContext(Dispatchers.IO) { fetchChaptersFromServer() }
                 cachedChapters = list.sortedBy { it.startCharOffset }
                 _chapters.value = list
-                _showChapterDialogEvent.value = list  // 手动请求才触发弹窗
-                if (currentBlock != null) showCurrentSubPage()
+                _showChapterDialogEvent.value = list
+
+                // 章节数据更新后，立即重建当前块的子页，使标题断页生效
+                if (currentBlock != null) {
+                    val currentOffset = _currentAbsoluteCharOffset.value ?: currentBlock!!.startChar
+                    rebuildSubPages(currentBlock!!.fullText)
+                    currentSubPage = findSubPageForCharOffset(
+                        currentBlock!!.fullText,
+                        currentBlock!!.startChar,
+                        currentOffset
+                    )
+                    showCurrentSubPage()
+                }
             } catch (e: Exception) {
                 _errorMessage.value = "章节加载失败: ${e.message}"
             } finally {
@@ -254,48 +267,29 @@ class TextPreviewViewModel : ViewModel() {
                 val json = fetchJson(url)
                 val block = parseBlockResponse(json)
 
-                // 加载新块时，重置相邻块消费偏移（新块是干净的）
-                prevBlockConsumedOffset = 0
-                nextBlockConsumedOffset = 0
-
-                // 根据翻页方向决定如何处理旧块：当前块变成 prev/next 取决于 page 与 currentBlock.page 的关系
-                val oldBlock = currentBlock
                 currentBlock = block
-                rebuildSubPages(block.fullText)
 
-                // 确保章节数据加载
+                // 👇 先加载章节数据，确保分页时 cachedChapters 可用
                 ensureChaptersLoaded()
 
+                // 👇 现在分页可以正确识别标题行
+                rebuildSubPages(block.fullText)
+
+                val targetOffset = pendingCharOffset
+                pendingCharOffset = null
                 currentSubPage = when {
+                    targetOffset != null -> findSubPageForCharOffset(block.fullText, block.startChar, targetOffset)
                     goToFirstSubPage -> 1
                     goToLastSubPage -> totalSubPages
-                    pendingCharOffset != null -> {
-                        val off = pendingCharOffset!!
-                        pendingCharOffset = null
-                        findSubPageForCharOffset(block.fullText, block.startChar, off)
-                    }
-                    isHistoryRestored && page == restoredBlockPage -> {
-                        isHistoryRestored = false
-                        restoredSubPage.coerceIn(1, totalSubPages)
-                    }
                     else -> 1
                 }
 
                 showCurrentSubPage()
                 _loadingState.value = LoadingState(false)
 
-                // 预加载相邻块，并更新 prevBlock / nextBlock
-                oldBlock?.let {
-                    if (it.blockPage == page - 1) {
-                        prevBlock = it
-                    } else if (it.blockPage == page + 1) {
-                        nextBlock = it
-                    }
-                }
+                // 预加载相邻块
                 if (page > 1 && prevBlock == null) preloadPrevBlock(page - 1)
                 if (page < block.totalBlockPages && nextBlock == null) preloadNextBlock(page + 1)
-
-                Log.d("ViewModel", "加载块: page=$page, prev=${prevBlock?.blockPage}, next=${nextBlock?.blockPage}")
             } catch (e: Exception) {
                 _errorMessage.value = "加载失败: ${e.message}"
                 _loadingState.value = LoadingState(false)

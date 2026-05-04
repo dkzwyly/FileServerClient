@@ -445,7 +445,7 @@ class TextPreviewActivity : AppCompatActivity() {
                     val history = ois.readObject() as? ReadingHistory
                     history?.let {
                         if (it.fileName == currentFileName || it.fileUrl == currentFileUrl) {
-                            viewModel.restoreFromHistory(it.blockPage, it.subPage)
+                            viewModel.restoreFromHistory(it.blockPage, it.absoluteCharOffset)
                         }
                     }
                 }
@@ -458,11 +458,12 @@ class TextPreviewActivity : AppCompatActivity() {
     private fun saveReadingHistory(blockPage: Int, subPage: Int) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                val offset = viewModel.currentAbsoluteCharOffset.value ?: 0
                 val history = ReadingHistory(
                     fileName = currentFileName,
                     fileUrl = currentFileUrl,
                     blockPage = blockPage,
-                    subPage = subPage,
+                    absoluteCharOffset = offset,
                     timestamp = System.currentTimeMillis()
                 )
                 ObjectOutputStream(FileOutputStream(readingHistoryFile)).use { oos ->
@@ -492,7 +493,7 @@ class TextPreviewActivity : AppCompatActivity() {
 data class ReadingHistory(
     val fileName: String,
     val fileUrl: String,
-    val blockPage: Int,
-    val subPage: Int,
+    val blockPage: Int,          // 仅用于加载对应的服务端大页
+    val absoluteCharOffset: Int, // 全文绝对字符偏移，用于精准恢复位置
     val timestamp: Long
 ) : java.io.Serializable
