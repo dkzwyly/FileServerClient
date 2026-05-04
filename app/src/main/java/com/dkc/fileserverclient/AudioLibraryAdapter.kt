@@ -29,6 +29,8 @@ class AudioLibraryAdapter(
         val audioIcon: ImageView = view.findViewById(R.id.audioIcon)
         val fileName: TextView = view.findViewById(R.id.audioFileName)
         val artistAlbum: TextView = view.findViewById(R.id.audioArtistAlbum)
+        // 新增：记录当前绑定的 Track ID，用于异步回调时比对
+        var currentTrackId: String? = null
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): AudioViewHolder {
@@ -39,6 +41,9 @@ class AudioLibraryAdapter(
 
     override fun onBindViewHolder(holder: AudioViewHolder, position: Int) {
         val track = audioTracks[position]
+        // 记录本次绑定的 Track ID，用于回调校验
+        holder.currentTrackId = track.id
+
         val displayTitle = track.title ?: removeExtension(track.name)
         holder.fileName.text = displayTitle
 
@@ -60,39 +65,54 @@ class AudioLibraryAdapter(
     private fun loadCoverImage(holder: AudioViewHolder, track: AudioTrack) {
         val coverUrl = track.coverUrl
         if (coverUrl.isNullOrEmpty()) {
-            holder.audioIcon.setImageResource(R.drawable.ic_music_image_placeholder)
+            // 没有封面URL，直接显示占位图
+            if (holder.currentTrackId == track.id) {
+                holder.audioIcon.setImageResource(R.drawable.ic_music_image_placeholder)
+            }
             return
         }
 
         // 1. 检查本地是否已有
         val localFile = CoverImageStorage.getLocalFile(track.id, coverUrl)
         if (localFile.exists()) {
-            // 直接加载本地文件
-            loadFromFile(holder, localFile)
+            // 直接加载本地文件（带ID校验）
+            if (holder.currentTrackId == track.id) {
+                loadFromFile(holder, localFile, track.id)
+            }
             return
         }
 
         // 2. 没有本地文件，先显示占位图，并触发下载
-        holder.audioIcon.setImageResource(R.drawable.ic_music_image_placeholder)
+        if (holder.currentTrackId == track.id) {
+            holder.audioIcon.setImageResource(R.drawable.ic_music_image_placeholder)
+        }
+
         CoverImageStorage.downloadCover(track.id, coverUrl, lifecycleScope) { file ->
             if (file != null) {
-                // 确保 ViewHolder 位置仍然对应同一个 track
-                val pos = holder.bindingAdapterPosition
-                if (pos != RecyclerView.NO_POSITION && audioTracks.getOrNull(pos)?.id == track.id) {
-                    loadFromFile(holder, file)
+                // 确保 ViewHolder 位置仍然对应同一个 track，再加载
+                if (holder.currentTrackId == track.id) {
+                    loadFromFile(holder, file, track.id)
                 }
             }
         }
     }
 
-    private fun loadFromFile(holder: AudioViewHolder, file: File) {
+    /**
+     * 从本地文件加载封面到 ImageView，增加 trackId 校验
+     */
+    private fun loadFromFile(holder: AudioViewHolder, file: File, trackId: String) {
         val request = ImageRequest.Builder(holder.itemView.context)
             .data(file)
-            .size(thumbnailSize)   // 使用正确的尺寸限制
+            .size(thumbnailSize)
             .placeholder(R.drawable.ic_music_image_placeholder)
             .error(R.drawable.ic_music_image_placeholder)
             .crossfade(true)
-            .target(holder.audioIcon)
+            .target { drawable ->
+                // 关键检查：只有当前绑定的 Track ID 一致才设置图片
+                if (holder.currentTrackId == trackId) {
+                    holder.audioIcon.setImageDrawable(drawable)
+                }
+            }
             .build()
         coil.Coil.imageLoader(holder.itemView.context).enqueue(request)
     }
@@ -111,5 +131,12 @@ class AudioLibraryAdapter(
     fun updateData(newTracks: List<AudioTrack>) {
         audioTracks = newTracks
         notifyDataSetChanged()
+    }
+
+    // 视图回收时清理状态，避免残留标识或图片
+    override fun onViewRecycled(holder: AudioViewHolder) {
+        super.onViewRecycled(holder)
+        holder.audioIcon.setImageDrawable(null)
+        holder.currentTrackId = null
     }
 }
