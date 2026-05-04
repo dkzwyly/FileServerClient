@@ -68,6 +68,7 @@ class AudioLibraryActivity : AppCompatActivity() {
             finish()
             return
         }
+        CoverImageStorage.init(this, UnsafeHttpClientHolder.client)
 
         metadataManager = SongMetadataManager(this, fileServerService)
         PlaylistManager.initialize(this)
@@ -109,11 +110,13 @@ class AudioLibraryActivity : AppCompatActivity() {
         audioRecyclerView.layoutManager = LinearLayoutManager(this)
         playlistRecyclerView.layoutManager = LinearLayoutManager(this)
 
+        // 初始化 adapter 时传入协程作用域
         audioAdapter = AudioLibraryAdapter(
             currentServerUrl,
             filteredAudioTracks,
             onAudioClick = { playAudio(it) },
-            onAudioLongClick = { showAddToPlaylistDialog(it) }
+            onAudioLongClick = { showAddToPlaylistDialog(it) },
+            lifecycleScope = coroutineScope   // ← 添加这个参数
         )
         audioRecyclerView.adapter = audioAdapter
 
