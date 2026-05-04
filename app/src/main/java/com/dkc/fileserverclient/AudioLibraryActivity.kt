@@ -116,7 +116,8 @@ class AudioLibraryActivity : AppCompatActivity() {
             filteredAudioTracks,
             onAudioClick = { playAudio(it) },
             onAudioLongClick = { showAddToPlaylistDialog(it) },
-            lifecycleScope = coroutineScope   // ← 添加这个参数
+            lifecycleScope = coroutineScope ,  // ← 添加这个参数
+                    resources = resources   // 添加这一行
         )
         audioRecyclerView.adapter = audioAdapter
 

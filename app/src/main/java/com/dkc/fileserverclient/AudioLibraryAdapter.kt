@@ -1,14 +1,12 @@
-// AudioLibraryAdapter.kt
 package com.dkc.fileserverclient
 
+import android.content.res.Resources
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import coil.ImageLoader
-import coil.request.CachePolicy
 import coil.request.ImageRequest
 import kotlinx.coroutines.CoroutineScope
 import java.io.File
@@ -18,11 +16,14 @@ class AudioLibraryAdapter(
     private var audioTracks: List<AudioTrack>,
     private val onAudioClick: (AudioTrack) -> Unit,
     private val onAudioLongClick: (AudioTrack) -> Unit,
-    private val lifecycleScope: CoroutineScope   // 从 Activity 传入，管理下载协程生命周期
+    private val lifecycleScope: CoroutineScope,   // Activity的协程域
+    private val resources: Resources               // 用于 dp → px
 ) : RecyclerView.Adapter<AudioLibraryAdapter.AudioViewHolder>() {
 
-    // 缩略图尺寸（根据 Item 布局中的 ImageView 大小设定）
-    private val thumbnailSize by lazy { dpToPx(48) }
+    // 正确的 dp 转 px 计算（例如封面图大小为 48dp）
+    private val thumbnailSize by lazy {
+        (48 * resources.displayMetrics.density).toInt()
+    }
 
     class AudioViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val audioIcon: ImageView = view.findViewById(R.id.audioIcon)
@@ -87,13 +88,12 @@ class AudioLibraryAdapter(
     private fun loadFromFile(holder: AudioViewHolder, file: File) {
         val request = ImageRequest.Builder(holder.itemView.context)
             .data(file)
-            .size(thumbnailSize)
+            .size(thumbnailSize)   // 使用正确的尺寸限制
             .placeholder(R.drawable.ic_music_image_placeholder)
             .error(R.drawable.ic_music_image_placeholder)
             .crossfade(true)
             .target(holder.audioIcon)
             .build()
-        // 使用全局/默认的 ImageLoader（已配置好缓存）
         coil.Coil.imageLoader(holder.itemView.context).enqueue(request)
     }
 
@@ -111,11 +111,5 @@ class AudioLibraryAdapter(
     fun updateData(newTracks: List<AudioTrack>) {
         audioTracks = newTracks
         notifyDataSetChanged()
-    }
-
-    private fun dpToPx(dp: Int): Int {
-        // 假设 adapter 在创建时能获取到 Resources，可以简单取第一个 item 的 context，这里用静态方式
-        return (dp * 3).toInt() // 近似，实际应使用 context.resources.displayMetrics
-        // 正式项目建议在构造时传入 Resources 或使用 holder.itemView.context
     }
 }
