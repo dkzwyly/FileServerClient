@@ -34,12 +34,13 @@ class AudioPlayerActivity : AppCompatActivity() {
     private lateinit var musicVisualizerView: MusicVisualizerView
     private lateinit var mediaLoadingProgress: ProgressBar
 
-    // 控制栏
+    // 控制栏（移除了全屏按钮）
     private lateinit var mediaControls: LinearLayout
     private lateinit var playPauseButton: ImageButton
     private lateinit var previousButton: ImageButton
     private lateinit var nextButton: ImageButton
-    private lateinit var fullscreenToggleButton: ImageButton
+    // 不再声明 fullscreenToggleButton
+
     private lateinit var seekBar: SeekBar
     private lateinit var currentTimeTextView: TextView
     private lateinit var durationTextView: TextView
@@ -64,7 +65,6 @@ class AudioPlayerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_audio_player)
-        // 必须在 setContentView 之后调用，确保窗口已准备好
         enableImmersiveMode()
         checkAndRequestRecordAudioPermission()
         viewModel.init(intent)
@@ -72,7 +72,8 @@ class AudioPlayerActivity : AppCompatActivity() {
         setupGestureDetector()
         setupClickListeners()
         observeViewModel()
-        mediaControls.visibility = View.VISIBLE
+        // 初始显示控制栏
+        findViewById<LinearLayout>(R.id.bottomControls)?.visibility = View.VISIBLE
     }
 
     private fun enableImmersiveMode() {
@@ -114,11 +115,9 @@ class AudioPlayerActivity : AppCompatActivity() {
         musicVisualizerView = findViewById(R.id.musicVisualizerView)
         mediaLoadingProgress = findViewById(R.id.mediaLoadingProgress)
 
-        mediaControls = findViewById(R.id.mediaControls)
         playPauseButton = findViewById(R.id.playPauseButton)
         previousButton = findViewById(R.id.previousButton)
         nextButton = findViewById(R.id.nextButton)
-        fullscreenToggleButton = findViewById(R.id.fullscreenToggleButton)
         seekBar = findViewById(R.id.seekBar)
         currentTimeTextView = findViewById(R.id.currentTimeTextView)
         durationTextView = findViewById(R.id.durationTextView)
@@ -213,8 +212,9 @@ class AudioPlayerActivity : AppCompatActivity() {
             }
         })
 
-        val mediaContainer = findViewById<FrameLayout>(R.id.mediaContainer) ?: findViewById(R.id.rootLayout)
-        mediaContainer.setOnTouchListener { view, event ->
+        // 根布局作为触摸容器
+        val rootLayout = findViewById<View>(R.id.rootLayout)
+        rootLayout.setOnTouchListener { view, event ->
             gestureDetector.onTouchEvent(event)
             gestureControlManager.handleTouchEvent(event, view.width)
 
@@ -238,7 +238,6 @@ class AudioPlayerActivity : AppCompatActivity() {
         playPauseButton.setOnClickListener { viewModel.togglePlayback() }
         previousButton.setOnClickListener { viewModel.playPrevious() }
         nextButton.setOnClickListener { viewModel.playNext() }
-        fullscreenToggleButton.setOnClickListener { toggleSystemUI() }
         lyricsSettingsButton.setOnClickListener { showLyricsSettingsDialog() }
 
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -257,36 +256,16 @@ class AudioPlayerActivity : AppCompatActivity() {
         })
     }
 
-    private fun toggleSystemUI() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.decorView?.rootWindowInsets?.let {
-                if (it.isVisible(WindowInsets.Type.statusBars())) {
-                    window.insetsController?.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                } else {
-                    window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                }
-            }
-        } else {
-            val currentFlags = window.decorView?.systemUiVisibility ?: return
-            if (currentFlags and View.SYSTEM_UI_FLAG_FULLSCREEN == 0) {
-                enableImmersiveMode()
-            } else {
-                @Suppress("DEPRECATION")
-                window.decorView?.systemUiVisibility = (
-                        View.SYSTEM_UI_FLAG_VISIBLE
-                                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        )
-            }
-        }
-    }
-
     private fun toggleControlsVisibility() {
-        if (mediaControls.visibility == View.VISIBLE) {
-            mediaControls.visibility = View.GONE
-            controlContainer.visibility = View.GONE
-        } else {
-            mediaControls.visibility = View.VISIBLE
-            mediaControls.bringToFront()
+        val bottomControls = findViewById<LinearLayout>(R.id.bottomControls)
+        bottomControls?.let {
+            if (it.visibility == View.VISIBLE) {
+                it.visibility = View.GONE
+                controlContainer.visibility = View.GONE
+            } else {
+                it.visibility = View.VISIBLE
+                it.bringToFront()
+            }
         }
     }
 
