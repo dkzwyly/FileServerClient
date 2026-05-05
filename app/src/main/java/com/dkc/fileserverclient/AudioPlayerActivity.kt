@@ -10,11 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
-import android.view.GestureDetector
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
+import android.view.*
 import android.widget.*
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
@@ -22,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import coil.ImageLoader
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import java.util.*
 
 class AudioPlayerActivity : AppCompatActivity() {
 
@@ -32,16 +29,12 @@ class AudioPlayerActivity : AppCompatActivity() {
 
     private val viewModel: AudioPlayerViewModel by viewModels()
 
-    // UI
-    private lateinit var titleBar: LinearLayout
-    private lateinit var backButton: Button
-    private lateinit var fileNameTextView: TextView
-    private lateinit var fileTypeTextView: TextView
-    private lateinit var downloadButton: Button
-
+    // 封面与可视化
     private lateinit var audioCoverView: ImageView
     private lateinit var musicVisualizerView: MusicVisualizerView
     private lateinit var mediaLoadingProgress: ProgressBar
+
+    // 控制栏
     private lateinit var mediaControls: LinearLayout
     private lateinit var playPauseButton: ImageButton
     private lateinit var previousButton: ImageButton
@@ -51,6 +44,7 @@ class AudioPlayerActivity : AppCompatActivity() {
     private lateinit var currentTimeTextView: TextView
     private lateinit var durationTextView: TextView
 
+    // 歌词
     private lateinit var lyricsContainer: LinearLayout
     private lateinit var lyricsTitle: TextView
     private lateinit var currentLyricsLine: TextView
@@ -64,34 +58,62 @@ class AudioPlayerActivity : AppCompatActivity() {
     private lateinit var controlIcon: ImageView
     private lateinit var controlOverlay: TextView
 
-    // 全屏
-    private lateinit var fullscreenManager: FullscreenManager
-
     private var isLongPressDetected = false
     private var originalSpeed: Float = 1.0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_audio_player)
+        // 必须在 setContentView 之后调用，确保窗口已准备好
+        enableImmersiveMode()
         checkAndRequestRecordAudioPermission()
-        viewModel.init(intent)   // 确保歌词等组件初始化完成
+        viewModel.init(intent)
         initViews()
-        setupFullscreen()
         setupGestureDetector()
         setupClickListeners()
         observeViewModel()
+        mediaControls.visibility = View.VISIBLE
+    }
+
+    private fun enableImmersiveMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.decorView?.apply {
+                rootWindowInsets?.let {
+                    if (it.isVisible(WindowInsets.Type.statusBars())) {
+                        window.insetsController?.apply {
+                            hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                            systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                        }
+                    }
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView?.systemUiVisibility = (
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    )
+        }
+    }
+
+    private fun checkAndRequestRecordAudioPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_RECORD_AUDIO)
+            }
+        }
     }
 
     private fun initViews() {
-        titleBar = findViewById(R.id.titleBar)
-        backButton = findViewById(R.id.backButton)
-        fileNameTextView = findViewById(R.id.fileNameTextView)
-        fileTypeTextView = findViewById(R.id.fileTypeTextView)
-        downloadButton = findViewById(R.id.downloadButton)
-
         audioCoverView = findViewById(R.id.audioCoverView)
         musicVisualizerView = findViewById(R.id.musicVisualizerView)
         mediaLoadingProgress = findViewById(R.id.mediaLoadingProgress)
+
         mediaControls = findViewById(R.id.mediaControls)
         playPauseButton = findViewById(R.id.playPauseButton)
         previousButton = findViewById(R.id.previousButton)
@@ -107,18 +129,7 @@ class AudioPlayerActivity : AppCompatActivity() {
         nextLyricsLine = findViewById(R.id.nextLyricsLine)
         lyricsSettingsButton = findViewById(R.id.lyricsSettingsButton)
 
-        // 不再调用 viewModel.lyricsManager.setListener(this)
         seekBar.max = 1000
-        fileTypeTextView.text = "音频"
-    }
-
-    private fun setupFullscreen() {
-        fullscreenManager = FullscreenManager(
-            activity = this,
-            titleBar = titleBar,
-            fileTypeTextView = fileTypeTextView,
-            fullscreenToggleButton = fullscreenToggleButton
-        )
     }
 
     private fun setupGestureDetector() {
@@ -130,20 +141,15 @@ class AudioPlayerActivity : AppCompatActivity() {
             setShadowLayer(2f, 1f, 1f, Color.BLACK)
         }
         controlIcon = ImageView(this)
-        controlContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        controlContainer = findViewById(R.id.controlContainer)
+        controlContainer.addView(controlIcon, LinearLayout.LayoutParams(48, 48).apply {
             gravity = Gravity.CENTER
-            visibility = View.GONE
-            addView(controlIcon, LinearLayout.LayoutParams(48, 48).apply {
-                gravity = Gravity.CENTER
-                setMargins(0, 0, 0, 8)
-            })
-            addView(controlOverlay, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { gravity = Gravity.CENTER })
-        }
-        findViewById<FrameLayout>(R.id.mediaContainer)?.addView(controlContainer)
+            setMargins(0, 0, 0, 8)
+        })
+        controlContainer.addView(controlOverlay, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
 
         val displayWidth = resources.displayMetrics.widthPixels
         val regionWidth = displayWidth / 3
@@ -207,7 +213,8 @@ class AudioPlayerActivity : AppCompatActivity() {
             }
         })
 
-        findViewById<FrameLayout>(R.id.mediaContainer)?.setOnTouchListener { view, event ->
+        val mediaContainer = findViewById<FrameLayout>(R.id.mediaContainer) ?: findViewById(R.id.rootLayout)
+        mediaContainer.setOnTouchListener { view, event ->
             gestureDetector.onTouchEvent(event)
             gestureControlManager.handleTouchEvent(event, view.width)
 
@@ -228,15 +235,10 @@ class AudioPlayerActivity : AppCompatActivity() {
     }
 
     private fun setupClickListeners() {
-        backButton.setOnClickListener { finish() }
-        downloadButton.setOnClickListener { /* 可实现下载 */ }
         playPauseButton.setOnClickListener { viewModel.togglePlayback() }
         previousButton.setOnClickListener { viewModel.playPrevious() }
         nextButton.setOnClickListener { viewModel.playNext() }
-        fullscreenToggleButton.setOnClickListener {
-            if (fullscreenManager.isFullscreen()) fullscreenManager.exitFullscreen()
-            else fullscreenManager.enterFullscreen()
-        }
+        fullscreenToggleButton.setOnClickListener { toggleSystemUI() }
         lyricsSettingsButton.setOnClickListener { showLyricsSettingsDialog() }
 
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -255,8 +257,40 @@ class AudioPlayerActivity : AppCompatActivity() {
         })
     }
 
+    private fun toggleSystemUI() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.decorView?.rootWindowInsets?.let {
+                if (it.isVisible(WindowInsets.Type.statusBars())) {
+                    window.insetsController?.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                } else {
+                    window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                }
+            }
+        } else {
+            val currentFlags = window.decorView?.systemUiVisibility ?: return
+            if (currentFlags and View.SYSTEM_UI_FLAG_FULLSCREEN == 0) {
+                enableImmersiveMode()
+            } else {
+                @Suppress("DEPRECATION")
+                window.decorView?.systemUiVisibility = (
+                        View.SYSTEM_UI_FLAG_VISIBLE
+                                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        )
+            }
+        }
+    }
+
+    private fun toggleControlsVisibility() {
+        if (mediaControls.visibility == View.VISIBLE) {
+            mediaControls.visibility = View.GONE
+            controlContainer.visibility = View.GONE
+        } else {
+            mediaControls.visibility = View.VISIBLE
+            mediaControls.bringToFront()
+        }
+    }
+
     private fun observeViewModel() {
-        viewModel.currentTrackName.observe(this) { fileNameTextView.text = it }
         viewModel.artistAlbum.observe(this) { lyricsTitle.text = it }
         viewModel.coverUrl.observe(this) { loadCover(it) }
         viewModel.isPlaying.observe(this) {
@@ -282,11 +316,10 @@ class AudioPlayerActivity : AppCompatActivity() {
         viewModel.errorMessage.observe(this) {
             if (!it.isNullOrEmpty()) Toast.makeText(this, it, Toast.LENGTH_SHORT).show()
         }
-        // 歌词文件选择对话框
         viewModel.lyricsFileSelection.observe(this) { files ->
             if (!files.isNullOrEmpty()) {
                 showLyricsFileSelectionDialog(files)
-                viewModel.lyricsFileSelection.value = null  // 消费事件
+                viewModel.lyricsFileSelection.value = null
             }
         }
     }
@@ -309,16 +342,6 @@ class AudioPlayerActivity : AppCompatActivity() {
             .memoryCachePolicy(CachePolicy.DISABLED)
             .build()
         imageLoader.enqueue(request)
-    }
-
-    private fun toggleControlsVisibility() {
-        if (mediaControls.visibility == View.VISIBLE) {
-            mediaControls.visibility = View.GONE
-            controlContainer.visibility = View.GONE
-        } else {
-            mediaControls.visibility = View.VISIBLE
-            mediaControls.bringToFront()
-        }
     }
 
     private fun showLyricsSettingsDialog() {
@@ -399,9 +422,9 @@ class AudioPlayerActivity : AppCompatActivity() {
         val minutes = seconds / 60
         val hours = minutes / 60
         return if (hours > 0) {
-            String.format("%d:%02d:%02d", hours, minutes % 60, seconds % 60)
+            String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes % 60, seconds % 60)
         } else {
-            String.format("%d:%02d", minutes, seconds % 60)
+            String.format(Locale.getDefault(), "%d:%02d", minutes, seconds % 60)
         }
     }
 
@@ -420,16 +443,7 @@ class AudioPlayerActivity : AppCompatActivity() {
         viewModel.release()
     }
 
-    private fun checkAndRequestRecordAudioPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_RECORD_AUDIO)
-            }
-        }
-    }
-
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        // 可视化内部适配权限变化
     }
 }
