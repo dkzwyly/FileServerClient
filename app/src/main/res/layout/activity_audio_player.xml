@@ -7,16 +7,6 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <!-- 可视化背景 -->
-    <com.dkc.fileserverclient.MusicVisualizerView
-        android:id="@+id/musicVisualizerView"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
     <!-- 加载进度条（居中） -->
     <ProgressBar
         android:id="@+id/mediaLoadingProgress"
@@ -107,6 +97,16 @@
             android:textColor="#AAAAAA"
             android:layout_marginTop="8dp" />
     </LinearLayout>
+
+    <!-- 可视化频谱条（放在底部控制栏上方） -->
+    <com.dkc.fileserverclient.MusicVisualizerView
+        android:id="@+id/musicVisualizerView"
+        android:layout_width="0dp"
+        android:layout_height="80dp"
+        android:layout_marginBottom="8dp"
+        app:layout_constraintBottom_toTopOf="@id/bottomControls"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- 底部控制栏 -->
     <LinearLayout

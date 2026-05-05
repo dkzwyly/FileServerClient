@@ -1,16 +1,14 @@
 package com.dkc.fileserverclient
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.view.*
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.widget.*
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
@@ -18,49 +16,33 @@ import androidx.appcompat.app.AppCompatActivity
 import coil.ImageLoader
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import java.io.File
 import java.util.*
 
 class AudioPlayerActivity : AppCompatActivity() {
 
     companion object {
-        private const val TAG = "AudioPlayerActivity"
         private const val PERMISSION_REQUEST_RECORD_AUDIO = 100
     }
 
     private val viewModel: AudioPlayerViewModel by viewModels()
 
-    // 封面与可视化
     private lateinit var audioCoverView: ImageView
     private lateinit var musicVisualizerView: MusicVisualizerView
     private lateinit var mediaLoadingProgress: ProgressBar
 
-    // 控制栏（移除了全屏按钮）
-    private lateinit var mediaControls: LinearLayout
     private lateinit var playPauseButton: ImageButton
     private lateinit var previousButton: ImageButton
     private lateinit var nextButton: ImageButton
-    // 不再声明 fullscreenToggleButton
-
     private lateinit var seekBar: SeekBar
     private lateinit var currentTimeTextView: TextView
     private lateinit var durationTextView: TextView
 
-    // 歌词
     private lateinit var lyricsContainer: LinearLayout
     private lateinit var lyricsTitle: TextView
     private lateinit var currentLyricsLine: TextView
     private lateinit var nextLyricsLine: TextView
     private lateinit var lyricsSettingsButton: Button
-
-    // 手势
-    private lateinit var gestureDetector: GestureDetector
-    private lateinit var gestureControlManager: GestureControlManager
-    private lateinit var controlContainer: LinearLayout
-    private lateinit var controlIcon: ImageView
-    private lateinit var controlOverlay: TextView
-
-    private var isLongPressDetected = false
-    private var originalSpeed: Float = 1.0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,11 +51,8 @@ class AudioPlayerActivity : AppCompatActivity() {
         checkAndRequestRecordAudioPermission()
         viewModel.init(intent)
         initViews()
-        setupGestureDetector()
         setupClickListeners()
         observeViewModel()
-        // 初始显示控制栏
-        findViewById<LinearLayout>(R.id.bottomControls)?.visibility = View.VISIBLE
     }
 
     private fun enableImmersiveMode() {
@@ -114,124 +93,18 @@ class AudioPlayerActivity : AppCompatActivity() {
         audioCoverView = findViewById(R.id.audioCoverView)
         musicVisualizerView = findViewById(R.id.musicVisualizerView)
         mediaLoadingProgress = findViewById(R.id.mediaLoadingProgress)
-
         playPauseButton = findViewById(R.id.playPauseButton)
         previousButton = findViewById(R.id.previousButton)
         nextButton = findViewById(R.id.nextButton)
         seekBar = findViewById(R.id.seekBar)
         currentTimeTextView = findViewById(R.id.currentTimeTextView)
         durationTextView = findViewById(R.id.durationTextView)
-
         lyricsContainer = findViewById(R.id.lyricsContainer)
         lyricsTitle = findViewById(R.id.lyricsTitle)
         currentLyricsLine = findViewById(R.id.currentLyricsLine)
         nextLyricsLine = findViewById(R.id.nextLyricsLine)
         lyricsSettingsButton = findViewById(R.id.lyricsSettingsButton)
-
         seekBar.max = 1000
-    }
-
-    private fun setupGestureDetector() {
-        controlOverlay = TextView(this).apply {
-            text = ""
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setShadowLayer(2f, 1f, 1f, Color.BLACK)
-        }
-        controlIcon = ImageView(this)
-        controlContainer = findViewById(R.id.controlContainer)
-        controlContainer.addView(controlIcon, LinearLayout.LayoutParams(48, 48).apply {
-            gravity = Gravity.CENTER
-            setMargins(0, 0, 0, 8)
-        })
-        controlContainer.addView(controlOverlay, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { gravity = Gravity.CENTER })
-
-        val displayWidth = resources.displayMetrics.widthPixels
-        val regionWidth = displayWidth / 3
-        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
-        gestureControlManager = GestureControlManager(
-            activity = this,
-            handler = Handler(Looper.getMainLooper()),
-            audioManager = audioManager,
-            controlOverlay = controlOverlay,
-            controlIcon = controlIcon,
-            controlContainer = controlContainer,
-            regionWidth = regionWidth
-        )
-
-        gestureControlManager.setGestureListener(object : GestureControlManager.GestureListener {
-            override fun onProgressControl(deltaX: Float, displayWidth: Int) {
-                val duration = viewModel.duration.value ?: 0L
-                if (duration > 0) {
-                    val deltaProgress = (deltaX / displayWidth) * duration * 0.5f
-                    val currentPos = viewModel.currentPosition.value ?: 0L
-                    val newPosition = (currentPos + deltaProgress.toLong()).coerceIn(0, duration)
-                    viewModel.seekTo(newPosition)
-                    gestureControlManager.showControlOverlay(
-                        "进度: ${formatTime(newPosition)} / ${formatTime(duration)}",
-                        android.R.drawable.ic_media_play
-                    )
-                }
-            }
-
-            override fun onControlOverlayShow(text: String, iconRes: Int) {
-                controlContainer.bringToFront()
-            }
-
-            override fun onSeekBarProgressUpdate(position: Long, duration: Long) {
-                seekBar.progress = (position * 1000 / duration).toInt()
-                currentTimeTextView.text = formatTime(position)
-                durationTextView.text = formatTime(duration)
-            }
-        })
-
-        gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean = true
-
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                toggleControlsVisibility()
-                return true
-            }
-
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                viewModel.togglePlayback()
-                return true
-            }
-
-            override fun onLongPress(e: MotionEvent) {
-                isLongPressDetected = true
-                originalSpeed = viewModel.playbackSpeed.value ?: 1.0f
-                if ((viewModel.playbackSpeed.value ?: 1.0f) < 2.0f) {
-                    viewModel.setPlaybackSpeed(2.0f)
-                }
-            }
-        })
-
-        // 根布局作为触摸容器
-        val rootLayout = findViewById<View>(R.id.rootLayout)
-        rootLayout.setOnTouchListener { view, event ->
-            gestureDetector.onTouchEvent(event)
-            gestureControlManager.handleTouchEvent(event, view.width)
-
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    isLongPressDetected = false
-                    gestureControlManager.setupAudioManager()
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (isLongPressDetected) {
-                        viewModel.setPlaybackSpeed(originalSpeed)
-                        isLongPressDetected = false
-                    }
-                }
-            }
-            true
-        }
     }
 
     private fun setupClickListeners() {
@@ -256,22 +129,16 @@ class AudioPlayerActivity : AppCompatActivity() {
         })
     }
 
-    private fun toggleControlsVisibility() {
-        val bottomControls = findViewById<LinearLayout>(R.id.bottomControls)
-        bottomControls?.let {
-            if (it.visibility == View.VISIBLE) {
-                it.visibility = View.GONE
-                controlContainer.visibility = View.GONE
-            } else {
-                it.visibility = View.VISIBLE
-                it.bringToFront()
-            }
-        }
-    }
-
     private fun observeViewModel() {
         viewModel.artistAlbum.observe(this) { lyricsTitle.text = it }
-        viewModel.coverUrl.observe(this) { loadCover(it) }
+        viewModel.coverLocalPath.observe(this) { path ->
+            if (!path.isNullOrEmpty()) {
+                loadCoverFromFile(path)
+            } else {
+                audioCoverView.setImageDrawable(null)
+                audioCoverView.setBackgroundColor(Color.BLACK)
+            }
+        }
         viewModel.isPlaying.observe(this) {
             playPauseButton.setImageResource(
                 if (it) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
@@ -303,8 +170,9 @@ class AudioPlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadCover(coverUrl: String?) {
-        if (coverUrl.isNullOrEmpty()) {
+    private fun loadCoverFromFile(filePath: String) {
+        val file = File(filePath)
+        if (!file.exists()) {
             audioCoverView.setImageDrawable(null)
             audioCoverView.setBackgroundColor(Color.BLACK)
             return
@@ -313,7 +181,7 @@ class AudioPlayerActivity : AppCompatActivity() {
             .okHttpClient(UnsafeHttpClient.createUnsafeOkHttpClient())
             .build()
         val request = ImageRequest.Builder(this)
-            .data(coverUrl)
+            .data(file)
             .target(audioCoverView)
             .error(android.R.color.black)
             .placeholder(android.R.color.black)

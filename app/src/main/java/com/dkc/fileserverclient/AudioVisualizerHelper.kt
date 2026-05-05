@@ -1,4 +1,3 @@
-// AudioVisualizerHelper.kt
 package com.dkc.fileserverclient
 
 import android.media.audiofx.Visualizer
@@ -70,6 +69,7 @@ class AudioVisualizerHelper(
         val targetBands = 32
         val step = magnitudes.size / targetBands
         if (step == 0) return
+
         val spectrum = FloatArray(targetBands)
         for (i in 0 until targetBands) {
             var sum = 0f
@@ -80,9 +80,16 @@ class AudioVisualizerHelper(
                 }
             }
             val avg = sum / step
-            spectrum[i] = (avg / 50f).coerceIn(0f, 1f)
+            var value = (avg / 50f).coerceIn(0f, 1f)
+
+            // 低频补偿：前8个频段（对应低频区域）放大2.5倍
+            if (i < 8) {
+                value = (value * 2.5f).coerceIn(0f, 1f)
+            }
+            spectrum[i] = value
         }
-        // 反转频谱，使低频在右，高频在左（视觉上高点移到右边）
+
+        // 反转，让低频显示在右侧
         spectrum.reverse()
         mainHandler.post { onSpectrum(spectrum) }
     }

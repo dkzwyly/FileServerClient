@@ -12,11 +12,10 @@ import java.io.File
 
 class AudioPlayerViewModel(application: Application) : AndroidViewModel(application),
     MediaPlaybackListener, MediaProgressListener,
-    LyricsManager.LyricsStateListener,       // 直接处理歌词回调
-    LyricsManager.TimeProvider,             // 提供当前播放时间
+    LyricsManager.LyricsStateListener,
+    LyricsManager.TimeProvider,
     LyricsManager.PlayStateProvider {
 
-    // 核心组件
     private lateinit var mediaPlaybackController: MediaPlaybackController
     private lateinit var metadataManager: SongMetadataManager
     internal lateinit var lyricsManager: LyricsManager
@@ -25,7 +24,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     // LiveData
     val currentTrackName = MutableLiveData<String>()
     val artistAlbum = MutableLiveData<String>()
-    val coverUrl = MutableLiveData<String?>()
+    val coverLocalPath = MutableLiveData<String?>()       // 封面本地文件路径
     val isPlaying = MutableLiveData<Boolean>()
     val playbackState = MutableLiveData<PlaybackState>()
     val currentPosition = MutableLiveData<Long>()
@@ -46,6 +45,11 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    init {
+        // 初始化封面存储器（确保单例可用）
+        CoverImageStorage.init(getApplication(), UnsafeHttpClient.createUnsafeOkHttpClient())
+    }
 
     fun init(intent: Intent) {
         val track: AudioTrack? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -86,9 +90,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         })
 
-        // 歌词管理器（必须在加载歌词前设置监听器）
+        // 歌词管理器
         lyricsManager = LyricsManager(getApplication(), handler, scope)
-        lyricsManager.setListener(this)   // ViewModel 自身作为监听器
+        lyricsManager.setListener(this)
 
         // 元数据管理器
         metadataManager = SongMetadataManager(getApplication(), FileServerService(getApplication()))
@@ -121,18 +125,44 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     metadataManager.getMetadata(serverUrl, songPath)
                 }
                 currentSongMetadata.postValue(metadata)
+
                 val artist = metadata?.artist?.ifEmpty { null } ?: currentTrack?.artist
                 val album = metadata?.album?.ifEmpty { null } ?: currentTrack?.album
                 artistAlbum.value = listOfNotNull(artist, album).let {
                     if (it.isNotEmpty()) it.joinToString(" · ") else currentTrack?.name ?: "未知"
                 }
-                val cover = if (metadata?.hasCover == true) {
-                    metadataManager.getCoverUrl(serverUrl, songPath, addTimestamp = true)
+
+                // 封面处理：使用本地缓存
+                val trackId = currentTrack?.id ?: songPath
+                val baseCoverUrl = if (metadata?.hasCover == true) {
+                    metadataManager.getCoverUrl(serverUrl, songPath, addTimestamp = false)
                 } else null
-                coverUrl.value = cover
+
+                if (baseCoverUrl == null) {
+                    coverLocalPath.postValue(null)
+                    return@launch
+                }
+
+                val localFile = CoverImageStorage.getLocalFile(trackId, baseCoverUrl)
+                if (localFile.exists()) {
+                    coverLocalPath.postValue(localFile.absolutePath)
+                } else {
+                    // 先清空，等待下载
+                    coverLocalPath.postValue(null)
+                    CoverImageStorage.downloadCover(
+                        trackId = trackId,
+                        coverUrl = baseCoverUrl,
+                        scope = scope,
+                        onResult = { file ->
+                            if (file != null) {
+                                coverLocalPath.postValue(file.absolutePath)
+                            }
+                        }
+                    )
+                }
             } catch (e: Exception) {
                 artistAlbum.value = currentTrack?.name ?: "未知"
-                coverUrl.value = null
+                coverLocalPath.postValue(null)
             }
         }
     }
@@ -151,7 +181,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun reloadLyrics() {
         lyricsManager.loadLyrics(serverUrl, songPath, currentTrack?.name ?: "")
     }
-
     fun markAsNoLyrics() {
         scope.launch {
             val ok = lyricsManager.markNoLyrics(serverUrl, songPath)
@@ -160,7 +189,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
     }
-
     fun showDirectoryLyricsFiles(callback: (List<FileServerService.LyricsFileInfo>) -> Unit) {
         scope.launch {
             val dir = File(songPath).parent ?: ""
@@ -168,7 +196,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             callback(files)
         }
     }
-
     fun selectLyricsFile(file: FileServerService.LyricsFileInfo, onSuccess: () -> Unit) {
         scope.launch {
             val ok = lyricsManager.saveLyricsMapping(serverUrl, songPath, file.path)
@@ -225,11 +252,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun onActivityPause() {
         mediaPlaybackController.onActivityPause()
     }
-
     fun onActivityResume() {
         mediaPlaybackController.onActivityResume()
     }
-
     fun release() {
         mediaPlaybackController.release(keepAlive = true)
         mediaPlaybackController.removePlaybackListener(this)
@@ -243,7 +268,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         isPlaying.value = status.isPlaying
         playbackState.value = status.state
     }
-
     override fun onTrackChanged(item: MediaPlaybackItem, index: Int) {
         currentTrack = item.toAudioTrack()
         currentIndex = index
@@ -252,15 +276,10 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         loadCoverAndMetadata()
         lyricsManager.loadLyrics(serverUrl, songPath, currentTrack!!.name)
     }
-
     override fun onPlaybackError(error: String) {
         errorMessage.value = error
     }
-
-    override fun onPlaybackEnded() {
-        // 由控制器处理列表循环
-    }
-
+    override fun onPlaybackEnded() {}
     override fun onMediaBuffering(isBuffering: Boolean) {
         playbackState.value = if (isBuffering) PlaybackState.BUFFERING else PlaybackState.PLAYING
     }
@@ -270,34 +289,28 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         currentPosition.value = position
         this.duration.value = duration
     }
-
     override fun onBufferingProgress(percent: Int) {}
 
-    // ========== LyricsStateListener 实现 ==========
+    // LyricsStateListener
     override fun onLyricsLoaded(data: LyricsData?, title: String?) {
         lyricsManager.startLyricsUpdates()
     }
-
     override fun onLyricsUpdated(currentLine: String?, nextLine: String?) {
         currentLyricsLine.postValue(currentLine)
         nextLyricsLine.postValue(nextLine)
     }
-
     override fun onLyricsError(message: String) {
         currentLyricsLine.postValue(message)
         nextLyricsLine.postValue("")
     }
-
     override fun onLyricsFileSelected(files: List<FileServerService.LyricsFileInfo>) {
         lyricsFileSelection.postValue(files)
     }
-
     override fun onNoLyrics() {
         currentLyricsLine.postValue("此歌曲无歌词")
         nextLyricsLine.postValue("")
     }
 
-    // TimeProvider / PlayStateProvider
     override fun getCurrentTime(): Long = currentPosition.value ?: 0L
     override fun isPlaying(): Boolean = isPlaying.value ?: false
 
