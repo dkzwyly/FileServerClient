@@ -133,7 +133,7 @@ class PlaylistDetailActivity : AppCompatActivity() {
 
     private fun playTrack(track: AudioTrack, index: Int) {
         val playlist = PlaylistManager.getPlaylist(playlistId!!)
-        val intent = Intent(this, PreviewActivity::class.java).apply {
+        val intent = Intent(this, AudioPlayerActivity::class.java).apply {
             putExtra("AUDIO_TRACK", track)
             putExtra("AUDIO_TRACKS", ArrayList(playlist?.tracks ?: emptyList()))
             putExtra("CURRENT_INDEX", index)
@@ -141,9 +141,7 @@ class PlaylistDetailActivity : AppCompatActivity() {
             putExtra("FILE_NAME", track.name)
             putExtra("FILE_TYPE", "audio")
             putExtra("FROM_MUSIC_LIBRARY", true)
-            putExtra("SHOULD_AUTO_PLAY", true)
-            // 传递播放模式
-            putExtra(EXTRA_PLAY_MODE, currentPlayMode)
+            putExtra(EXTRA_PLAY_MODE, currentPlayMode)   // 传递播放模式
         }
         startActivity(intent)
     }

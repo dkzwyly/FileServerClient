@@ -123,6 +123,11 @@
             android:name=".AudiobookService"
             android:foregroundServiceType="mediaPlayback"
             android:exported="false" />
+
+        <activity
+            android:name=".AudioPlayerActivity"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:configChanges="orientation|screenSize" />
     </application>
 
 </manifest>

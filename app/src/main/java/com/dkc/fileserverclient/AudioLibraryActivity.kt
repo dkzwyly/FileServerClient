@@ -381,7 +381,7 @@ class AudioLibraryActivity : AppCompatActivity() {
             val audioTracksList = AudioUtils.convertToAudioTracks(audioFileItems, currentServerUrl)
             val currentIndex = audioTracks.indexOfFirst { it.id == audioTrack.id }.takeIf { it >= 0 } ?: 0
 
-            val intent = Intent(this, PreviewActivity::class.java).apply {
+            val intent = Intent(this, AudioPlayerActivity::class.java).apply {
                 putExtra("FILE_NAME", audioTrack.name)
                 putExtra("FILE_URL", audioTrack.url)
                 putExtra("FILE_TYPE", "audio")
@@ -390,9 +390,7 @@ class AudioLibraryActivity : AppCompatActivity() {
                 putExtra("AUDIO_TRACKS", ArrayList(audioTracksList))
                 putExtra("CURRENT_INDEX", currentIndex)
                 putExtra("SERVER_URL", currentServerUrl)
-                putExtra("CURRENT_PATH", getDirectoryFromPath(audioTrack.path))
                 putExtra("FROM_MUSIC_LIBRARY", true)
-                putExtra("SHOULD_AUTO_PLAY", true)
             }
             startActivity(intent)
         } catch (e: Exception) {
