@@ -11,11 +11,10 @@ import kotlinx.coroutines.*
 import java.io.File
 
 class AudioPlayerViewModel(application: Application) : AndroidViewModel(application),
-    MediaPlaybackListener, MediaProgressListener {
-
-    companion object {
-        private const val TAG = "AudioPlayerVM"
-    }
+    MediaPlaybackListener, MediaProgressListener,
+    LyricsManager.LyricsStateListener,       // 直接处理歌词回调
+    LyricsManager.TimeProvider,             // 提供当前播放时间
+    LyricsManager.PlayStateProvider {
 
     // 核心组件
     private lateinit var mediaPlaybackController: MediaPlaybackController
@@ -37,6 +36,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     val errorMessage = MutableLiveData<String>()
     val playbackSpeed = MutableLiveData<Float>(1.0f)
     val currentSongMetadata = MutableLiveData<SongMetadata?>()
+    val lyricsFileSelection = MutableLiveData<List<FileServerService.LyricsFileInfo>?>()
 
     private var serverUrl = ""
     private var songPath = ""
@@ -86,17 +86,18 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         })
 
-        // 歌词管理器
+        // 歌词管理器（必须在加载歌词前设置监听器）
         lyricsManager = LyricsManager(getApplication(), handler, scope)
+        lyricsManager.setListener(this)   // ViewModel 自身作为监听器
 
         // 元数据管理器
         metadataManager = SongMetadataManager(getApplication(), FileServerService(getApplication()))
 
-        // 连接后台服务（如果未连接）
+        // 连接后台服务
         audioBackgroundManager = AudioBackgroundManager(getApplication())
         audioBackgroundManager?.bindService()
 
-        // 保存状态并播放
+        // 播放
         currentTrack = track
         playlist = tracks ?: listOf(track)
         currentIndex = index.coerceIn(0, playlist.size - 1)
@@ -146,10 +147,11 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         playbackSpeed.value = speed
     }
 
-    // 歌词
+    // 歌词操作
     fun reloadLyrics() {
         lyricsManager.loadLyrics(serverUrl, songPath, currentTrack?.name ?: "")
     }
+
     fun markAsNoLyrics() {
         scope.launch {
             val ok = lyricsManager.markNoLyrics(serverUrl, songPath)
@@ -158,6 +160,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
     }
+
     fun showDirectoryLyricsFiles(callback: (List<FileServerService.LyricsFileInfo>) -> Unit) {
         scope.launch {
             val dir = File(songPath).parent ?: ""
@@ -165,6 +168,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             callback(files)
         }
     }
+
     fun selectLyricsFile(file: FileServerService.LyricsFileInfo, onSuccess: () -> Unit) {
         scope.launch {
             val ok = lyricsManager.saveLyricsMapping(serverUrl, songPath, file.path)
@@ -172,7 +176,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    // 元数据
+    // 元数据编辑
     fun saveMetadata(title: String?, artist: String?, album: String?) {
         scope.launch {
             val ok = metadataManager.saveMetadata(serverUrl, songPath, title, artist, album)
@@ -185,7 +189,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    // 封面
+    // 封面上传
     fun uploadCover(uri: Uri) {
         scope.launch {
             try {
@@ -227,7 +231,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun release() {
-        mediaPlaybackController.release(keepAlive = true) // 保留后台服务
+        mediaPlaybackController.release(keepAlive = true)
         mediaPlaybackController.removePlaybackListener(this)
         mediaPlaybackController.removeProgressListener(this)
         audioBackgroundManager?.unbindService()
@@ -254,7 +258,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     override fun onPlaybackEnded() {
-        // 由控制器的列表模式处理
+        // 由控制器处理列表循环
     }
 
     override fun onMediaBuffering(isBuffering: Boolean) {
@@ -269,20 +273,33 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     override fun onBufferingProgress(percent: Int) {}
 
-    // 歌词回调辅助
-    fun onLyricsLoaded(data: LyricsData?, title: String?) {}
-    fun onLyricsUpdated(current: String?, next: String?) {
-        currentLyricsLine.value = current
-        nextLyricsLine.value = next
+    // ========== LyricsStateListener 实现 ==========
+    override fun onLyricsLoaded(data: LyricsData?, title: String?) {
+        lyricsManager.startLyricsUpdates()
     }
-    fun onLyricsError(msg: String) {
-        currentLyricsLine.value = msg
-        nextLyricsLine.value = ""
+
+    override fun onLyricsUpdated(currentLine: String?, nextLine: String?) {
+        currentLyricsLine.postValue(currentLine)
+        nextLyricsLine.postValue(nextLine)
     }
-    fun onNoLyrics() {
-        currentLyricsLine.value = "此歌曲无歌词"
-        nextLyricsLine.value = ""
+
+    override fun onLyricsError(message: String) {
+        currentLyricsLine.postValue(message)
+        nextLyricsLine.postValue("")
     }
+
+    override fun onLyricsFileSelected(files: List<FileServerService.LyricsFileInfo>) {
+        lyricsFileSelection.postValue(files)
+    }
+
+    override fun onNoLyrics() {
+        currentLyricsLine.postValue("此歌曲无歌词")
+        nextLyricsLine.postValue("")
+    }
+
+    // TimeProvider / PlayStateProvider
+    override fun getCurrentTime(): Long = currentPosition.value ?: 0L
+    override fun isPlaying(): Boolean = isPlaying.value ?: false
 
     override fun onCleared() {
         super.onCleared()

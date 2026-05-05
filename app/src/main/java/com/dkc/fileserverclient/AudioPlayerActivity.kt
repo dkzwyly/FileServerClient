@@ -23,10 +23,7 @@ import coil.ImageLoader
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 
-class AudioPlayerActivity : AppCompatActivity(),
-    LyricsManager.LyricsStateListener,
-    LyricsManager.TimeProvider,
-    LyricsManager.PlayStateProvider {
+class AudioPlayerActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "AudioPlayerActivity"
@@ -77,10 +74,7 @@ class AudioPlayerActivity : AppCompatActivity(),
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_audio_player)
         checkAndRequestRecordAudioPermission()
-
-        // 先初始化 ViewModel，确保 lyricsManager 等属性已赋值
-        viewModel.init(intent)
-
+        viewModel.init(intent)   // 确保歌词等组件初始化完成
         initViews()
         setupFullscreen()
         setupGestureDetector()
@@ -113,7 +107,7 @@ class AudioPlayerActivity : AppCompatActivity(),
         nextLyricsLine = findViewById(R.id.nextLyricsLine)
         lyricsSettingsButton = findViewById(R.id.lyricsSettingsButton)
 
-        viewModel.lyricsManager.setListener(this)
+        // 不再调用 viewModel.lyricsManager.setListener(this)
         seekBar.max = 1000
         fileTypeTextView.text = "音频"
     }
@@ -288,6 +282,13 @@ class AudioPlayerActivity : AppCompatActivity(),
         viewModel.errorMessage.observe(this) {
             if (!it.isNullOrEmpty()) Toast.makeText(this, it, Toast.LENGTH_SHORT).show()
         }
+        // 歌词文件选择对话框
+        viewModel.lyricsFileSelection.observe(this) { files ->
+            if (!files.isNullOrEmpty()) {
+                showLyricsFileSelectionDialog(files)
+                viewModel.lyricsFileSelection.value = null  // 消费事件
+            }
+        }
     }
 
     private fun loadCover(coverUrl: String?) {
@@ -393,27 +394,6 @@ class AudioPlayerActivity : AppCompatActivity(),
         }
     }
 
-    // LyricsManager回调
-    override fun onLyricsLoaded(data: LyricsData?, title: String?) {
-        viewModel.onLyricsLoaded(data, title)
-    }
-    override fun onLyricsUpdated(currentLine: String?, nextLine: String?) {
-        viewModel.onLyricsUpdated(currentLine, nextLine)
-    }
-    override fun onLyricsError(message: String) {
-        viewModel.onLyricsError(message)
-    }
-    override fun onLyricsFileSelected(files: List<FileServerService.LyricsFileInfo>) {
-        showLyricsFileSelectionDialog(files)
-    }
-    override fun onNoLyrics() {
-        viewModel.onNoLyrics()
-    }
-
-    // TimeProvider & PlayStateProvider
-    override fun getCurrentTime(): Long = viewModel.currentPosition.value ?: 0L
-    override fun isPlaying(): Boolean = viewModel.isPlaying.value ?: false
-
     private fun formatTime(millis: Long): String {
         val seconds = millis / 1000
         val minutes = seconds / 60
@@ -450,6 +430,6 @@ class AudioPlayerActivity : AppCompatActivity(),
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        // 可视化内部会自行适配
+        // 可视化内部适配权限变化
     }
 }
