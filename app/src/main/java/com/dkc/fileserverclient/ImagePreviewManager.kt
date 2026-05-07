@@ -38,7 +38,7 @@ class ImagePreviewManager(
         isGif = fileName.endsWith(".gif", ignoreCase = true)
 
         // 预览时都使用 FIT_CENTER 完整显示图片
-        imageView.scaleType = ImageView.ScaleType.FIT_CENTER
+        //imageView.scaleType = ImageView.ScaleType.FIT_CENTER
 
         listener?.onImageLoadStart()
         loadingProgress.visibility = View.VISIBLE

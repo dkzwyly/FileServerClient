@@ -1,76 +1,108 @@
-// ImageActivity.kt
 package com.dkc.fileserverclient
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.graphics.Matrix
+import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.util.Log
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
-import android.widget.*
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import android.view.KeyEvent
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import kotlin.math.abs
+import kotlin.math.min
 
 class ImageActivity : AppCompatActivity() {
 
     private lateinit var viewModel: ImageViewModel
 
-    // UI组件
-    private lateinit var titleBar: LinearLayout
-    private lateinit var backButton: Button
-    private lateinit var fileNameTextView: TextView
-    private lateinit var imageCountTextView: TextView
-    private lateinit var downloadButton: Button
+    // UI 组件
+    private lateinit var topControlBar: LinearLayout
+    private lateinit var backButton: ImageButton
+    private lateinit var fileNameWithCount: TextView
+    private lateinit var shareButton: ImageButton
 
     private lateinit var imagePreview: ImageView
     private lateinit var loadingProgress: ProgressBar
     private lateinit var errorTextView: TextView
-    private lateinit var navigationContainer: LinearLayout
+    private lateinit var bottomControlBar: LinearLayout
     private lateinit var previousButton: ImageButton
     private lateinit var nextButton: ImageButton
 
-    // 管理器
     private lateinit var imageManager: ImagePreviewManager
-    private lateinit var gestureDetector: GestureDetector
 
-    // 状态
-    private var isControlsVisible = true
+    // 手势
+    private lateinit var gestureDetector: GestureDetector
+    private lateinit var scaleGestureDetector: ScaleGestureDetector
+
+    // 矩阵与状态
+    private val baseMatrix = Matrix()       // 初始居中适配矩阵
+    private val matrix = Matrix()           // 当前变换矩阵
+    private var currentScale = 1f           // 当前相对初始的缩放倍数
+    private val minScale = 1f
+    private val maxScale = 5f
+    private var lastTouchX = 0f
+    private var lastTouchY = 0f
+    private var touchStartX = 0f
+    private var touchStartY = 0f
+    private var isDragging = false
+
+    private var isControlsVisible = false   // 默认沉浸
 
     companion object {
         private const val TAG = "ImageActivity"
+        private const val SWIPE_THRESHOLD = 100f
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_image)
 
-        // 初始化ViewModel
         viewModel = ViewModelProvider(this)[ImageViewModel::class.java]
 
         initViews()
         setupImageManager()
-        setupGestureDetector()
+        setupGestureDetectors()
+        setupTouchListener()
         setupEventListeners()
         loadIntentData()
         setupObservers()
     }
 
     private fun initViews() {
-        titleBar = findViewById(R.id.titleBar)
+        topControlBar = findViewById(R.id.topControlBar)
         backButton = findViewById(R.id.backButton)
-        fileNameTextView = findViewById(R.id.fileNameTextView)
-        imageCountTextView = findViewById(R.id.imageCountTextView)
-        downloadButton = findViewById(R.id.downloadButton)
+        fileNameWithCount = findViewById(R.id.fileNameWithCount)
+        shareButton = findViewById(R.id.shareButton)
 
         imagePreview = findViewById(R.id.imagePreview)
         loadingProgress = findViewById(R.id.loadingProgress)
         errorTextView = findViewById(R.id.errorTextView)
-        navigationContainer = findViewById(R.id.navigationContainer)
+        bottomControlBar = findViewById(R.id.bottomControlBar)
         previousButton = findViewById(R.id.previousButton)
         nextButton = findViewById(R.id.nextButton)
+
+        // 默认隐藏控制栏（沉浸式）
+        topControlBar.visibility = View.GONE
+        bottomControlBar.visibility = View.GONE
     }
 
     private fun setupImageManager() {
@@ -85,7 +117,12 @@ class ImageActivity : AppCompatActivity() {
 
         imageManager.setListener(object : ImagePreviewManager.ImageStateListener {
             override fun onImageLoadStart() {
-                // 图片开始加载
+                // 移除旧图，清空矩阵
+                imagePreview.setImageDrawable(null)
+                matrix.reset()
+                baseMatrix.reset()
+                currentScale = 1f
+                imagePreview.imageMatrix = matrix
             }
 
             override fun onImageLoadSuccess(isGif: Boolean) {
@@ -93,7 +130,11 @@ class ImageActivity : AppCompatActivity() {
                 errorTextView.visibility = View.GONE
                 imagePreview.visibility = View.VISIBLE
 
-                // 自动播放GIF
+                // 等 ImageView 布局完成后计算居中矩阵
+                imagePreview.post {
+                    applyFittedCenterMatrix()
+                }
+
                 if (isGif) {
                     imageManager.startGifAnimation()
                 }
@@ -104,13 +145,37 @@ class ImageActivity : AppCompatActivity() {
                 showError(message)
             }
 
-            override fun onDoubleTap() {
-                handleDoubleTap()
-            }
+            override fun onDoubleTap() { /* 由手势检测器处理 */ }
         })
     }
 
-    private fun setupGestureDetector() {
+    /**
+     * 计算并应用初始居中适配矩阵（FIT_CENTER 效果）
+     */
+    private fun applyFittedCenterMatrix() {
+        val drawable = imagePreview.drawable ?: return
+        val dw = drawable.intrinsicWidth
+        val dh = drawable.intrinsicHeight
+        if (dw <= 0 || dh <= 0) return
+
+        val vw = imagePreview.width - imagePreview.paddingLeft - imagePreview.paddingRight
+        val vh = imagePreview.height - imagePreview.paddingTop - imagePreview.paddingBottom
+        if (vw <= 0 || vh <= 0) return
+
+        baseMatrix.reset()
+        val scale = min(vw.toFloat() / dw, vh.toFloat() / dh)
+        val dx = (vw - dw * scale) / 2f + imagePreview.paddingLeft
+        val dy = (vh - dh * scale) / 2f + imagePreview.paddingTop
+        baseMatrix.setScale(scale, scale)
+        baseMatrix.postTranslate(dx, dy)
+
+        matrix.set(baseMatrix)
+        imagePreview.imageMatrix = matrix
+        currentScale = 1f
+    }
+
+    // ---------- 手势相关 ----------
+    private fun setupGestureDetectors() {
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
 
@@ -120,26 +185,128 @@ class ImageActivity : AppCompatActivity() {
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                handleDoubleTap()
+                handleDoubleTap(e.x, e.y)
                 return true
             }
+
+            override fun onScroll(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                distanceX: Float,
+                distanceY: Float
+            ): Boolean = false // 让 onTouch 处理拖动
         })
 
+        scaleGestureDetector = ScaleGestureDetector(this,
+            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    val scaleFactor = detector.scaleFactor
+                    val focusX = detector.focusX
+                    val focusY = detector.focusY
+
+                    val newScale = (currentScale * scaleFactor).coerceIn(minScale, maxScale)
+                    // 计算相对于当前矩阵的缩放变换
+                    matrix.postScale(
+                        newScale / currentScale,
+                        newScale / currentScale,
+                        focusX,
+                        focusY
+                    )
+                    currentScale = newScale
+                    imagePreview.imageMatrix = matrix
+                    return true
+                }
+            })
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupTouchListener() {
         imagePreview.setOnTouchListener { _, event ->
-            gestureDetector.onTouchEvent(event)
+            // 双指缩放优先
+            scaleGestureDetector.onTouchEvent(event)
+            // 双指缩放进行中时不处理单指手势
+            if (!scaleGestureDetector.isInProgress) {
+                gestureDetector.onTouchEvent(event)
+            }
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    lastTouchX = event.rawX
+                    lastTouchY = event.rawY
+                    touchStartX = event.rawX
+                    touchStartY = event.rawY
+                    isDragging = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (scaleGestureDetector.isInProgress) return@setOnTouchListener true
+
+                    // 放大超过 1.01 倍才允许拖动
+                    if (event.pointerCount == 1 && currentScale > 1.01f) {
+                        val dx = event.rawX - lastTouchX
+                        val dy = event.rawY - lastTouchY
+                        matrix.postTranslate(dx, dy)
+                        imagePreview.imageMatrix = matrix
+                        lastTouchX = event.rawX
+                        lastTouchY = event.rawY
+                        if (abs(dx) > 5 || abs(dy) > 5) {
+                            isDragging = true
+                        }
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // 未放大且未拖动时，左右滑动可以切换图片
+                    if (!isDragging && currentScale <= 1.01f) {
+                        val diffX = event.rawX - touchStartX
+                        if (abs(diffX) > SWIPE_THRESHOLD) {
+                            if (diffX > 0) viewModel.navigateToPrevious()
+                            else viewModel.navigateToNext()
+                        }
+                    }
+                }
+            }
             true
         }
     }
 
+    private fun handleDoubleTap(focusX: Float, focusY: Float) {
+        val targetScale = if (currentScale > 1.1f) minScale else 2.5f.coerceAtMost(maxScale)
+        animateScale(currentScale, targetScale, focusX, focusY)
+    }
 
+    /**
+     * 平滑缩放动画，以 (focusX, focusY) 为中心进行缩放
+     */
+    private fun animateScale(
+        fromScale: Float,
+        toScale: Float,
+        pivotX: Float,
+        pivotY: Float
+    ) {
+        val startMatrix = Matrix(matrix) // 克隆当前矩阵
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 250
+            addUpdateListener { animator ->
+                val fraction = animator.animatedFraction
+                val scaleThisFrame = fromScale + (toScale - fromScale) * fraction
+                val scaleChange = scaleThisFrame / fromScale
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+                // 基于开始矩阵进行变换，避免累积误差
+                val m = Matrix(startMatrix)
+                m.postScale(scaleChange, scaleChange, pivotX, pivotY)
+                imagePreview.imageMatrix = m
+                matrix.set(m)
+            }
+        }.start()
+        currentScale = toScale
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
         return when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT -> {
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
                 viewModel.navigateToPrevious()
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 viewModel.navigateToNext()
                 true
             }
@@ -147,55 +314,12 @@ class ImageActivity : AppCompatActivity() {
         }
     }
 
+    // ---------- 控制栏与事件 ----------
     private fun setupEventListeners() {
-        backButton.setOnClickListener {
-            onBackPressed()
-        }
-
-        downloadButton.setOnClickListener {
-            downloadCurrentImage()
-        }
-
-        previousButton.setOnClickListener {
-            viewModel.navigateToPrevious()
-        }
-
-        nextButton.setOnClickListener {
-            viewModel.navigateToNext()
-        }
-
-        // 添加左右滑动手势
-        imagePreview.setOnTouchListener(object : View.OnTouchListener {
-            private var startX = 0f
-            private val SWIPE_THRESHOLD = 100f
-
-            override fun onTouch(v: View, event: MotionEvent): Boolean {
-                gestureDetector.onTouchEvent(event)
-
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        startX = event.x
-                        return true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        val endX = event.x
-                        val diffX = endX - startX
-
-                        if (Math.abs(diffX) > SWIPE_THRESHOLD) {
-                            if (diffX > 0) {
-                                // 向右滑动 - 上一张图片
-                                viewModel.navigateToPrevious()
-                            } else {
-                                // 向左滑动 - 下一张图片
-                                viewModel.navigateToNext()
-                            }
-                            return true
-                        }
-                    }
-                }
-                return true
-            }
-        })
+        backButton.setOnClickListener { onBackPressed() }
+        shareButton.setOnClickListener { shareCurrentImage() }
+        previousButton.setOnClickListener { viewModel.navigateToPrevious() }
+        nextButton.setOnClickListener { viewModel.navigateToNext() }
     }
 
     private fun loadIntentData() {
@@ -207,7 +331,6 @@ class ImageActivity : AppCompatActivity() {
             showError("服务器地址不能为空")
             return
         }
-
         viewModel.initialize(serverUrl, directoryPath, imagePath)
     }
 
@@ -215,19 +338,13 @@ class ImageActivity : AppCompatActivity() {
     private fun setupObservers() {
         viewModel.currentImage.observe(this) { imageItem ->
             imageItem?.let { item ->
-                // 更新文件名
-                fileNameTextView.text = item.name
+                val currentIndex = (viewModel.currentIndex.value ?: 0) + 1
+                val totalCount = viewModel.totalCount.value ?: 0
+                fileNameWithCount.text = "$currentIndex/$totalCount  ${item.name}"
 
-                // 加载图片
                 val imageUrl = getFullImageUrl(item)
                 imageManager.loadImage(imageUrl, item.name)
 
-                // 更新计数显示
-                val currentIndex = (viewModel.currentIndex.value ?: 0) + 1
-                val totalCount = viewModel.totalCount.value ?: 0
-                imageCountTextView.text = "$currentIndex/$totalCount"
-
-                // 更新导航按钮状态
                 updateNavigationButtons()
             }
         }
@@ -250,16 +367,13 @@ class ImageActivity : AppCompatActivity() {
         }
 
         viewModel.errorState.observe(this) { error ->
-            error?.let {
-                showError(it)
-            }
+            error?.let { showError(it) }
         }
     }
 
     private fun updateNavigationButtons() {
         val currentIndex = viewModel.currentIndex.value ?: 0
         val totalCount = viewModel.totalCount.value ?: 0
-
         previousButton.isEnabled = currentIndex > 0
         nextButton.isEnabled = currentIndex < totalCount - 1
     }
@@ -272,36 +386,56 @@ class ImageActivity : AppCompatActivity() {
 
     private fun toggleControls() {
         isControlsVisible = !isControlsVisible
-
-        if (isControlsVisible) {
-            titleBar.visibility = View.VISIBLE
-            navigationContainer.visibility = View.VISIBLE
-        } else {
-            titleBar.visibility = View.GONE
-            navigationContainer.visibility = View.GONE
-        }
-    }
-
-    private fun handleDoubleTap() {
-        // 双击可以切换缩放模式或执行其他操作
-        // 这里可以添加双击缩放功能
-        Log.d(TAG, "Double tap detected")
-    }
-
-    private fun downloadCurrentImage() {
-        viewModel.currentImage.value?.let { item ->
-            val fileName = item.name
-            val imageUrl = getFullImageUrl(item)
-
-            Toast.makeText(this, "开始下载: $fileName", Toast.LENGTH_SHORT).show()
-            // TODO: 实现下载逻辑
-        }
+        topControlBar.visibility = if (isControlsVisible) View.VISIBLE else View.GONE
+        bottomControlBar.visibility = if (isControlsVisible) View.VISIBLE else View.GONE
     }
 
     private fun showError(message: String) {
         errorTextView.visibility = View.VISIBLE
         errorTextView.text = message
         imagePreview.visibility = View.GONE
+    }
+
+    // ---------- 分享功能 ----------
+    private fun shareCurrentImage() {
+        val item = viewModel.currentImage.value ?: return
+        val imageUrl = getFullImageUrl(item)
+
+        lifecycleScope.launch {
+            try {
+                val sharedFile = withContext(Dispatchers.IO) {
+                    val client = UnsafeHttpClient.createUnsafeOkHttpClient()
+                    val request = okhttp3.Request.Builder().url(imageUrl).build()
+                    val response = client.newCall(request).execute()
+                    if (!response.isSuccessful) throw Exception("下载图片失败")
+
+                    val cacheDir = File(cacheDir, "shared_images")
+                    cacheDir.mkdirs()
+                    val file = File(cacheDir, item.name)
+                    response.body?.byteStream()?.use { input ->
+                        FileOutputStream(file).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    file
+                }
+
+                val uri = FileProvider.getUriForFile(
+                    this@ImageActivity,
+                    "${packageName}.fileprovider",
+                    sharedFile
+                )
+
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = item.mimeType ?: "image/*"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(shareIntent, "分享图片"))
+            } catch (e: Exception) {
+                Toast.makeText(this@ImageActivity, "分享失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     override fun onPause() {
@@ -311,10 +445,8 @@ class ImageActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 恢复GIF动画
         lifecycleScope.launch {
-            // 给一点延迟确保UI完全恢复
-            kotlinx.coroutines.delay(200)
+            delay(200)
             imageManager.startGifAnimation()
         }
     }
