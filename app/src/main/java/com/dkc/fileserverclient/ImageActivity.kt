@@ -117,7 +117,8 @@ class ImageActivity : AppCompatActivity() {
 
         imageManager.setListener(object : ImagePreviewManager.ImageStateListener {
             override fun onImageLoadStart() {
-                // 移除旧图，清空矩阵
+                // 隐藏图片，避免显示未定位的图片导致跳变
+                imagePreview.visibility = View.INVISIBLE
                 imagePreview.setImageDrawable(null)
                 matrix.reset()
                 baseMatrix.reset()
@@ -128,11 +129,13 @@ class ImageActivity : AppCompatActivity() {
             override fun onImageLoadSuccess(isGif: Boolean) {
                 loadingProgress.visibility = View.GONE
                 errorTextView.visibility = View.GONE
-                imagePreview.visibility = View.VISIBLE
-
-                // 等 ImageView 布局完成后计算居中矩阵
+                // 延迟到下一帧，确保 ImageView 尺寸已确定，计算矩阵后再显示
                 imagePreview.post {
                     applyFittedCenterMatrix()
+                    imagePreview.visibility = View.VISIBLE
+                    if (isGif) {
+                        imageManager.startGifAnimation()
+                    }
                 }
 
                 if (isGif) {
