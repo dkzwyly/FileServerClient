@@ -33,24 +33,20 @@ class VideoFilesAdapter(
 
     override fun onBindViewHolder(holder: VideoFileViewHolder, position: Int) {
         val item = items[position]
+        holder.currentLoadPath = item.path
 
-        // 重置当前状态
-        holder.currentLoadPath = null
-
-        // 设置标题（去掉文件后缀）
-        val displayName = removeFileExtension(item.name)
-        holder.titleView.text = displayName
-
-        // 设置文件大小
+        holder.titleView.text = removeFileExtension(item.name)
         holder.durationView.text = item.sizeFormatted
 
-        // 设置默认占位符
-        holder.thumbnailView.setImageResource(R.drawable.ic_video_placeholder)
+        // 直接使用 ThumbnailLoader，内部优先本地缓存
+        ThumbnailLoader.loadVideoThumbnail(
+            imageView = holder.thumbnailView,
+            serverUrl = serverUrl,
+            videoPath = item.path,
+            width = 320,
+            height = 180
+        )
 
-        // 从服务器加载视频缩略图
-        loadVideoThumbnailFromServer(holder, item)
-
-        // 设置点击事件
         holder.itemView.setOnClickListener {
             onItemClick(item)
         }
@@ -70,36 +66,13 @@ class VideoFilesAdapter(
     private fun loadVideoThumbnailFromServer(holder: VideoFileViewHolder, videoItem: FileSystemItem) {
         holder.currentLoadPath = videoItem.path
 
-        coroutineScope.launch {
-            try {
-                Log.d("VideoFiles", "从服务器加载视频缩略图: ${videoItem.name}")
-
-                // 使用 自定义ThumbnailLoader 从服务器加载缩略图
-                val bitmap = ThumbnailLoader.loadVideoThumbnailBitmap(
-                    serverUrl = serverUrl,
-                    videoPath = videoItem.path,
-                    width = 320,
-                    height = 180
-                )
-
-                // 检查当前加载路径是否仍然匹配
-                if (holder.currentLoadPath == videoItem.path) {
-                    if (bitmap != null) {
-                        holder.thumbnailView.setImageBitmap(bitmap)
-                        Log.d("VideoFiles", "视频缩略图设置成功: ${videoItem.name}")
-                    } else {
-                        holder.thumbnailView.setImageResource(R.drawable.ic_video_placeholder)
-                        Log.w("VideoFiles", "视频缩略图加载失败，使用占位符: ${videoItem.name}")
-                    }
-                }
-
-            } catch (e: Exception) {
-                Log.e("VideoFiles", "视频缩略图加载异常: ${e.message}", e)
-                if (holder.currentLoadPath == videoItem.path) {
-                    holder.thumbnailView.setImageResource(R.drawable.ic_video_placeholder)
-                }
-            }
-        }
+        ThumbnailLoader.loadVideoThumbnail(
+            imageView = holder.thumbnailView,
+            serverUrl = serverUrl,
+            videoPath = videoItem.path,
+            width = 320,
+            height = 180
+        )
     }
 
     override fun onViewRecycled(holder: VideoFileViewHolder) {
