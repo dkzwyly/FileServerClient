@@ -302,15 +302,21 @@ class VideoLibraryActivity : AppCompatActivity() {
      */
     private fun preloadVideoThumbnails() {
         if (videoList.size > 10) {
-            // 如果视频太多，只预加载前10个
             val videosToPreload = videoList.take(10)
             coroutineScope.launch {
-                ThumbnailLoader.preloadVideoThumbnails(
-                    serverUrl = currentServerUrl,
-                    videoItems = videosToPreload,
-                    width = 320,
-                    height = 180
-                )
+                videosToPreload.forEach { videoItem ->
+                    try {
+                        // 调用 loadVideoThumbnailBitmap，不关心返回值，只要能触发缓存就行
+                        ThumbnailLoader.loadVideoThumbnailBitmap(
+                            serverUrl = currentServerUrl,
+                            videoPath = videoItem.path,
+                            width = 320,
+                            height = 180
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "预加载失败: ${videoItem.path}", e)
+                    }
+                }
             }
         }
     }

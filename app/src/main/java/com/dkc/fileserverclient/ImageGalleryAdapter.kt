@@ -54,7 +54,7 @@ class ImageGalleryAdapter(
         ) {
             fileName.text = imageItem.name
             updateSelectionUI(imageItem, isMultiSelectionMode, isItemSelected)
-            loadImageThumbnail(imageItem, serverUrl, imageLoader)
+            ThumbnailLoader.loadImageThumbnail(imageView, imageItem, serverUrl)
 
             itemView.setOnClickListener { onImageClick(imageItem) }
             itemView.setOnLongClickListener {

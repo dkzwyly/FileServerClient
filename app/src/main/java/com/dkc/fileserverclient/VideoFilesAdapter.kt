@@ -74,8 +74,8 @@ class VideoFilesAdapter(
             try {
                 Log.d("VideoFiles", "从服务器加载视频缩略图: ${videoItem.name}")
 
-                // 使用 ThumbnailLoader 从服务器加载缩略图
-                val bitmap = ThumbnailLoader.loadVideoThumbnail(
+                // 使用 自定义ThumbnailLoader 从服务器加载缩略图
+                val bitmap = ThumbnailLoader.loadVideoThumbnailBitmap(
                     serverUrl = serverUrl,
                     videoPath = videoItem.path,
                     width = 320,

@@ -70,15 +70,15 @@ class RecentWatchedAdapter(
             try {
                 Log.d("RecentWatched", "从服务器加载视频缩略图: ${videoItem.name}")
 
-                // 使用 ThumbnailLoader 从服务器加载缩略图
-                val bitmap = ThumbnailLoader.loadVideoThumbnail(
+                // ✅ 唯一改动：改用 loadVideoThumbnailBitmap，它是挂起函数，返回 Bitmap?
+                val bitmap = ThumbnailLoader.loadVideoThumbnailBitmap(
                     serverUrl = serverUrl,
                     videoPath = videoItem.path,
                     width = 320,
                     height = 180
                 )
 
-                // 检查当前加载路径是否仍然匹配
+                // 检查当前加载路径是否仍然匹配（防止快速滚动导致的错位）
                 if (holder.currentLoadPath == videoItem.path) {
                     if (bitmap != null) {
                         holder.thumbnailView.setImageBitmap(bitmap)
