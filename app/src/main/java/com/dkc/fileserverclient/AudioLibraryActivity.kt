@@ -3,17 +3,15 @@ package com.dkc.fileserverclient
 
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -28,6 +26,7 @@ class AudioLibraryActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var titleText: TextView
     private lateinit var backButton: ImageButton
+    private lateinit var modeSwitchButton: ImageButton          // 新增：播放模式切换按钮
     private lateinit var searchIconButton: ImageButton
     private lateinit var searchEditText: EditText
     private lateinit var clearSearchButton: ImageButton
@@ -55,8 +54,7 @@ class AudioLibraryActivity : AppCompatActivity() {
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private val audioLibraryPath = "data/音乐"
 
-    // ---------- 播放模式相关 ----------
-    private lateinit var prefs: SharedPreferences
+    // 播放模式相关
     private var currentPlayMode: Int = PlaylistDetailActivity.MODE_LIST  // 默认列表循环
 
     private enum class TabType { PLAYLISTS, SONGS }
@@ -64,13 +62,14 @@ class AudioLibraryActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "AudioLibraryActivity"
         private const val PREFS_NAME = "audio_library_play_mode"
-        private const val KEY_MODE = "mode_all_songs"
+        private const val KEY_MODE = "current_play_mode"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_audio_library)
 
+        // 隐藏系统 ActionBar（使用自定义标题栏）
         supportActionBar?.hide()
 
         currentServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
@@ -83,9 +82,8 @@ class AudioLibraryActivity : AppCompatActivity() {
         metadataManager = SongMetadataManager(this, fileServerService)
         PlaylistManager.initialize(this)
 
-        // 初始化播放模式 SharedPreferences
-        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        currentPlayMode = prefs.getInt(KEY_MODE, PlaylistDetailActivity.MODE_LIST)
+        // 加载保存的播放模式
+        loadPlayMode()
 
         initViews()
         setupTabs()
@@ -98,36 +96,43 @@ class AudioLibraryActivity : AppCompatActivity() {
         loadPlaylists()
     }
 
-    // ---------- 菜单 ----------
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.audio_library_menu, menu)
-        return true
+    // ---------- 播放模式相关方法 ----------
+    private fun loadPlayMode() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        currentPlayMode = prefs.getInt(KEY_MODE, PlaylistDetailActivity.MODE_LIST)
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            R.id.action_play_mode -> {
-                showPlayModeDialog()
-                true
-            }
-            else -> super.onOptionsItemSelected(item)
+    private fun savePlayMode() {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_MODE, currentPlayMode)
+            .apply()
+    }
+
+    private fun updateModeIcon() {
+        val iconRes = when (currentPlayMode) {
+            PlaylistDetailActivity.MODE_LIST -> R.drawable.ic_repeat_all
+            PlaylistDetailActivity.MODE_SINGLE -> R.drawable.ic_repeat_one
+            PlaylistDetailActivity.MODE_RANDOM -> R.drawable.ic_shuffle
+            else -> R.drawable.ic_repeat_all
         }
+        modeSwitchButton.setImageResource(iconRes)
     }
 
-    private fun showPlayModeDialog() {
-        val modes = arrayOf("列表循环", "单曲循环", "随机播放")
-        AlertDialog.Builder(this)
-            .setTitle("播放模式")
-            .setSingleChoiceItems(modes, currentPlayMode) { dialog, which ->
-                if (currentPlayMode != which) {
-                    currentPlayMode = which
-                    prefs.edit().putInt(KEY_MODE, currentPlayMode).apply()
-                    android.widget.Toast.makeText(this, "已切换到 ${modes[which]}", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                dialog.dismiss()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+    private fun switchPlayMode() {
+        currentPlayMode = when (currentPlayMode) {
+            PlaylistDetailActivity.MODE_LIST -> PlaylistDetailActivity.MODE_SINGLE
+            PlaylistDetailActivity.MODE_SINGLE -> PlaylistDetailActivity.MODE_RANDOM
+            else -> PlaylistDetailActivity.MODE_LIST
+        }
+        savePlayMode()
+        updateModeIcon()
+        val modeName = when (currentPlayMode) {
+            PlaylistDetailActivity.MODE_LIST -> "列表循环"
+            PlaylistDetailActivity.MODE_SINGLE -> "单曲循环"
+            else -> "随机播放"
+        }
+        Toast.makeText(this, modeName, Toast.LENGTH_SHORT).show()
     }
 
     private fun initViews() {
@@ -136,6 +141,7 @@ class AudioLibraryActivity : AppCompatActivity() {
         statusText = findViewById(R.id.audioStatusText)
         titleText = findViewById(R.id.audioTitleText)
         backButton = findViewById(R.id.backButton)
+        modeSwitchButton = findViewById(R.id.modeSwitchButton)       // 新增
         searchIconButton = findViewById(R.id.searchIconButton)
         searchEditText = findViewById(R.id.searchEditText)
         clearSearchButton = findViewById(R.id.clearSearchButton)
@@ -149,9 +155,13 @@ class AudioLibraryActivity : AppCompatActivity() {
         titleText.text = "音频库"
 
         backButton.setOnClickListener { finish() }
+        modeSwitchButton.setOnClickListener { switchPlayMode() }    // 模式切换点击事件
         searchIconButton.setOnClickListener { showSearchContainer() }
         closeSearchButton.setOnClickListener { hideSearchContainer() }
         setupSearch()
+
+        // 设置当前图标
+        updateModeIcon()
 
         audioRecyclerView.layoutManager = LinearLayoutManager(this)
         playlistRecyclerView.layoutManager = LinearLayoutManager(this)
@@ -447,7 +457,7 @@ class AudioLibraryActivity : AppCompatActivity() {
     }
 
     private fun showToast(message: String) {
-        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     override fun onDestroy() {
