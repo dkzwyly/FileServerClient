@@ -1,11 +1,15 @@
 @file:OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.dkc.fileserverclient
 
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.widget.EditText
 import android.widget.ImageButton
@@ -51,10 +55,16 @@ class AudioLibraryActivity : AppCompatActivity() {
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private val audioLibraryPath = "data/音乐"
 
+    // ---------- 播放模式相关 ----------
+    private lateinit var prefs: SharedPreferences
+    private var currentPlayMode: Int = PlaylistDetailActivity.MODE_LIST  // 默认列表循环
+
     private enum class TabType { PLAYLISTS, SONGS }
 
     companion object {
         private const val TAG = "AudioLibraryActivity"
+        private const val PREFS_NAME = "audio_library_play_mode"
+        private const val KEY_MODE = "mode_all_songs"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,6 +82,11 @@ class AudioLibraryActivity : AppCompatActivity() {
 
         metadataManager = SongMetadataManager(this, fileServerService)
         PlaylistManager.initialize(this)
+
+        // 初始化播放模式 SharedPreferences
+        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        currentPlayMode = prefs.getInt(KEY_MODE, PlaylistDetailActivity.MODE_LIST)
+
         initViews()
         setupTabs()
         loadAudios()
@@ -80,8 +95,39 @@ class AudioLibraryActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 从歌单详情页返回时刷新歌单列表（歌曲数量、封面可能已变化）
         loadPlaylists()
+    }
+
+    // ---------- 菜单 ----------
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.audio_library_menu, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_play_mode -> {
+                showPlayModeDialog()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun showPlayModeDialog() {
+        val modes = arrayOf("列表循环", "单曲循环", "随机播放")
+        AlertDialog.Builder(this)
+            .setTitle("播放模式")
+            .setSingleChoiceItems(modes, currentPlayMode) { dialog, which ->
+                if (currentPlayMode != which) {
+                    currentPlayMode = which
+                    prefs.edit().putInt(KEY_MODE, currentPlayMode).apply()
+                    android.widget.Toast.makeText(this, "已切换到 ${modes[which]}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun initViews() {
@@ -110,14 +156,13 @@ class AudioLibraryActivity : AppCompatActivity() {
         audioRecyclerView.layoutManager = LinearLayoutManager(this)
         playlistRecyclerView.layoutManager = LinearLayoutManager(this)
 
-        // 初始化 adapter 时传入协程作用域
         audioAdapter = AudioLibraryAdapter(
             currentServerUrl,
             filteredAudioTracks,
             onAudioClick = { playAudio(it) },
             onAudioLongClick = { showAddToPlaylistDialog(it) },
-            lifecycleScope = coroutineScope ,  // ← 添加这个参数
-                    resources = resources   // 添加这一行
+            lifecycleScope = coroutineScope,
+            resources = resources
         )
         audioRecyclerView.adapter = audioAdapter
 
@@ -204,7 +249,6 @@ class AudioLibraryActivity : AppCompatActivity() {
                 val added = PlaylistManager.addTrackToPlaylist(selectedPlaylist.id, audioTrack)
                 if (added) {
                     showToast("已添加到歌单 \"${selectedPlaylist.name}\"")
-                    // 添加成功后立即刷新歌单列表（更新歌曲数量和封面）
                     loadPlaylists()
                 } else {
                     showToast("歌曲已存在于该歌单")
@@ -303,7 +347,6 @@ class AudioLibraryActivity : AppCompatActivity() {
         coroutineScope.launch {
             statusText.text = "正在加载音频..."
             try {
-                // 1. 获取文件列表
                 val allItems = withContext(Dispatchers.IO) {
                     fileServerService.getFileList(currentServerUrl, audioLibraryPath)
                 }
@@ -314,14 +357,11 @@ class AudioLibraryActivity : AppCompatActivity() {
                     AudioTrack.fromFileSystemItem(item, currentServerUrl)
                 }
 
-                // 2. 批量获取所有元数据（一次网络请求）
                 val metadataMap = withContext(Dispatchers.IO) {
                     metadataManager.getBatchMetadata(currentServerUrl, tracks.map { it.path })
                 }
 
-                // 3. 填充元数据 + 本地拼接封面 URL（不再发起网络请求）
                 val updatedTracks = tracks.map { track ->
-                    // 注意：metadataMap 的 key 是编码后的路径，需要匹配
                     val encodedPath = java.net.URLEncoder.encode(track.path, "UTF-8")
                     val meta = metadataMap[encodedPath]
                     if (meta != null) {
@@ -330,7 +370,6 @@ class AudioLibraryActivity : AppCompatActivity() {
                             artist = meta.artist.ifEmpty { track.artist },
                             album = meta.album.ifEmpty { track.album },
                             coverUrl = if (meta.hasCover) {
-                                // 封面 URL 直接拼接，不额外请求
                                 metadataManager.getCoverUrl(currentServerUrl, track.path, addTimestamp = false)
                             } else null
                         )
@@ -391,6 +430,7 @@ class AudioLibraryActivity : AppCompatActivity() {
                 putExtra("CURRENT_INDEX", currentIndex)
                 putExtra("SERVER_URL", currentServerUrl)
                 putExtra("FROM_MUSIC_LIBRARY", true)
+                putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, currentPlayMode)   // 传递播放模式
             }
             startActivity(intent)
         } catch (e: Exception) {
