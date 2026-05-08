@@ -212,7 +212,10 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         scope.launch {
             val ok = lyricsManager.markNoLyrics(serverUrl, songPath)
             if (ok) {
-                onNoLyrics()
+                // 停止歌词定时更新，并清空旧数据，防止覆盖
+                lyricsManager.stopLyricsUpdates()
+                lyricsManager.clear()   // 清空 lyricsData，停止后续查找
+                onNoLyrics()           // 通知 UI 显示“此歌曲无歌词”
             }
         }
     }
