@@ -1,4 +1,3 @@
-// CoverImageStorage.kt
 package com.dkc.fileserverclient
 
 import android.content.Context
@@ -47,6 +46,25 @@ object CoverImageStorage {
      */
     fun isCoverCached(trackId: String, coverUrl: String): Boolean =
         getLocalFile(trackId, coverUrl).exists()
+
+    /**
+     * 删除指定 trackId 与 coverUrl 对应的本地缓存文件
+     * @return true 表示文件存在并已删除，false 表示文件不存在
+     */
+    fun deleteLocalFile(trackId: String, coverUrl: String): Boolean {
+        val file = getLocalFile(trackId, coverUrl)
+        return if (file.exists()) {
+            val deleted = file.delete()
+            if (deleted) {
+                Log.d(TAG, "封面缓存已删除: ${file.name}")
+            } else {
+                Log.w(TAG, "封面缓存删除失败: ${file.name}")
+            }
+            deleted
+        } else {
+            false
+        }
+    }
 
     /**
      * 异步下载封面并保存，通过回调通知结果

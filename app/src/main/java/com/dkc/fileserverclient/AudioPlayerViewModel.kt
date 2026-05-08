@@ -45,6 +45,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var playlist: List<AudioTrack> = emptyList()
     private var currentIndex = -1
 
+    // 新增：记录当前使用的封面 URL，用于删除本地缓存
+    private var currentCoverUrl: String? = null
+
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -162,6 +165,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     metadataManager.getCoverUrl(serverUrl, songPath, addTimestamp = false)
                 } else null
 
+                // 记录当前使用的封面 URL（用于删除）
+                currentCoverUrl = baseCoverUrl
+
                 if (baseCoverUrl == null) {
                     coverLocalPath.postValue(null)
                     return@launch
@@ -261,6 +267,13 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         scope.launch {
             val ok = metadataManager.deleteCover(serverUrl, songPath)
             if (ok) {
+                // 清理本地封面缓存
+                val trackId = currentTrack?.id ?: songPath
+                currentCoverUrl?.let { url ->
+                    CoverImageStorage.deleteLocalFile(trackId, url)
+                }
+                currentCoverUrl = null
+
                 loadCoverAndMetadata()
                 Toast.makeText(getApplication(), "已删除封面", Toast.LENGTH_SHORT).show()
             }
