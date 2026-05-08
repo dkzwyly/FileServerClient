@@ -39,7 +39,7 @@ class ImageGalleryActivity : AppCompatActivity() {
     private lateinit var backButton: ImageButton
     private lateinit var cameraButton: ImageButton
     private lateinit var sortButton: ImageButton
-    private lateinit var reindexButton: ImageButton
+    //private lateinit var reindexButton: ImageButton
     private lateinit var deleteSelectedButton: ImageButton
     private lateinit var selectionToolbar: View
     private lateinit var selectedCountText: TextView
@@ -95,7 +95,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         backButton = findViewById(R.id.backButton)
         cameraButton = findViewById(R.id.cameraButton)
         sortButton = findViewById(R.id.sortButton)
-        reindexButton = findViewById(R.id.reindexButton)
+        //reindexButton = findViewById(R.id.reindexButton)
         deleteSelectedButton = findViewById(R.id.deleteSelectedButton)
         selectionToolbar = findViewById(R.id.selectionToolbar)
         selectedCountText = findViewById(R.id.selectedCountText)
@@ -110,7 +110,7 @@ class ImageGalleryActivity : AppCompatActivity() {
 
         cameraButton.setOnClickListener { checkAndRequestPermissions() }
         sortButton.setOnClickListener { showSortDialog() }
-        reindexButton.setOnClickListener { startReindex() }
+        //reindexButton.setOnClickListener { startReindex() }
         deleteSelectedButton.setOnClickListener { showDeleteConfirmation() }
         selectAllButton.setOnClickListener { toggleSelectAll() }
         cancelSelectionButton.setOnClickListener { exitMultiSelectionMode() }
@@ -261,7 +261,7 @@ class ImageGalleryActivity : AppCompatActivity() {
 
     // ---------- 原有方法（相机、多选、删除等）保持不变 ----------
     private fun startReindex() {
-        reindexButton.isEnabled = false
+        //reindexButton.isEnabled = false
         Toast.makeText(this, "请求重建元数据...", Toast.LENGTH_SHORT).show()
         coroutineScope.launch {
             try {
@@ -275,7 +275,7 @@ class ImageGalleryActivity : AppCompatActivity() {
                 Toast.makeText(this@ImageGalleryActivity, "异常: ${e.message}", Toast.LENGTH_SHORT).show()
             } finally {
                 delay(5000)
-                reindexButton.isEnabled = true
+                //reindexButton.isEnabled = true
             }
         }
     }
