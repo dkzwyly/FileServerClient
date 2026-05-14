@@ -38,6 +38,9 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
     private var serverUrl = ""
     private var directoryPath = ""
     private var initialImagePath = ""
+    // 新增：排序参数
+    private var sortBy = ""
+    private var sortOrder = ""
 
     sealed class LoadingState {
         object Idle : LoadingState()
@@ -46,13 +49,32 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
         data class Error(val message: String) : LoadingState()
     }
 
-    fun initialize(serverUrl: String, directoryPath: String, initialImagePath: String? = null) {
+    /**
+     * 初始化 ViewModel，支持传入排序参数
+     * @param serverUrl 服务器地址
+     * @param directoryPath 图片所在目录路径
+     * @param initialImagePath 初始图片的路径（可选）
+     * @param sortBy 排序字段（name, modified, size, dateTaken 等）
+     * @param sortOrder 排序方向（asc, desc）
+     */
+    fun initialize(
+        serverUrl: String,
+        directoryPath: String,
+        initialImagePath: String? = null,
+        sortBy: String = "",
+        sortOrder: String = ""
+    ) {
         this.serverUrl = serverUrl
         this.directoryPath = directoryPath
         this.initialImagePath = initialImagePath ?: ""
+        this.sortBy = sortBy
+        this.sortOrder = sortOrder
         loadImageList()
     }
 
+    /**
+     * 加载图片列表，使用当前排序参数（如果有）
+     */
     private fun loadImageList() {
         viewModelScope.launch {
             try {
@@ -60,7 +82,12 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
                 _errorState.value = null
 
                 val allItems = withContext(Dispatchers.IO) {
-                    fileServerService.getFileList(serverUrl, directoryPath)
+                    // 如果有排序参数，使用带排序的接口
+                    if (sortBy.isNotEmpty() && sortOrder.isNotEmpty()) {
+                        fileServerService.getFileList(serverUrl, directoryPath, sortBy, sortOrder)
+                    } else {
+                        fileServerService.getFileList(serverUrl, directoryPath)
+                    }
                 }
 
                 val images = allItems.filter { item ->

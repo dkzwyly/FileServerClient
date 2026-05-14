@@ -325,16 +325,20 @@ class ImageActivity : AppCompatActivity() {
         nextButton.setOnClickListener { viewModel.navigateToNext() }
     }
 
+    // ImageActivity.kt
     private fun loadIntentData() {
         val serverUrl = intent.getStringExtra("SERVER_URL") ?: ""
         val directoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
         val imagePath = intent.getStringExtra("FILE_URL") ?: ""
+        // 新增：读取排序参数
+        val sortBy = intent.getStringExtra("SORT_BY") ?: ""
+        val sortOrder = intent.getStringExtra("SORT_ORDER") ?: ""
 
         if (serverUrl.isEmpty()) {
             showError("服务器地址不能为空")
             return
         }
-        viewModel.initialize(serverUrl, directoryPath, imagePath)
+        viewModel.initialize(serverUrl, directoryPath, imagePath, sortBy, sortOrder)
     }
 
     @SuppressLint("SetTextI18n")

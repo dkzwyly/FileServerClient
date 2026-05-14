@@ -280,6 +280,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
+    // ImageGalleryActivity.kt
     private fun previewImage(item: FileSystemItem) {
         try {
             val encoded = java.net.URLEncoder.encode(item.path, "UTF-8")
@@ -290,6 +291,9 @@ class ImageGalleryActivity : AppCompatActivity() {
                 putExtra("FILE_PATH", item.path)
                 putExtra("SERVER_URL", currentServerUrl)
                 putExtra("CURRENT_PATH", imageGalleryPath)
+                // 新增：传递当前排序参数
+                putExtra("SORT_BY", currentSortBy)
+                putExtra("SORT_ORDER", currentSortOrder)
             })
         } catch (e: Exception) {
             Toast.makeText(this, "预览失败: ${e.message}", Toast.LENGTH_SHORT).show()
