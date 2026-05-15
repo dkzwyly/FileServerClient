@@ -196,19 +196,24 @@
                         android:textStyle="bold" />
                 </LinearLayout>
 
-                <!-- 浏览所有文件按钮 -->
-                <Button
+                <!-- 浏览所有文件按钮 - 已更新为 MaterialButton 轮廓样式 -->
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/browseFilesButton"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
                     android:layout_height="52dp"
                     android:layout_marginBottom="16dp"
-                    android:background="@drawable/secondary_button_border"
-                    android:text="📁浏览所有文件"
+                    android:text="浏览所有文件"
                     android:textAllCaps="false"
                     android:textColor="@color/primary_blue"
                     android:textSize="15sp"
                     android:textStyle="bold"
-                    app:cornerRadius="28dp" />
+                    app:cornerRadius="28dp"
+                    app:icon="@drawable/ic_folder"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp"
+                    app:strokeColor="@color/primary_blue"
+                    app:strokeWidth="1dp" />
 
                 <!-- 四个库按钮 - 使用 Material Button 优化排列 -->
                 <GridLayout
