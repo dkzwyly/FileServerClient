@@ -1,0 +1,12 @@
+<resources>
+    <style name="Theme.FileServerClient" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- 深色模式下的覆盖 -->
+        <item name="colorSurface">#1E1E1E</item>
+        <item name="colorOnSurface">#FFFFFF</item>
+        <item name="android:windowBackground">#121212</item>
+        <item name="colorOnBackground">#FFFFFF</item>
+        <!-- 主色调可保持不变或加深 -->
+        <item name="colorPrimary">#5C9EFF</item>
+        <item name="colorPrimaryVariant">#2B6ED7</item>
+    </style>
+</resources>

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Material 标准色 -->
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
@@ -7,41 +8,51 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="primary_color">#2196F3</color>
-    <color name="primary_dark">#1976D2</color>
+
+    <!-- 主色调（统一使用 #4A90E2 作为 primary_blue） -->
+    <color name="primary_blue">#4A90E2</color>
+    <color name="primary_dark">#357ABD</color>
     <color name="accent_color">#FF4081</color>
-        <color name="colorPrimary">#1976D2</color>
-        <color name="colorPrimaryDark">#1565C0</color>
-        <color name="colorAccent">#FF4081</color>
-        <color name="background">#F8F9FA</color>
-        <color name="text_primary">#212121</color>
-        <color name="text_secondary">#757575</color>
-        <color name="card_background">#FFFFFF</color>
-        <color name="button_primary">#1976D2</color>
-        <color name="button_secondary">#F5F7FA</color>
-    <color name="on_background">#FF000000</color>
+
+    <!-- 通用颜色（保留兼容旧代码） -->
+    <color name="colorPrimary">#4A90E2</color>
+    <color name="colorPrimaryDark">#357ABD</color>
+    <color name="colorAccent">#FF4081</color>
+    <color name="primary_color">#2196F3</color>
+
+    <!-- 背景与文字 -->
+    <color name="background">#F8F9FA</color>
+    <color name="background_light">#FAFBFF</color>
+    <color name="card_background">#FFFFFF</color>
+    <color name="card_background_light">#F8F9FF</color>
+    <color name="text_primary">#212121</color>
+    <color name="text_secondary">#757575</color>
+    <color name="text_hint">#9E9E9E</color>        <!-- 提高对比度，从 #CCCCCC 改为 #9E9E9E -->
+
+    <!-- 按钮颜色 -->
+    <color name="button_primary">#1976D2</color>
+    <color name="button_secondary">#F5F7FA</color>
+
+    <!-- 表面色（用于主题） -->
     <color name="surface">#FFF5F5F5</color>
     <color name="on_surface">#FF424242</color>
     <color name="surface_variant">#FFE0E0E0</color>
-    <color name="primary">#FF2196F3</color>
+
+    <!-- 其他 -->
     <color name="error">#FFB00020</color>
     <color name="search_background">#F5F5F5</color>
     <color name="search_stroke">#E0E0E0</color>
-    <color name="background_color">#F8F9FA</color>
     <color name="notification_icon_color">#FFFFFF</color>
     <color name="tab_border">#E0E0E0</color>
     <color name="tab_selected_background">#FFFFFF</color>
     <color name="search_border">#E0E0E0</color>
+    <color name="on_background">#FF000000</color>
+    <color name="background_color">#FF000000</color>
 
     <!-- 唱片图标颜色 -->
     <color name="record_dark">#424242</color>
     <color name="record_light">#BDBDBD</color>
     <color name="record_label">#2196F3</color>
-    <!-- 基础颜色 -->
-    <color name="background_light">#FAFBFF</color>
-    <color name="card_background_light">#F8F9FF</color>
-    <color name="text_hint">#CCCCCC</color>
-    <color name="primary_blue">#4A90E2</color>
 
     <!-- 状态标签颜色 -->
     <color name="status_connected_text">#2E7D32</color>
