@@ -1,5 +1,17 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 基础应用主题 -->
+    <style name="Theme.FileServerClient" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- 主色调 -->
+        <item name="colorPrimary">#4A90E2</item>
+        <item name="colorPrimaryVariant">#357ABD</item>
+        <item name="colorOnPrimary">@android:color/white</item>
 
-    <style name="Theme.FileServerClient" parent="android:Theme.Material.Light.NoActionBar" />
+        <!-- 次要色调 -->
+        <item name="colorSecondary">#03DAC5</item>
+        <item name="colorSecondaryVariant">#018786</item>
+        <item name="colorOnSecondary">@android:color/black</item>
+
+        <!-- 状态栏颜色 -->
+        <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
+    </style>
 </resources>

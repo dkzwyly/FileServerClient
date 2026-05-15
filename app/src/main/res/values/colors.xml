@@ -37,4 +37,23 @@
     <color name="record_dark">#424242</color>
     <color name="record_light">#BDBDBD</color>
     <color name="record_label">#2196F3</color>
+    <!-- 基础颜色 -->
+    <color name="background_light">#FAFBFF</color>
+    <color name="card_background_light">#F8F9FF</color>
+    <color name="text_hint">#CCCCCC</color>
+    <color name="primary_blue">#4A90E2</color>
+
+    <!-- 状态标签颜色 -->
+    <color name="status_connected_text">#2E7D32</color>
+    <color name="status_connected_bg">#E8F5E8</color>
+    <color name="status_disconnected_text">#C62828</color>
+    <color name="status_disconnected_bg">#FFEBEE</color>
+    <color name="status_connecting_text">#EF6C00</color>
+    <color name="status_connecting_bg">#FFF3E0</color>
+
+    <!-- 四个库按钮背景色 -->
+    <color name="library_image_bg">#FFE0E7</color>
+    <color name="library_text_bg">#E3F2FD</color>
+    <color name="library_video_bg">#E8F0FE</color>
+    <color name="library_audio_bg">#F3E5F5</color>
 </resources>

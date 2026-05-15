@@ -3,7 +3,8 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FAFBFF"
+    android:background="@color/background_light"
+    android:fillViewport="true"
     android:padding="16dp">
 
     <LinearLayout
@@ -11,43 +12,41 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- 应用标题和图标 - 移除文件夹图标 -->
+        <!-- 应用标题区域 - 更简洁优雅 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
+            android:layout_marginBottom="24dp"
             android:gravity="center"
-            android:layout_marginBottom="20dp"
-            android:padding="16dp">
+            android:orientation="vertical"
+            android:padding="8dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="文件服务器客户端"
-                android:textSize="22sp"
-                android:textStyle="bold"
-                android:textColor="#1A1A1A"
-                android:gravity="center" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="连接您的文件服务器，随时随地访问文件"
-                android:textSize="12sp"
-                android:textColor="#666666"
                 android:gravity="center"
-                android:layout_marginTop="2dp" />
+                android:text="📁 文件空间"
+                android:textColor="@color/text_primary"
+                android:textSize="28sp"
+                android:textStyle="bold" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="安全连接 · 随时访问"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
         </LinearLayout>
 
-        <!-- 服务器连接卡片 -->
-        <androidx.cardview.widget.CardView
+        <!-- 服务器连接卡片 - 现代Material Design风格 -->
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="6dp"
-            app:cardBackgroundColor="#FFFFFF">
+            android:layout_marginBottom="20dp"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="4dp"
+            app:cardBackgroundColor="@color/card_background">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -55,91 +54,108 @@
                 android:orientation="vertical"
                 android:padding="20dp">
 
-                <!-- 卡片标题 -->
+                <!-- 卡片标题栏 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
+                    android:layout_marginBottom="16dp"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="16dp">
+                    android:orientation="horizontal">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="🌐"
-                        android:textSize="18sp"
-                        android:layout_marginEnd="8dp" />
+                        android:textSize="20sp" />
 
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
+                        android:layout_marginStart="10dp"
                         android:text="服务器连接"
+                        android:textColor="@color/text_primary"
                         android:textSize="18sp"
-                        android:textStyle="bold"
-                        android:textColor="#1A1A1A" />
+                        android:textStyle="bold" />
 
                     <TextView
                         android:id="@+id/connectionStatusLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:background="@drawable/status_badge_background"
+                        android:gravity="center"
+                        android:paddingHorizontal="12dp"
+                        android:paddingVertical="4dp"
                         android:text="未连接"
+                        android:textColor="@color/status_disconnected_text"
                         android:textSize="11sp"
-                        android:textColor="#FF6B6B"
-                        android:background="#FFEBEE"
-                        android:paddingHorizontal="10dp"
-                        android:paddingVertical="3dp"
-                        android:gravity="center" />
-
+                        android:textStyle="bold" />
                 </LinearLayout>
 
-                <!-- 服务器地址输入 -->
-                <EditText
-                    android:id="@+id/serverUrlEditText"
+                <!-- 地址输入框 - 圆润现代化 -->
+                <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="输入服务器地址 (如: 192.168.2.138:8080)"
-                    android:textColor="#1A1A1A"
-                    android:background="@drawable/edittext_background"
-                    android:padding="14dp"
-                    android:textSize="13sp"
-                    android:layout_marginBottom="12dp" />
+                    android:layout_marginBottom="16dp"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:endIconMode="clear_text"
+                    app:hintEnabled="false">
 
-                <!-- 连接按钮 -->
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/serverUrlEditText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="例如: 192.168.2.138:8080"
+                        android:inputType="textUri"
+                        android:padding="12dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <!-- 连接按钮 - 渐变增强现代感 -->
                 <Button
                     android:id="@+id/connectButton"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="52dp"
+                    android:background="@drawable/primary_button_gradient"
                     android:text="连接服务器"
-                    android:textSize="15sp"
+                    android:textAllCaps="false"
+                    android:textColor="@android:color/white"
+                    android:textSize="16sp"
                     android:textStyle="bold"
-                    android:background="@drawable/primary_button_background"
-                    android:textColor="#FFFFFF" />
+                    app:cornerRadius="28dp"
+                    app:icon="@drawable/ic_connect"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp" />
 
                 <!-- 提示文本 -->
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="提示: 支持 HTTP/HTTPS 协议，自动检测端口"
-                    android:textSize="11sp"
-                    android:textColor="#999999"
+                    android:layout_marginTop="12dp"
                     android:gravity="center"
-                    android:layout_marginTop="10dp" />
-
+                    android:text="支持 HTTP/HTTPS · 自动检测端口"
+                    android:textColor="@color/text_hint"
+                    android:textSize="11sp" />
             </LinearLayout>
 
-        </androidx.cardview.widget.CardView>
+        </com.google.android.material.card.MaterialCardView>
 
-        <!-- 快速操作卡片 -->
-        <androidx.cardview.widget.CardView
+        <!-- 快速操作卡片 (连接成功后显示) -->
+        <com.google.android.material.card.MaterialCardView
             android:id="@+id/quickActionsCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="20dp"
             android:visibility="gone"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="6dp"
-            app:cardBackgroundColor="#FFFFFF">
+            app:cardCornerRadius="20dp"
+            app:cardElevation="4dp"
+            app:cardBackgroundColor="@color/card_background">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -151,194 +167,225 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
+                    android:layout_marginBottom="16dp"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="16dp">
+                    android:orientation="horizontal">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="🚀"
-                        android:textSize="18sp"
-                        android:layout_marginEnd="8dp" />
+                        android:textSize="20sp" />
 
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
+                        android:layout_marginStart="10dp"
                         android:text="快速操作"
+                        android:textColor="@color/text_primary"
                         android:textSize="18sp"
-                        android:textStyle="bold"
-                        android:textColor="#1A1A1A" />
+                        android:textStyle="bold" />
 
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="已连接"
+                        android:textColor="@color/status_connected_text"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
                 </LinearLayout>
 
-                <!-- 文件操作按钮 -->
+                <!-- 浏览所有文件按钮 -->
                 <Button
                     android:id="@+id/browseFilesButton"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="52dp"
+                    android:layout_marginBottom="16dp"
+                    android:background="@drawable/secondary_button_border"
                     android:text="📁 浏览所有文件"
-                    android:textSize="14sp"
+                    android:textAllCaps="false"
+                    android:textColor="@color/primary_blue"
+                    android:textSize="15sp"
                     android:textStyle="bold"
-                    android:background="@drawable/secondary_button_background"
-                    android:textColor="#4A90E2"
-                    android:layout_marginBottom="12dp" />
+                    app:cornerRadius="28dp" />
 
-                <!-- 四个库按钮的网格布局 - 调整宽度与浏览按钮一致 -->
+                <!-- 四个库按钮 - 使用 Material Button 优化排列 -->
                 <GridLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:columnCount="2"
                     android:rowCount="2"
                     android:alignmentMode="alignMargins"
-                    android:columnOrderPreserved="false"
-                    android:padding="0dp">
+                    android:columnOrderPreserved="false">
 
-                    <!-- 图片库按钮 -->
-                    <Button
+                    <!-- 图片库按钮 - 精美卡片式 -->
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/mediaLibraryButton"
                         android:layout_width="0dp"
-                        android:layout_height="80dp"
+                        android:layout_height="100dp"
                         android:layout_marginStart="0dp"
-                        android:layout_marginEnd="6dp"
+                        android:layout_marginEnd="8dp"
                         android:layout_marginTop="0dp"
-                        android:layout_marginBottom="6dp"
+                        android:layout_marginBottom="8dp"
                         android:layout_columnWeight="1"
                         android:layout_rowWeight="1"
-                        android:text="🖼️ 图片库"
-                        android:textSize="16sp"
+                        android:backgroundTint="@color/library_image_bg"
                         android:gravity="center"
-                        android:background="@drawable/library_button_background_gradient"
-                        android:textColor="#1A1A1A" />
+                        android:text="🖼️\n图片库"
+                        android:textColor="@color/text_primary"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="16dp"
+                        app:icon="@drawable/ic_image"
+                        app:iconGravity="textTop"
+                        app:iconPadding="8dp"
+                        app:iconSize="32dp" />
 
                     <!-- 文本库按钮 -->
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/textLibraryButton"
                         android:layout_width="0dp"
-                        android:layout_height="80dp"
-                        android:layout_marginStart="6dp"
+                        android:layout_height="100dp"
+                        android:layout_marginStart="8dp"
                         android:layout_marginEnd="0dp"
                         android:layout_marginTop="0dp"
-                        android:layout_marginBottom="6dp"
+                        android:layout_marginBottom="8dp"
                         android:layout_columnWeight="1"
                         android:layout_rowWeight="1"
-                        android:text="📄 文本库"
-                        android:textSize="16sp"
+                        android:backgroundTint="@color/library_text_bg"
                         android:gravity="center"
-                        android:background="@drawable/library_button_background_gradient"
-                        android:textColor="#1A1A1A" />
+                        android:text="📄\n文本库"
+                        android:textColor="@color/text_primary"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="16dp"
+                        app:icon="@drawable/ic_text"
+                        app:iconGravity="textTop"
+                        app:iconPadding="8dp"
+                        app:iconSize="32dp" />
 
                     <!-- 视频库按钮 -->
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/videoLibraryButton"
                         android:layout_width="0dp"
-                        android:layout_height="80dp"
+                        android:layout_height="100dp"
                         android:layout_marginStart="0dp"
-                        android:layout_marginEnd="6dp"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginEnd="8dp"
+                        android:layout_marginTop="8dp"
                         android:layout_marginBottom="0dp"
                         android:layout_columnWeight="1"
                         android:layout_rowWeight="1"
-                        android:text="🎬 视频库"
-                        android:textSize="16sp"
+                        android:backgroundTint="@color/library_video_bg"
                         android:gravity="center"
-                        android:background="@drawable/library_button_background_gradient"
-                        android:textColor="#1A1A1A" />
+                        android:text="🎬\n视频库"
+                        android:textColor="@color/text_primary"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="16dp"
+                        app:icon="@drawable/ic_video"
+                        app:iconGravity="textTop"
+                        app:iconPadding="8dp"
+                        app:iconSize="32dp" />
 
                     <!-- 音频库按钮 -->
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/audioLibraryButton"
                         android:layout_width="0dp"
-                        android:layout_height="80dp"
-                        android:layout_marginStart="6dp"
+                        android:layout_height="100dp"
+                        android:layout_marginStart="8dp"
                         android:layout_marginEnd="0dp"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginTop="8dp"
                         android:layout_marginBottom="0dp"
                         android:layout_columnWeight="1"
                         android:layout_rowWeight="1"
-                        android:text="🎵 音频库"
-                        android:textSize="16sp"
+                        android:backgroundTint="@color/library_audio_bg"
                         android:gravity="center"
-                        android:background="@drawable/library_button_background_gradient"
-                        android:textColor="#1A1A1A" />
+                        android:text="🎵\n音频库"
+                        android:textColor="@color/text_primary"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="16dp"
+                        app:icon="@drawable/ic_audio"
+                        app:iconGravity="textTop"
+                        app:iconPadding="8dp"
+                        app:iconSize="32dp" />
 
                 </GridLayout>
 
             </LinearLayout>
 
-        </androidx.cardview.widget.CardView>
+        </com.google.android.material.card.MaterialCardView>
 
-        <!-- 连接历史卡片 -->
-        <androidx.cardview.widget.CardView
+        <!-- 连接历史卡片 - 优雅透明风格 -->
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="6dp"
-            app:cardBackgroundColor="#FFFFFF">
+            app:cardCornerRadius="20dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/card_background_light">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="20dp">
+                android:padding="16dp">
 
-                <!-- 卡片标题 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
+                    android:layout_marginBottom="12dp"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="12dp">
+                    android:orientation="horizontal">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="🕒"
-                        android:textSize="18sp"
-                        android:layout_marginEnd="8dp" />
+                        android:textSize="18sp" />
 
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="连接历史"
-                        android:textSize="18sp"
-                        android:textStyle="bold"
-                        android:textColor="#1A1A1A" />
+                        android:layout_marginStart="8dp"
+                        android:text="最近连接"
+                        android:textColor="@color/text_primary"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="最近10条"
-                        android:textSize="11sp"
-                        android:textColor="#999999" />
-
+                        android:text="点击切换"
+                        android:textColor="@color/text_hint"
+                        android:textSize="10sp" />
                 </LinearLayout>
 
-                <!-- 历史列表 -->
                 <ListView
                     android:id="@+id/historyListView"
                     android:layout_width="match_parent"
-                    android:layout_height="160dp"
-                    android:background="#F8F9FF"
-                    android:divider="@android:color/transparent"
-                    android:dividerHeight="6dp" />
+                    android:layout_height="140dp"
+                    android:background="@android:color/transparent"
+                    android:divider="@null"
+                    android:dividerHeight="8dp"
+                    android:listSelector="@drawable/list_item_selector"
+                    android:padding="4dp" />
 
             </LinearLayout>
 
-        </androidx.cardview.widget.CardView>
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- 底部信息 -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="文件服务器客户端 v1.0"
-            android:textSize="11sp"
-            android:textColor="#CCCCCC"
-            android:gravity="center"
             android:layout_marginTop="24dp"
-            android:layout_marginBottom="12dp" />
+            android:layout_marginBottom="12dp"
+            android:gravity="center"
+            android:text="文件空间 · 随时相伴"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
 
     </LinearLayout>
 
