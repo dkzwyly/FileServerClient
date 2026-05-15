@@ -174,7 +174,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="🚀"
+                        android:text="❤"
                         android:textSize="20sp" />
 
                     <TextView
@@ -203,7 +203,7 @@
                     android:layout_height="52dp"
                     android:layout_marginBottom="16dp"
                     android:background="@drawable/secondary_button_border"
-                    android:text="📁 浏览所有文件"
+                    android:text="📁浏览所有文件"
                     android:textAllCaps="false"
                     android:textColor="@color/primary_blue"
                     android:textSize="15sp"
@@ -232,7 +232,7 @@
                         android:layout_rowWeight="1"
                         android:backgroundTint="@color/library_image_bg"
                         android:gravity="center"
-                        android:text="🖼️\n图片库"
+                        android:text="图片库"
                         android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold"
@@ -255,7 +255,7 @@
                         android:layout_rowWeight="1"
                         android:backgroundTint="@color/library_text_bg"
                         android:gravity="center"
-                        android:text="📄\n文本库"
+                        android:text="文本库"
                         android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold"
@@ -278,7 +278,7 @@
                         android:layout_rowWeight="1"
                         android:backgroundTint="@color/library_video_bg"
                         android:gravity="center"
-                        android:text="🎬\n视频库"
+                        android:text="视频库"
                         android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold"
@@ -301,7 +301,7 @@
                         android:layout_rowWeight="1"
                         android:backgroundTint="@color/library_audio_bg"
                         android:gravity="center"
-                        android:text="🎵\n音频库"
+                        android:text="音频库"
                         android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold"
