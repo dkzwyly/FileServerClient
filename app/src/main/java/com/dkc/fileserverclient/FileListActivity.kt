@@ -8,6 +8,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.util.Log
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,6 +19,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.appbar.MaterialToolbar
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.InputStream
@@ -26,16 +29,13 @@ import android.os.Looper
 
 class FileListActivity : AppCompatActivity() {
 
-    // 在类的顶部变量声明部分添加：
     private val thumbnailPollingHandler = Handler(Looper.getMainLooper())
     private var isPolling = false
     private var pollingAttempts = 0
-    private val MAX_POLLING_ATTEMPTS = 5 // 最多轮询5次
-    private val POLLING_INTERVAL = 1000L // 每次轮询间隔1秒
+    private val MAX_POLLING_ATTEMPTS = 5
+    private val POLLING_INTERVAL = 1000L
 
-    private lateinit var pathLabel: TextView
-    private lateinit var refreshButton: Button
-    private lateinit var backButton: Button
+    private lateinit var toolbar: MaterialToolbar
     private lateinit var selectFilesButton: Button
     private lateinit var uploadButton: Button
     private lateinit var selectedFilesLabel: TextView
@@ -48,7 +48,7 @@ class FileListActivity : AppCompatActivity() {
 
     private val fileServerService by lazy { FileServerService(this) }
     private val fileList = mutableListOf<FileSystemItem>()
-    private val selectedFiles = mutableListOf<Pair<File, String>>()  // (临时文件, 原始文件名)
+    private val selectedFiles = mutableListOf<Pair<File, String>>()
     private val pathHistory = mutableListOf<String>()
     private var currentServerUrl = ""
     private var currentPath = ""
@@ -85,14 +85,13 @@ class FileListActivity : AppCompatActivity() {
         }
 
         initViews()
+        setupToolbar()
         setupBackPressedHandler()
         loadCurrentDirectory("")
     }
 
     private fun initViews() {
-        pathLabel = findViewById(R.id.pathLabel)
-        refreshButton = findViewById(R.id.refreshButton)
-        backButton = findViewById(R.id.backButton)
+        toolbar = findViewById(R.id.toolbar)
         selectFilesButton = findViewById(R.id.selectFilesButton)
         uploadButton = findViewById(R.id.uploadButton)
         selectedFilesLabel = findViewById(R.id.selectedFilesLabel)
@@ -114,14 +113,6 @@ class FileListActivity : AppCompatActivity() {
         filesRecyclerView.layoutManager = LinearLayoutManager(this)
         filesRecyclerView.adapter = adapter
 
-        refreshButton.setOnClickListener {
-            loadCurrentDirectory(currentPath)
-        }
-
-        backButton.setOnClickListener {
-            handleBackNavigation()
-        }
-
         selectFilesButton.setOnClickListener {
             selectFiles()
         }
@@ -137,6 +128,31 @@ class FileListActivity : AppCompatActivity() {
         uploadButton.isEnabled = false
         selectedFilesLabel.text = "未选择文件"
         uploadStatusCard.visibility = View.GONE
+    }
+
+    private fun setupToolbar() {
+        setSupportActionBar(toolbar)
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        supportActionBar?.title = "文件列表"
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.menu_file_list, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            android.R.id.home -> {
+                handleBackNavigation()
+                true
+            }
+            R.id.menu_refresh -> {
+                loadCurrentDirectory(currentPath)
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
     }
 
     private fun setupBackPressedHandler() {
@@ -173,16 +189,17 @@ class FileListActivity : AppCompatActivity() {
 
     private fun loadCurrentDirectory(path: String = "") {
         currentPath = path
-        updatePathLabel()
+        // 在Toolbar上显示当前路径（可选，通过副标题）
+        supportActionBar?.subtitle = if (path.isEmpty()) "根目录" else path
 
-        // 如果正在轮询，更新状态
         if (isPolling) {
             statusLabel.text = "正在刷新列表并检查缩略图... (${pollingAttempts}/${MAX_POLLING_ATTEMPTS})"
         }
 
         coroutineScope.launch {
             statusLabel.text = "正在加载文件列表..."
-            refreshButton.isEnabled = false
+            // 禁用刷新菜单项
+            invalidateOptionsMenu()
 
             try {
                 val items = withContext(Dispatchers.IO) {
@@ -193,10 +210,8 @@ class FileListActivity : AppCompatActivity() {
                 fileList.addAll(items)
                 adapter.notifyDataSetChanged()
 
-                // 更新文件计数
                 fileCountText.text = "${items.size} 个项目"
 
-                // 如果不是轮询状态，显示正常状态
                 if (!isPolling) {
                     statusLabel.text = if (path.isEmpty()) {
                         "根目录 - ${items.size} 个项目"
@@ -205,7 +220,6 @@ class FileListActivity : AppCompatActivity() {
                     }
                 }
 
-                // 重置自动连播状态
                 resetAutoPlay()
 
                 Log.d("FileListActivity", "加载目录完成: path=$path, items=${items.size}")
@@ -214,23 +228,9 @@ class FileListActivity : AppCompatActivity() {
                 showToast("加载文件列表失败")
                 Log.e("FileListActivity", "加载目录异常: ${e.message}", e)
             } finally {
-                refreshButton.isEnabled = true
+                // 恢复刷新菜单项
+                invalidateOptionsMenu()
             }
-        }
-    }
-
-    private fun updatePathLabel() {
-        pathLabel.text = if (currentPath.isEmpty()) {
-            "根目录"
-        } else {
-            // 简化路径显示，只显示最后两级目录
-            val pathSegments = currentPath.split("/").filter { it.isNotEmpty() }
-            val displayPath = if (pathSegments.size > 2) {
-                ".../${pathSegments.takeLast(2).joinToString("/")}"
-            } else {
-                currentPath
-            }
-            displayPath
         }
     }
 
@@ -259,13 +259,7 @@ class FileListActivity : AppCompatActivity() {
             return
         }
 
-        // 保存上传的文件名，用于后续轮询
         val uploadedFileNames = selectedFiles.map { it.second }
-
-        // 添加上传前的调试日志
-        selectedFiles.forEachIndexed { index, (tempFile, originalName) ->
-            Log.d("FileListActivity", "准备上传文件[$index]: 临时文件名='${tempFile.name}', 原始文件名='$originalName'")
-        }
 
         coroutineScope.launch {
             uploadButton.isEnabled = false
@@ -275,22 +269,17 @@ class FileListActivity : AppCompatActivity() {
                 Log.d("FileListActivity", "开始上传 ${selectedFiles.size} 个文件到路径: $currentPath")
 
                 val result = withContext(Dispatchers.IO) {
-                    // 直接传递 selectedFiles（现在是 List<Pair<File, String>>）
                     fileServerService.uploadFiles(currentServerUrl, selectedFiles, currentPath)
                 }
 
                 if (result.success) {
                     showToast("上传成功，正在刷新缩略图...")
 
-                    // 清空已选文件并隐藏上传状态栏
                     selectedFiles.clear()
                     uploadStatusCard.visibility = View.GONE
                     uploadButton.isEnabled = false
 
-                    // 立即刷新文件列表
                     loadCurrentDirectory(currentPath)
-
-                    // 启动缩略图轮询
                     startThumbnailPolling(uploadedFileNames)
 
                 } else {
@@ -306,32 +295,24 @@ class FileListActivity : AppCompatActivity() {
             }
         }
     }
-    // 添加在 uploadFiles 方法之后：
+
     private fun startThumbnailPolling(uploadedFileNames: List<String>) {
         pollingAttempts = 0
         isPolling = true
-
-        Log.d("ThumbnailPolling", "开始缩略图轮询，上传文件: $uploadedFileNames")
 
         val pollingRunnable = object : Runnable {
             override fun run() {
                 if (!isPolling || pollingAttempts >= MAX_POLLING_ATTEMPTS) {
                     isPolling = false
-                    Log.d("ThumbnailPolling", "轮询结束")
                     showToast("缩略图刷新完成")
                     return
                 }
 
                 pollingAttempts++
-                Log.d("ThumbnailPolling", "第 ${pollingAttempts} 次轮询，检查缩略图...")
-
-                // 重新加载文件列表（这会强制刷新所有缩略图）
                 loadCurrentDirectory(currentPath)
 
-                // 更新状态提示
                 statusLabel.text = "正在检查缩略图... (${pollingAttempts}/${MAX_POLLING_ATTEMPTS})"
 
-                // 如果还有重试次数，继续轮询
                 if (pollingAttempts < MAX_POLLING_ATTEMPTS) {
                     thumbnailPollingHandler.postDelayed(this, POLLING_INTERVAL)
                 } else {
@@ -341,9 +322,9 @@ class FileListActivity : AppCompatActivity() {
             }
         }
 
-        // 延迟500ms开始第一次轮询，给服务器一点处理时间
         thumbnailPollingHandler.postDelayed(pollingRunnable, 500)
     }
+
     private fun searchFiles() {
         val query = searchEditText.text.toString().trim()
         if (query.isEmpty()) {
@@ -351,7 +332,6 @@ class FileListActivity : AppCompatActivity() {
             return
         }
 
-        // 客户端过滤
         val filteredList = fileList.filter {
             it.name.contains(query, true) ||
                     (it.extension.contains(query, true))
@@ -364,12 +344,8 @@ class FileListActivity : AppCompatActivity() {
         fileList.addAll(tempList)
         adapter.notifyDataSetChanged()
 
-        // 更新文件计数
         fileCountText.text = "${filteredList.size} 个搜索结果"
-
         statusLabel.text = "搜索 '${query}': 找到 ${filteredList.size} 个结果"
-
-        // 重置自动连播状态
         resetAutoPlay()
     }
 
@@ -377,24 +353,20 @@ class FileListActivity : AppCompatActivity() {
         try {
             val fileType = getFileType(item)
 
-            // 如果是媒体文件（音视频），设置自动连播
             if (fileType == "video" || fileType == "audio") {
                 setupAutoPlay(item)
             } else if (fileType == "image") {
-                // 如果是图片，不设置自动连播
                 resetAutoPlay()
             }
 
             val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
             val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
 
-            Log.d("FileListActivity", "预览文件: ${item.name}, 类型: $fileType, URL: $fileUrl")
-
             val intent = Intent(this, PreviewActivity::class.java).apply {
                 putExtra("FILE_NAME", item.name)
                 putExtra("FILE_URL", fileUrl)
                 putExtra("FILE_TYPE", fileType)
-                putExtra("FILE_PATH", item.path) // 添加完整路径
+                putExtra("FILE_PATH", item.path)
                 putExtra("AUTO_PLAY_ENABLED", autoPlayEnabled)
                 putExtra("MEDIA_FILE_LIST", ArrayList(mediaFileList))
                 putExtra("CURRENT_INDEX", currentPlayingIndex)
@@ -408,73 +380,54 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
-    // 设置自动连播
     private fun setupAutoPlay(selectedItem: FileSystemItem) {
-        // 获取当前目录下的所有媒体文件
         mediaFileList.clear()
         mediaFileList.addAll(fileList.filter { item ->
             !item.isDirectory && (getFileType(item) == "video" || getFileType(item) == "audio")
         })
 
         if (mediaFileList.isNotEmpty()) {
-            // 找到当前点击的文件在列表中的位置
             currentPlayingIndex = mediaFileList.indexOfFirst { it.path == selectedItem.path }
             if (currentPlayingIndex == -1) {
-                // 如果没找到，添加到列表开始
                 mediaFileList.add(0, selectedItem)
                 currentPlayingIndex = 0
             }
             autoPlayEnabled = true
-
-            Log.d("AutoPlay", "自动连播设置: 共 ${mediaFileList.size} 个媒体文件, 当前索引: $currentPlayingIndex")
         } else {
             autoPlayEnabled = false
             currentPlayingIndex = -1
         }
     }
 
-    // 重置自动连播状态
     private fun resetAutoPlay() {
         autoPlayEnabled = false
         currentPlayingIndex = -1
         mediaFileList.clear()
     }
 
-    // 播放下一个媒体文件
     private fun playNextMedia() {
-        if (mediaFileList.isEmpty() || currentPlayingIndex == -1) {
-            return
-        }
+        if (mediaFileList.isEmpty() || currentPlayingIndex == -1) return
 
         val nextIndex = currentPlayingIndex + 1
         if (nextIndex < mediaFileList.size) {
             val nextItem = mediaFileList[nextIndex]
             currentPlayingIndex = nextIndex
             previewFile(nextItem)
-
-            Log.d("AutoPlay", "自动播放下一个: ${nextItem.name}, 索引: $nextIndex")
         } else {
-            // 已经是最后一个文件
             showToast("已经是最后一个文件")
             resetAutoPlay()
         }
     }
 
-    // 播放上一个媒体文件
     private fun playPreviousMedia() {
-        if (mediaFileList.isEmpty() || currentPlayingIndex == -1) {
-            return
-        }
+        if (mediaFileList.isEmpty() || currentPlayingIndex == -1) return
 
         val prevIndex = currentPlayingIndex - 1
         if (prevIndex >= 0) {
             val prevItem = mediaFileList[prevIndex]
             currentPlayingIndex = prevIndex
             previewFile(prevItem)
-
-            Log.d("AutoPlay", "自动播放上一个: ${prevItem.name}, 索引: $prevIndex")
         } else {
-            // 已经是第一个文件
             showToast("已经是第一个文件")
         }
     }
@@ -505,8 +458,6 @@ class FileListActivity : AppCompatActivity() {
                 uris.add(intent.data!!)
             }
 
-            Log.d("FileListActivity", "选择了 ${uris.size} 个文件")
-
             coroutineScope.launch {
                 statusLabel.text = "正在处理选中的文件..."
                 val filesWithNames = withContext(Dispatchers.IO) {
@@ -522,16 +473,8 @@ class FileListActivity : AppCompatActivity() {
                     selectedFilesLabel.text = "已选择 ${selectedFiles.size} 个文件"
                     uploadStatusCard.visibility = View.VISIBLE
                     uploadButton.isEnabled = true
-
-                    // 显示原始文件名
                     val originalNames = selectedFiles.joinToString(", ") { it.second }
                     showToast("已选择: $originalNames")
-                    Log.d("FileListActivity", "成功转换 ${selectedFiles.size} 个文件: $originalNames")
-
-                    // 调试：打印所有文件名
-                    selectedFiles.forEachIndexed { index, (tempFile, originalName) ->
-                        Log.d("FileListActivity", "文件[$index]: 临时文件=${tempFile.name}, 原始文件名=$originalName")
-                    }
                 } else {
                     uploadStatusCard.visibility = View.GONE
                     showToast("没有有效的文件被选择")
@@ -541,24 +484,13 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
-    // 处理预览结果
     private fun handlePreviewResult(data: Intent?) {
         data?.let { intent ->
             when (intent.getStringExtra("ACTION")) {
-                "PLAY_NEXT" -> {
-                    // 播放下一个
-                    playNextMedia()
-                }
-                "PLAY_PREVIOUS" -> {
-                    // 播放上一个
-                    playPreviousMedia()
-                }
-                "REFRESH_LIST" -> {
-                    // 刷新文件列表
-                    loadCurrentDirectory(currentPath)
-                }
+                "PLAY_NEXT" -> playNextMedia()
+                "PLAY_PREVIOUS" -> playPreviousMedia()
+                "REFRESH_LIST" -> loadCurrentDirectory(currentPath)
                 "EXIT_AUTO_PLAY" -> {
-                    // 退出自动连播
                     resetAutoPlay()
                     showToast("已退出自动连播")
                 }
@@ -569,23 +501,15 @@ class FileListActivity : AppCompatActivity() {
     private fun uriToFile(uri: Uri): File? {
         return try {
             val contentResolver = applicationContext.contentResolver
-            val inputStream: InputStream? = contentResolver.openInputStream(uri)
-            if (inputStream == null) {
-                Log.e("FileListActivity", "无法打开输入流: $uri")
-                return null
-            }
-
+            val inputStream = contentResolver.openInputStream(uri) ?: return null
             val fileName = getFileName(uri)
             val tempFile = File.createTempFile("upload_", "_$fileName", cacheDir)
-            val outputStream: OutputStream = tempFile.outputStream()
-
+            val outputStream = tempFile.outputStream()
             inputStream.use { input ->
                 outputStream.use { output ->
                     input.copyTo(output)
                 }
             }
-
-            Log.d("FileListActivity", "成功转换URI为文件: ${tempFile.absolutePath}, 大小: ${tempFile.length()} bytes")
             tempFile
         } catch (e: Exception) {
             Log.e("FileListActivity", "URI转换失败: ${e.message}", e)
@@ -610,12 +534,9 @@ class FileListActivity : AppCompatActivity() {
                 val result = withContext(Dispatchers.IO) {
                     fileServerService.deleteFile(currentServerUrl, item.path)
                 }
-
                 if (result) {
                     showToast("文件删除成功")
-                    loadCurrentDirectory(currentPath) // 刷新列表
-
-                    // 如果删除的是当前播放的媒体文件，更新自动连播状态
+                    loadCurrentDirectory(currentPath)
                     if (autoPlayEnabled && mediaFileList.any { it.path == item.path }) {
                         mediaFileList.removeAll { it.path == item.path }
                         if (mediaFileList.isEmpty()) {
@@ -636,28 +557,23 @@ class FileListActivity : AppCompatActivity() {
 
     private fun getFileName(uri: Uri): String {
         var result = ""
-
-        val cursor: Cursor? = contentResolver.query(uri, null, null, null, null)
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val displayNameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val displayNameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 if (displayNameIndex != -1) {
-                    result = it.getString(displayNameIndex) ?: ""
+                    result = cursor.getString(displayNameIndex) ?: ""
                 }
             }
         }
-
         if (result.isEmpty()) {
             val path = uri.path
             if (!path.isNullOrEmpty()) {
                 result = path.substringAfterLast('/')
             }
         }
-
         if (result.isEmpty()) {
             result = "unknown_file_${System.currentTimeMillis()}"
         }
-
         if (!result.contains('.')) {
             val mimeType = contentResolver.getType(uri)
             val extension = when {
@@ -670,7 +586,6 @@ class FileListActivity : AppCompatActivity() {
             }
             result += extension
         }
-
         return result
     }
 
@@ -680,12 +595,10 @@ class FileListActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // 停止轮询
         isPolling = false
         thumbnailPollingHandler.removeCallbacksAndMessages(null)
         coroutineScope.cancel()
 
-        // 清理临时文件
         selectedFiles.forEach { (file, _) ->
             if (file.exists() && file.name.startsWith("upload_")) {
                 try {
