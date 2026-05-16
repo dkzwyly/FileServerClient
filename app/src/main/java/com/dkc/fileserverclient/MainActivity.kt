@@ -102,10 +102,8 @@ class MainActivity : AppCompatActivity() {
 
         // 初始化雪花视图
         snowView = findViewById(R.id.snowView)
-        // 只有当前是冷蓝渐变时才启动雪花
-        if (isColdBlueGradient(currentGradientIndex)) {
-            snowView.startAnimation()
-        }
+        // 根据当前渐变决定是否激活雪花（非冷蓝时不生成雪花）
+        snowView.setSnowEnabled(isColdBlueGradient(currentGradientIndex))
 
         // 检查 Intent 传入服务器地址
         val intentServerUrl = intent.getStringExtra("SERVER_URL")
@@ -138,17 +136,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 回到前台时，如果当前是冷蓝渐变，重新启动雪花
-        if (::snowView.isInitialized && isColdBlueGradient(currentGradientIndex)) {
-            snowView.startAnimation()
+        if (::snowView.isInitialized) {
+            snowView.setSnowEnabled(isColdBlueGradient(currentGradientIndex))
         }
     }
 
     override fun onPause() {
         super.onPause()
-        // 退到后台时停止雪花，节省资源
         if (::snowView.isInitialized) {
-            snowView.stopAnimation()
+            snowView.setSnowEnabled(false)   // 后台时禁用雪花动画
         }
     }
 
@@ -170,14 +166,7 @@ class MainActivity : AppCompatActivity() {
             rootLayout.background = gradientList[0]
         }
         if (::snowView.isInitialized) {
-            if (isColdBlueGradient(index)) {
-                // 先停止任何正在进行的淡出，重新初始化并启动
-                snowView.stopAnimation()  // 直接清除状态
-                snowView.startAnimation()
-            } else {
-                // 淡出并等待完成后不再做额外操作（已经自动清除）
-                snowView.stopWithFade()
-            }
+            snowView.setSnowEnabled(isColdBlueGradient(index))
         }
     }
 
@@ -185,7 +174,7 @@ class MainActivity : AppCompatActivity() {
         currentGradientIndex = (currentGradientIndex + 1) % gradientList.size
         applyGradient(currentGradientIndex)
         sharedPreferences.edit { putInt(PREF_GRADIENT_INDEX, currentGradientIndex) }
-        showToast("背景渐变已切换")
+
     }
 
     private fun autoConnectToLastServer() {
@@ -473,7 +462,7 @@ class MainActivity : AppCompatActivity() {
         audioBackgroundManager?.cleanup()
         audioBackgroundManager = null
         if (::snowView.isInitialized) {
-            snowView.stopAnimation()
+            snowView.setSnowEnabled(false)
         }
         coroutineScope.cancel()
     }
