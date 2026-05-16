@@ -169,12 +169,14 @@ class MainActivity : AppCompatActivity() {
         } else {
             rootLayout.background = gradientList[0]
         }
-        // 根据新渐变控制雪花
         if (::snowView.isInitialized) {
             if (isColdBlueGradient(index)) {
+                // 先停止任何正在进行的淡出，重新初始化并启动
+                snowView.stopAnimation()  // 直接清除状态
                 snowView.startAnimation()
             } else {
-                snowView.stopAnimation()
+                // 淡出并等待完成后不再做额外操作（已经自动清除）
+                snowView.stopWithFade()
             }
         }
     }

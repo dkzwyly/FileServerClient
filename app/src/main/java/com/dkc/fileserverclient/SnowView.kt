@@ -2,14 +2,10 @@ package com.dkc.fileserverclient
 
 import android.animation.ValueAnimator
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.RectF
+import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
 import android.view.animation.LinearInterpolator
-import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -19,39 +15,47 @@ class SnowView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    private val paint = Paint().apply {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.FILL
-        isAntiAlias = true
     }
 
-    private val snowflakes = mutableListOf<Snowflake>()
-    private var animator: ValueAnimator? = null
-
-    private val snowCount = 60          // 雪花数量
-    private val minWidth = 2f           // 最小宽度(dp)
-    private val maxWidth = 5f           // 最大宽度(dp)
-    private val minHeight = 8f          // 最小高度(dp)
-    private val maxHeight = 18f          // 最大高度(dp)
-    private val minSpeed = 2f            // 最小速度(dp/帧)
-    private val maxSpeed = 6f            // 最大速度(dp/帧)
-    private val windRange = 0.5f         // 水平飘移幅度(dp/帧)
-
-    private var viewWidth = 0
-    private var viewHeight = 0
-
-    data class Snowflake(
+    private data class Snowflake(
         var x: Float,
         var y: Float,
         var width: Float,
         var height: Float,
+        var alpha: Int,           // 透明度 0-255
         var speedY: Float,
         var speedX: Float,
-        var angle: Float          // 旋转角度
+        var rotation: Float,
+        var scale: Float = 1f     // 淡出时缩小用
     )
 
+    private val snowflakes = mutableListOf<Snowflake>()
+    private var animator: ValueAnimator? = null
+    private var isFadingOut = false
+    private var fadeOutCallback: (() -> Unit)? = null
+
+    // 参数调优（更真实、更少、更慢）
+    private val snowCount = 24                 // 减少数量
+    private val minWidth = 2f                  // dp
+    private val maxWidth = 4f
+    private val minHeight = 6f
+    private val maxHeight = 14f
+    private val minSpeed = 0.8f                // 降低速度
+    private val maxSpeed = 2.2f
+    private val windRange = 0.3f               // 轻微水平飘移
+    private val minAlpha = 160                 // 半透明
+    private val maxAlpha = 220
+
+    private var viewWidth = 0
+    private var viewHeight = 0
+    private var density = 1f
+
     init {
-        setLayerType(LAYER_TYPE_HARDWARE, null) // 硬件加速提升性能
+        density = resources.displayMetrics.density
+        setLayerType(LAYER_TYPE_HARDWARE, null)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -63,22 +67,24 @@ class SnowView @JvmOverloads constructor(
 
     private fun initSnowflakes() {
         snowflakes.clear()
-        val density = resources.displayMetrics.density
         for (i in 0 until snowCount) {
             val width = (minWidth + Random.nextFloat() * (maxWidth - minWidth)) * density
             val height = (minHeight + Random.nextFloat() * (maxHeight - minHeight)) * density
             val speedY = (minSpeed + Random.nextFloat() * (maxSpeed - minSpeed)) * density
             val speedX = (Random.nextFloat() - 0.5f) * windRange * density
-            val angle = Random.nextFloat() * 360f
+            val alpha = (minAlpha + Random.nextInt(maxAlpha - minAlpha)).coerceIn(0, 255)
+            val rotation = Random.nextFloat() * 360f
             snowflakes.add(
                 Snowflake(
                     x = Random.nextFloat() * viewWidth,
                     y = Random.nextFloat() * viewHeight,
                     width = width,
                     height = height,
+                    alpha = alpha,
                     speedY = speedY,
                     speedX = speedX,
-                    angle = angle
+                    rotation = rotation,
+                    scale = 1f
                 )
             )
         }
@@ -88,42 +94,58 @@ class SnowView @JvmOverloads constructor(
         for (flake in snowflakes) {
             flake.y += flake.speedY
             flake.x += flake.speedX
-
-            // 超出底部则重置到顶部
-            if (flake.y > viewHeight) {
-                flake.y = -flake.height
-                flake.x = Random.nextFloat() * viewWidth
+            // 边缘重置（无淡出时）
+            if (!isFadingOut) {
+                if (flake.y > viewHeight) {
+                    flake.y = -flake.height
+                    flake.x = Random.nextFloat() * viewWidth
+                }
+                if (flake.x < -flake.width) {
+                    flake.x = viewWidth + flake.width
+                } else if (flake.x > viewWidth + flake.width) {
+                    flake.x = -flake.width
+                }
             }
-            // 超出左右边界则重置到对面（可选）
-            if (flake.x < -flake.width) {
-                flake.x = viewWidth + flake.width
-            } else if (flake.x > viewWidth + flake.width) {
-                flake.x = -flake.width
+            // 淡出时逐步缩小
+            if (isFadingOut) {
+                flake.scale *= 0.94f   // 逐渐缩小
+                if (flake.scale <= 0.05f) flake.scale = 0f
             }
+        }
+        // 淡出完成后清除所有雪花并停止动画
+        if (isFadingOut && snowflakes.all { it.scale <= 0.01f }) {
+            snowflakes.clear()
+            stopAnimationInternal()
+            fadeOutCallback?.invoke()
+            fadeOutCallback = null
         }
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         for (flake in snowflakes) {
+            if (flake.scale <= 0f) continue
+            paint.alpha = (flake.alpha * flake.scale).toInt().coerceIn(0, 255)
             canvas.save()
             canvas.translate(flake.x + flake.width / 2, flake.y + flake.height / 2)
-            canvas.rotate(flake.angle)
-            canvas.drawRect(
-                -flake.width / 2,
-                -flake.height / 2,
-                flake.width / 2,
-                flake.height / 2,
+            canvas.rotate(flake.rotation)
+            canvas.scale(flake.scale, flake.scale)
+            // 绘制圆角矩形，更像冰晶
+            val halfW = flake.width / 2
+            val halfH = flake.height / 2
+            canvas.drawRoundRect(
+                -halfW, -halfH, halfW, halfH,
+                halfW * 0.3f, halfH * 0.3f,
                 paint
             )
             canvas.restore()
         }
     }
 
-    fun startAnimation() {
+    private fun startAnimationInternal() {
         if (animator == null) {
             animator = ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = 1000L / 60   // 约60fps
+                duration = 1000L / 60
                 repeatCount = ValueAnimator.INFINITE
                 interpolator = LinearInterpolator()
                 addUpdateListener {
@@ -137,12 +159,35 @@ class SnowView @JvmOverloads constructor(
         }
     }
 
-    fun stopAnimation() {
+    private fun stopAnimationInternal() {
         animator?.cancel()
+        isFadingOut = false
+    }
+
+    fun startAnimation() {
+        if (snowflakes.isEmpty() && viewWidth > 0) initSnowflakes()
+        isFadingOut = false
+        startAnimationInternal()
+    }
+
+    fun stopAnimation() {
+        stopAnimationInternal()
+        snowflakes.clear()
+    }
+
+    fun stopWithFade(callback: (() -> Unit)? = null) {
+        if (snowflakes.isEmpty()) {
+            callback?.invoke()
+            return
+        }
+        fadeOutCallback = callback
+        isFadingOut = true
+        // 如果动画未运行，启动它以便执行淡出
+        if (animator?.isRunning != true) startAnimationInternal()
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        stopAnimation()
+        stopAnimationInternal()
     }
 }
