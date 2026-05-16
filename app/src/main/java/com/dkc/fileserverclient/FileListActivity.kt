@@ -353,7 +353,7 @@ class FileListActivity : AppCompatActivity() {
         try {
             val fileType = getFileType(item)
 
-            // ========== 音频直接跳转 AudioPlayerActivity ==========
+            // 音频直接跳转 AudioPlayerActivity
             if (fileType == "audio") {
                 // 构建当前目录下所有音频文件列表（用于自动连播）
                 val allAudioItems = if (autoPlayEnabled && mediaFileList.isNotEmpty()) {
@@ -379,7 +379,7 @@ class FileListActivity : AppCompatActivity() {
                 return
             }
 
-            // ========== 图片直接跳转 ImageActivity ==========
+            // 图片直接跳转 ImageActivity
             if (fileType == "image") {
                 val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
                 val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
@@ -390,14 +390,27 @@ class FileListActivity : AppCompatActivity() {
                     putExtra("FILE_PATH", item.path)
                     putExtra("SERVER_URL", currentServerUrl)
                     putExtra("CURRENT_PATH", currentPath)
-                    putExtra("SORT_BY", "name")      // 可选排序
+                    putExtra("SORT_BY", "name")
                     putExtra("SORT_ORDER", "asc")
                 }
                 startActivity(intent)
                 return
             }
 
-            // ========== 视频/其他类型继续使用 PreviewActivity ==========
+            // 文本直接跳转 TextPreviewActivity
+            if (fileType == "text") {
+                val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
+                val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+                val intent = Intent(this, TextPreviewActivity::class.java).apply {
+                    putExtra("FILE_NAME", item.name)
+                    putExtra("FILE_URL", fileUrl)
+                    putExtra("FILE_PATH", item.path)
+                }
+                startActivity(intent)
+                return
+            }
+
+            // 视频及其他类型继续使用 PreviewActivity
             if (fileType == "video") {
                 setupAutoPlay(item)
             } else {
@@ -478,12 +491,16 @@ class FileListActivity : AppCompatActivity() {
     }
 
     private fun getFileType(item: FileSystemItem): String {
+        // 添加日志以便排查
+        Log.d("FileListActivity", "getFileType: name=${item.name}, isVideo=${item.isVideo}, isAudio=${item.isAudio}, extension=${item.extension}")
+
+        // 去除扩展名中的点号
+        val ext = item.extension.removePrefix(".")
         return when {
             item.isVideo -> "video"
             item.isAudio -> "audio"
-            item.extension in listOf("jpg", "jpeg", "png", "gif", "bmp", "webp") -> "image"
-            item.extension in listOf("txt", "log", "json", "xml", "csv", "md",
-                "html", "htm", "css", "js", "java", "kt", "py") -> "text"
+            ext in listOf("jpg", "jpeg", "png", "gif", "bmp", "webp") -> "image"
+            ext in listOf("txt", "log", "json", "xml", "csv", "md", "html", "htm", "css", "js", "java", "kt", "py") -> "text"
             else -> "general"
         }
     }

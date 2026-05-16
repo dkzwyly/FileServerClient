@@ -178,7 +178,6 @@ class FileListAdapter(
                         putExtra("FILE_TYPE", "image")
                         putExtra("FILE_PATH", item.path)
                         putExtra("SERVER_URL", serverUrl)
-                        // CURRENT_PATH 留空，ImageActivity 会从 FILE_PATH 提取父目录
                         putExtra("CURRENT_PATH", "")
                     }
                     context.startActivity(intent)
@@ -201,7 +200,18 @@ class FileListAdapter(
                     return
                 }
 
-                // 其他类型（视频、文本等）走 PreviewActivity
+                // 文本直接跳转 TextPreviewActivity
+                if (fileType == "text") {
+                    val intent = Intent(context, TextPreviewActivity::class.java).apply {
+                        putExtra("FILE_NAME", item.name)
+                        putExtra("FILE_URL", fileUrl)
+                        putExtra("FILE_PATH", item.path)
+                    }
+                    context.startActivity(intent)
+                    return
+                }
+
+                // 其他类型（视频、通用等）走 PreviewActivity
                 val intent = Intent(context, PreviewActivity::class.java).apply {
                     putExtra("FILE_NAME", item.name)
                     putExtra("FILE_URL", fileUrl)
@@ -217,12 +227,15 @@ class FileListAdapter(
         }
 
         private fun getFileType(item: FileSystemItem): String {
+            // 添加日志
+            Log.d("FileListAdapter", "getFileType: name=${item.name}, isVideo=${item.isVideo}, isAudio=${item.isAudio}, extension=${item.extension}")
+
+            val ext = item.extension.removePrefix(".")
             return when {
                 item.isVideo -> "video"
                 item.isAudio -> "audio"
                 item.isImage -> "image"
-                item.extension in listOf(".txt", ".log", ".json", ".xml", ".csv", ".md",
-                    ".html", ".htm", ".css", ".js", ".java", ".kt", ".py") -> "text"
+                ext in listOf("txt", "log", "json", "xml", "csv", "md", "html", "htm", "css", "js", "java", "kt", "py") -> "text"
                 else -> "general"
             }
         }
