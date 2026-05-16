@@ -22,7 +22,6 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import com.google.android.material.card.MaterialCardView
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
@@ -32,7 +31,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var serverUrlEditText: EditText
     private lateinit var connectButton: Button
     private lateinit var connectionStatusLabel: TextView
-    private lateinit var quickActionsLayout: LinearLayout   // 改为 LinearLayout
+    private lateinit var quickActionsLayout: LinearLayout
     private lateinit var browseFilesButton: Button
     private lateinit var historyListView: ListView
 
@@ -62,13 +61,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rootLayout: LinearLayout
     private var currentGradientIndex = 0
     private val gradientList = listOf(
-        createGradientDrawable(intArrayOf(0xFFFCE4EC.toInt(), 0xFFFFF0F5.toInt(), 0xFFF8BBD0.toInt()), GradientDrawable.Orientation.TL_BR),
-        createGradientDrawable(intArrayOf(0xFFE8F0FE.toInt(), 0xFFD4E4FC.toInt(), 0xFFBBDEFB.toInt()), GradientDrawable.Orientation.TL_BR),
-        createGradientDrawable(intArrayOf(0xFFE0F7FA.toInt(), 0xFFB2EBF2.toInt(), 0xFF80DEEA.toInt()), GradientDrawable.Orientation.TOP_BOTTOM),
-        createGradientDrawable(intArrayOf(0xFFF3E5F5.toInt(), 0xFFE1BEE7.toInt(), 0xFFCE93D8.toInt()), GradientDrawable.Orientation.LEFT_RIGHT),
-        createGradientDrawable(intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()), GradientDrawable.Orientation.BL_TR)
+        createGradientDrawable(intArrayOf(0xFFFCE4EC.toInt(), 0xFFFFF0F5.toInt(), 0xFFF8BBD0.toInt()), GradientDrawable.Orientation.TL_BR), // 暖粉
+        createGradientDrawable(intArrayOf(0xFFE8F0FE.toInt(), 0xFFD4E4FC.toInt(), 0xFFBBDEFB.toInt()), GradientDrawable.Orientation.TL_BR), // 冷蓝 ★
+        createGradientDrawable(intArrayOf(0xFFE0F7FA.toInt(), 0xFFB2EBF2.toInt(), 0xFF80DEEA.toInt()), GradientDrawable.Orientation.TOP_BOTTOM), // 薄荷
+        createGradientDrawable(intArrayOf(0xFFF3E5F5.toInt(), 0xFFE1BEE7.toInt(), 0xFFCE93D8.toInt()), GradientDrawable.Orientation.LEFT_RIGHT), // 薰衣草
+        createGradientDrawable(intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()), GradientDrawable.Orientation.BL_TR) // 日落橙
     )
     private val PREF_GRADIENT_INDEX = "gradient_index"
+
+    // 雪花特效
+    private lateinit var snowView: SnowView
 
     companion object {
         private const val TAG = "MainActivity"
@@ -97,6 +99,13 @@ class MainActivity : AppCompatActivity() {
         rootLayout = findViewById(R.id.rootLayout)
         currentGradientIndex = sharedPreferences.getInt(PREF_GRADIENT_INDEX, 0)
         applyGradient(currentGradientIndex)
+
+        // 初始化雪花视图
+        snowView = findViewById(R.id.snowView)
+        // 只有当前是冷蓝渐变时才启动雪花
+        if (isColdBlueGradient(currentGradientIndex)) {
+            snowView.startAnimation()
+        }
 
         // 检查 Intent 传入服务器地址
         val intentServerUrl = intent.getStringExtra("SERVER_URL")
@@ -127,10 +136,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 回到前台时，如果当前是冷蓝渐变，重新启动雪花
+        if (::snowView.isInitialized && isColdBlueGradient(currentGradientIndex)) {
+            snowView.startAnimation()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 退到后台时停止雪花，节省资源
+        if (::snowView.isInitialized) {
+            snowView.stopAnimation()
+        }
+    }
+
     private fun createGradientDrawable(colors: IntArray, orientation: GradientDrawable.Orientation): GradientDrawable {
         return GradientDrawable(orientation, colors).apply {
             gradientType = GradientDrawable.LINEAR_GRADIENT
         }
+    }
+
+    private fun isColdBlueGradient(index: Int): Boolean {
+        // 仅索引 1 为冷蓝渐变
+        return index == 1
     }
 
     private fun applyGradient(index: Int) {
@@ -138,6 +168,14 @@ class MainActivity : AppCompatActivity() {
             rootLayout.background = gradientList[index]
         } else {
             rootLayout.background = gradientList[0]
+        }
+        // 根据新渐变控制雪花
+        if (::snowView.isInitialized) {
+            if (isColdBlueGradient(index)) {
+                snowView.startAnimation()
+            } else {
+                snowView.stopAnimation()
+            }
         }
     }
 
@@ -208,7 +246,7 @@ class MainActivity : AppCompatActivity() {
         serverUrlEditText = findViewById(R.id.serverUrlEditText)
         connectButton = findViewById(R.id.connectButton)
         connectionStatusLabel = findViewById(R.id.connectionStatusLabel)
-        quickActionsLayout = findViewById(R.id.quickActionsLayout)   // 注意 id 与布局一致
+        quickActionsLayout = findViewById(R.id.quickActionsLayout)
         browseFilesButton = findViewById(R.id.browseFilesButton)
         historyListView = findViewById(R.id.historyListView)
 
@@ -432,6 +470,9 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         audioBackgroundManager?.cleanup()
         audioBackgroundManager = null
+        if (::snowView.isInitialized) {
+            snowView.stopAnimation()
+        }
         coroutineScope.cancel()
     }
 }
