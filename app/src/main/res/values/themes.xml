@@ -1,27 +1,19 @@
 <resources>
-    <!-- 基础应用主题 -->
     <style name="Theme.FileServerClient" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- 主色调 -->
         <item name="colorPrimary">@color/primary_blue</item>
         <item name="colorPrimaryVariant">@color/primary_dark</item>
         <item name="colorOnPrimary">@android:color/white</item>
 
-        <!-- 次要色调 -->
         <item name="colorSecondary">#03DAC5</item>
         <item name="colorSecondaryVariant">#018786</item>
         <item name="colorOnSecondary">@android:color/black</item>
 
-        <!-- 表面颜色（影响卡片、对话框、菜单背景） -->
-        <item name="colorSurface">@color/surface</item>
+        <!-- 表面和窗口背景全部透明 -->
+        <item name="colorSurface">@android:color/transparent</item>
         <item name="colorOnSurface">@color/on_surface</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
 
-        <!-- 窗口背景（正确属性） -->
-        <item name="android:windowBackground">@color/background_light</item>
-
-        <!-- 状态栏颜色 -->
         <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
-
-        <!-- 溢出菜单文字颜色 -->
         <item name="android:actionMenuTextColor">?attr/colorOnSurface</item>
     </style>
 </resources>

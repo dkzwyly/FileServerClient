@@ -1,6 +1,5 @@
 package com.dkc.fileserverclient
 
-import android.app.AlertDialog
 import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
@@ -14,7 +13,6 @@ import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
-import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -22,11 +20,8 @@ import android.view.ViewGroup
 import android.view.animation.AnimationUtils
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
-import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import androidx.core.graphics.toColorInt
-import androidx.core.view.ViewCompat
 import com.google.android.material.card.MaterialCardView
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -37,7 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var serverUrlEditText: EditText
     private lateinit var connectButton: Button
     private lateinit var connectionStatusLabel: TextView
-    private lateinit var quickActionsCard: MaterialCardView
+    private lateinit var quickActionsLayout: LinearLayout   // 改为 LinearLayout
     private lateinit var browseFilesButton: Button
     private lateinit var historyListView: ListView
 
@@ -55,7 +50,7 @@ class MainActivity : AppCompatActivity() {
     private val gson = Gson()
     private var currentServerUrl = ""
     private var isConnected = false
-    private var autoConnectEnabled = true // 默认启用自动连接
+    private var autoConnectEnabled = true
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
 
@@ -63,36 +58,29 @@ class MainActivity : AppCompatActivity() {
     private var audioBackgroundManager: AudioBackgroundManager? = null
     private var isAudioServiceBound = false
 
-    // ========== 背景切换相关变量 ==========
-    private lateinit var rootLayout: View              // 根布局，用于设置背景
-    private var currentBgColor = 0                     // 当前背景颜色值
-    // 预设颜色列表（可随意增删）
-    private val presetColors = listOf(
-        0xFFFFFFFF.toInt(),  // 白色
-        0xFFFCE4EC.toInt(),  // 浅粉
-        0xFFE8F0FE.toInt(),  // 浅蓝
-        0xFFFFF3E0.toInt(),  // 暖米色
-        0xFFE0F7FA.toInt(),  // 浅青
-        0xFFF3E5F5.toInt(),  // 浅紫
-        0xFFD1C4E9.toInt(),  // 淡紫
-        0xFFFFCDD2.toInt(),  // 浅红
-        0xFFC8E6C9.toInt()   // 浅绿
+    // 渐变背景相关
+    private lateinit var rootLayout: LinearLayout
+    private var currentGradientIndex = 0
+    private val gradientList = listOf(
+        createGradientDrawable(intArrayOf(0xFFFCE4EC.toInt(), 0xFFFFF0F5.toInt(), 0xFFF8BBD0.toInt()), GradientDrawable.Orientation.TL_BR),
+        createGradientDrawable(intArrayOf(0xFFE8F0FE.toInt(), 0xFFD4E4FC.toInt(), 0xFFBBDEFB.toInt()), GradientDrawable.Orientation.TL_BR),
+        createGradientDrawable(intArrayOf(0xFFE0F7FA.toInt(), 0xFFB2EBF2.toInt(), 0xFF80DEEA.toInt()), GradientDrawable.Orientation.TOP_BOTTOM),
+        createGradientDrawable(intArrayOf(0xFFF3E5F5.toInt(), 0xFFE1BEE7.toInt(), 0xFFCE93D8.toInt()), GradientDrawable.Orientation.LEFT_RIGHT),
+        createGradientDrawable(intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()), GradientDrawable.Orientation.BL_TR)
     )
-    private val PREF_BG_COLOR = "bg_color_value"
-    // ==================================
+    private val PREF_GRADIENT_INDEX = "gradient_index"
 
     companion object {
         private const val TAG = "MainActivity"
         private const val PREF_AUTO_CONNECT = "auto_connect_enabled"
     }
 
-    // 服务连接
+    // 音频服务连接
     private val audioServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.d(TAG, "音频服务连接成功")
             isAudioServiceBound = true
         }
-
         override fun onServiceDisconnected(name: ComponentName?) {
             Log.d(TAG, "音频服务断开连接")
             isAudioServiceBound = false
@@ -105,40 +93,32 @@ class MainActivity : AppCompatActivity() {
         val toolbar = findViewById<com.google.android.material.appbar.MaterialToolbar>(R.id.toolbar)
         setSupportActionBar(toolbar)
 
-        // ========== 初始化背景切换 ==========
-        rootLayout = findViewById(android.R.id.content)
-        currentBgColor = sharedPreferences.getInt(PREF_BG_COLOR, presetColors[0])
-        rootLayout.setBackgroundColor(currentBgColor)
-        // 确保 ScrollView 背景透明（已在 XML 中设置）
-        findViewById<ScrollView>(R.id.scrollView)?.setBackgroundColor(Color.TRANSPARENT)
-        // ==================================
+        // 根布局（用于设置渐变背景）
+        rootLayout = findViewById(R.id.rootLayout)
+        currentGradientIndex = sharedPreferences.getInt(PREF_GRADIENT_INDEX, 0)
+        applyGradient(currentGradientIndex)
 
-        // 检查是否从intent传入服务器地址
+        // 检查 Intent 传入服务器地址
         val intentServerUrl = intent.getStringExtra("SERVER_URL")
         if (!intentServerUrl.isNullOrEmpty()) {
             currentServerUrl = intentServerUrl
             Log.d(TAG, "从Intent获取服务器地址: $currentServerUrl")
         } else {
-            // 从SharedPreferences加载自动连接设置
             autoConnectEnabled = sharedPreferences.getBoolean(PREF_AUTO_CONNECT, true)
             Log.d(TAG, "自动连接设置: $autoConnectEnabled")
         }
 
-        // 初始化音频后台管理器
         audioBackgroundManager = AudioBackgroundManager(this)
-
         initViews()
         loadConnectionHistory()
         setupHistoryListView()
 
-        // 静默自动连接: 不弹出Toast，仅在状态栏显示
         if (intentServerUrl.isNullOrEmpty() && autoConnectEnabled && connectionHistory.isNotEmpty()) {
             coroutineScope.launch {
-                delay(500) // 延迟确保UI加载完成
+                delay(500)
                 autoConnectToLastServer()
             }
         } else if (!intentServerUrl.isNullOrEmpty()) {
-            // 从Intent传入地址时也静默连接
             serverUrlEditText.setText(currentServerUrl)
             coroutineScope.launch {
                 delay(300)
@@ -147,21 +127,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 自动连接到最近一次连接的服务器 (静默模式)
-     */
-    private fun autoConnectToLastServer() {
-        if (connectionHistory.isEmpty()) {
-            Log.d(TAG, "没有连接历史记录，跳过自动连接")
-            return
+    private fun createGradientDrawable(colors: IntArray, orientation: GradientDrawable.Orientation): GradientDrawable {
+        return GradientDrawable(orientation, colors).apply {
+            gradientType = GradientDrawable.LINEAR_GRADIENT
         }
+    }
 
+    private fun applyGradient(index: Int) {
+        if (index in gradientList.indices) {
+            rootLayout.background = gradientList[index]
+        } else {
+            rootLayout.background = gradientList[0]
+        }
+    }
+
+    private fun cycleGradient() {
+        currentGradientIndex = (currentGradientIndex + 1) % gradientList.size
+        applyGradient(currentGradientIndex)
+        sharedPreferences.edit { putInt(PREF_GRADIENT_INDEX, currentGradientIndex) }
+        showToast("背景渐变已切换")
+    }
+
+    private fun autoConnectToLastServer() {
+        if (connectionHistory.isEmpty()) return
         val lastConnection = connectionHistory.first()
-        Log.d(TAG, "静默自动连接到最近服务器: ${lastConnection.url}")
-
         serverUrlEditText.setText(lastConnection.url)
-
-        // 静默连接，不显示Toast
         coroutineScope.launch {
             delay(300)
             connectToServer(lastConnection.url, isSilent = true)
@@ -185,16 +175,14 @@ class MainActivity : AppCompatActivity() {
             }
             R.id.menu_auto_connect -> {
                 autoConnectEnabled = !autoConnectEnabled
-                sharedPreferences.edit {
-                    putBoolean(PREF_AUTO_CONNECT, autoConnectEnabled)
-                }
+                sharedPreferences.edit { putBoolean(PREF_AUTO_CONNECT, autoConnectEnabled) }
                 val status = if (autoConnectEnabled) "启用" else "禁用"
                 showToast("已${status}自动连接")
                 item.isChecked = autoConnectEnabled
                 true
             }
             R.id.menu_toggle_bg -> {
-                showColorPickerDialog()
+                cycleGradient()
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -205,19 +193,14 @@ class MainActivity : AppCompatActivity() {
         val autoConnectItem = menu.findItem(R.id.menu_auto_connect)
         if (autoConnectItem != null) {
             autoConnectItem.isChecked = autoConnectEnabled
-            val iconRes = if (autoConnectEnabled) {
-                R.drawable.ic_auto_connect_on
-            } else {
-                R.drawable.ic_auto_connect_off
-            }
+            val iconRes = if (autoConnectEnabled) R.drawable.ic_auto_connect_on else R.drawable.ic_auto_connect_off
             autoConnectItem.icon = ContextCompat.getDrawable(this, iconRes)
         }
         return super.onPrepareOptionsMenu(menu)
     }
 
     private fun openSettings() {
-        val intent = Intent(this, SettingsActivity::class.java)
-        startActivity(intent)
+        startActivity(Intent(this, SettingsActivity::class.java))
         overrideActivityTransition()
     }
 
@@ -225,7 +208,7 @@ class MainActivity : AppCompatActivity() {
         serverUrlEditText = findViewById(R.id.serverUrlEditText)
         connectButton = findViewById(R.id.connectButton)
         connectionStatusLabel = findViewById(R.id.connectionStatusLabel)
-        quickActionsCard = findViewById(R.id.quickActionsCard)
+        quickActionsLayout = findViewById(R.id.quickActionsLayout)   // 注意 id 与布局一致
         browseFilesButton = findViewById(R.id.browseFilesButton)
         historyListView = findViewById(R.id.historyListView)
 
@@ -234,37 +217,18 @@ class MainActivity : AppCompatActivity() {
         videoLibraryButton = findViewById(R.id.videoLibraryButton)
         audioLibraryButton = findViewById(R.id.audioLibraryButton)
 
-        connectButton.setOnClickListener {
-            // 手动连接时使用非静默模式，会显示Toast反馈
-            connectToServer(isSilent = false)
-        }
-
-        browseFilesButton.setOnClickListener {
-            openFileList("all")
-        }
-
-        mediaLibraryButton.setOnClickListener {
-            if (isConnected) openImageGallery() else showToast("请先连接到服务器")
-        }
-
-        textLibraryButton.setOnClickListener {
-            if (isConnected) openTextLibrary() else showToast("请先连接到服务器")
-        }
-
-        videoLibraryButton.setOnClickListener {
-            if (isConnected) openVideoLibrary() else showToast("请先连接到服务器")
-        }
-
+        connectButton.setOnClickListener { connectToServer(isSilent = false) }
+        browseFilesButton.setOnClickListener { openFileList("all") }
+        mediaLibraryButton.setOnClickListener { if (isConnected) openImageGallery() else showToast("请先连接到服务器") }
+        textLibraryButton.setOnClickListener { if (isConnected) openTextLibrary() else showToast("请先连接到服务器") }
+        videoLibraryButton.setOnClickListener { if (isConnected) openVideoLibrary() else showToast("请先连接到服务器") }
         audioLibraryButton.setOnClickListener {
             if (isConnected) {
                 if (!checkNotificationPermission()) {
                     requestNotificationPermission()
                     return@setOnClickListener
                 }
-                val intent = Intent(this, AudioLibraryActivity::class.java).apply {
-                    putExtra("SERVER_URL", currentServerUrl)
-                }
-                startActivity(intent)
+                startActivity(Intent(this, AudioLibraryActivity::class.java).apply { putExtra("SERVER_URL", currentServerUrl) })
                 overrideActivityTransition()
             } else {
                 showToast("请先连接到服务器")
@@ -273,49 +237,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkNotificationPermission(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            return notificationManager.areNotificationsEnabled()
-        }
-        return true
+            notificationManager.areNotificationsEnabled()
+        } else true
     }
 
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
                 putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-            }
-            startActivity(intent)
-            showToast("请在设置中开启通知权限，以便在后台控制音频播放")
+            })
+            showToast("请在设置中开启通知权限")
         }
     }
 
     private fun openImageGallery() {
-        val intent = Intent(this, ImageGalleryActivity::class.java).apply {
-            putExtra("SERVER_URL", currentServerUrl)
-        }
-        startActivity(intent)
+        startActivity(Intent(this, ImageGalleryActivity::class.java).apply { putExtra("SERVER_URL", currentServerUrl) })
         overrideActivityTransition()
     }
 
     private fun openTextLibrary() {
-        val intent = Intent(this, TextLibraryActivity::class.java).apply {
-            putExtra("SERVER_URL", currentServerUrl)
-        }
-        startActivity(intent)
+        startActivity(Intent(this, TextLibraryActivity::class.java).apply { putExtra("SERVER_URL", currentServerUrl) })
         overrideActivityTransition()
     }
 
     private fun openVideoLibrary() {
-        val intent = Intent(this, VideoLibraryActivity::class.java).apply {
-            putExtra("SERVER_URL", currentServerUrl)
-        }
-        startActivity(intent)
+        startActivity(Intent(this, VideoLibraryActivity::class.java).apply { putExtra("SERVER_URL", currentServerUrl) })
         overrideActivityTransition()
     }
 
     private fun overrideActivityTransition() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, android.R.anim.fade_in, android.R.anim.fade_out)
         } else {
             @Suppress("DEPRECATION")
@@ -325,72 +278,51 @@ class MainActivity : AppCompatActivity() {
 
     private fun openFileList(fileType: String) {
         if (isConnected) {
-            val intent = Intent(this, FileListActivity::class.java).apply {
+            startActivity(Intent(this, FileListActivity::class.java).apply {
                 putExtra("SERVER_URL", currentServerUrl)
                 putExtra("FILE_TYPE", fileType)
-            }
-            startActivity(intent)
+            })
             overrideActivityTransition()
         } else {
             showToast("请先连接到服务器")
         }
     }
 
-    /**
-     * 连接到服务器（使用EditText中的地址）
-     * @param isSilent 是否静默连接（不显示Toast）
-     */
     private fun connectToServer(isSilent: Boolean = false) {
-        val serverInput = serverUrlEditText.text.toString().trim()
-        connectToServer(serverInput, isSilent)
+        connectToServer(serverUrlEditText.text.toString().trim(), isSilent)
     }
 
-    /**
-     * 连接到指定服务器
-     * @param serverUrl 服务器地址
-     * @param isSilent 是否静默连接（不显示Toast，适用于自动连接）
-     */
     private fun connectToServer(serverUrl: String, isSilent: Boolean = false) {
-        Log.d(TAG, "连接服务器: $serverUrl, 静默模式: $isSilent")
-
         if (serverUrl.isEmpty()) {
             if (!isSilent) showToast("请输入服务器地址")
             serverUrlEditText.requestFocus()
             return
         }
-
         coroutineScope.launch {
             updateConnectionStatus("正在连接...", "#FF9800")
             connectButton.isEnabled = false
             connectButton.text = "连接中..."
-
             try {
-                val success = withContext(Dispatchers.IO) {
-                    fileServerService.testConnection(serverUrl)
-                }
-
+                val success = withContext(Dispatchers.IO) { fileServerService.testConnection(serverUrl) }
                 if (success) {
                     currentServerUrl = serverUrl
                     isConnected = true
-
                     updateConnectionStatus("已连接", "#4CAF50")
                     showQuickActions(true)
                     addToConnectionHistory(serverUrl)
-
                     if (!isSilent) showToast("✅ 连接成功！")
-
                     val slideIn = AnimationUtils.loadAnimation(this@MainActivity, android.R.anim.slide_in_left)
-                    quickActionsCard.startAnimation(slideIn)
+                    quickActionsLayout.startAnimation(slideIn)
                 } else {
                     isConnected = false
                     updateConnectionStatus("连接失败", "#F44336")
                     showQuickActions(false)
-                    if (!isSilent) showToast("❌ 连接失败，请检查服务器地址")
+                    if (!isSilent) showToast("❌ 连接失败")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "连接错误: ${e.message}", e)
+                Log.e(TAG, "连接错误", e)
                 updateConnectionStatus("连接错误", "#F44336")
-                if (!isSilent) showToast("连接过程中出现错误: ${e.message}")
+                if (!isSilent) showToast("连接错误: ${e.message}")
             } finally {
                 connectButton.isEnabled = true
                 connectButton.text = "连接服务器"
@@ -417,58 +349,49 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showQuickActions(show: Boolean) {
-        quickActionsCard.visibility = if (show) View.VISIBLE else View.GONE
+        quickActionsLayout.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     private fun addToConnectionHistory(url: String) {
         val existing = connectionHistory.firstOrNull { it.url == url }
         if (existing != null) connectionHistory.remove(existing)
-
-        connectionHistory.add(0, ConnectionHistory(
-            url = url,
-            lastConnected = System.currentTimeMillis(),
-            protocol = if (url.startsWith("https://")) "HTTPS" else "HTTP"
-        ))
-
+        connectionHistory.add(0, ConnectionHistory(url, System.currentTimeMillis(), if (url.startsWith("https://")) "HTTPS" else "HTTP"))
         if (connectionHistory.size > 10) connectionHistory.removeAt(connectionHistory.size - 1)
-
         saveConnectionHistory()
         updateHistoryListView()
     }
 
     private fun setupHistoryListView() {
-        historyListView.adapter = ArrayAdapter(
+        val adapter = object : ArrayAdapter<String>(
             this,
-            R.layout.history_list_item,
-            connectionHistory.map {
-                val displayUrl = it.url.removePrefix("http://").removePrefix("https://")
-                "$displayUrl (${it.protocol})"
+            android.R.layout.simple_list_item_1,
+            connectionHistory.map { it.url.removePrefix("http://").removePrefix("https://") + " (${it.protocol})" }
+        ) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent)
+                view.setBackgroundColor(Color.TRANSPARENT)
+                if (view is TextView) {
+                    view.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+                    view.setPadding(16, 12, 16, 12)
+                }
+                return view
             }
-        )
-
+        }
+        historyListView.adapter = adapter
+        historyListView.setBackgroundColor(Color.TRANSPARENT)
         historyListView.setOnItemClickListener { _, _, position, _ ->
             val history = connectionHistory[position]
             serverUrlEditText.setText(history.url)
-            // 点击历史后手动连接，显示反馈
             connectToServer(history.url, isSilent = false)
         }
     }
 
     private fun updateHistoryListView() {
-        val adapter = historyListView.adapter
-        if (adapter is ArrayAdapter<*>) {
-            @Suppress("UNCHECKED_CAST")
-            (adapter as ArrayAdapter<String>).apply {
-                clear()
-                addAll(connectionHistory.map {
-                    val displayUrl = it.url.removePrefix("http://").removePrefix("https://")
-                    "$displayUrl (${it.protocol})"
-                })
-                notifyDataSetChanged()
-            }
-        } else {
-            setupHistoryListView()
-        }
+        (historyListView.adapter as? ArrayAdapter<String>)?.apply {
+            clear()
+            addAll(connectionHistory.map { it.url.removePrefix("http://").removePrefix("https://") + " (${it.protocol})" })
+            notifyDataSetChanged()
+        } ?: setupHistoryListView()
     }
 
     private fun loadConnectionHistory() {
@@ -482,72 +405,20 @@ class MainActivity : AppCompatActivity() {
                 updateHistoryListView()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "加载历史记录失败: ${e.message}", e)
+            Log.e(TAG, "加载历史记录失败", e)
         }
     }
 
     private fun saveConnectionHistory() {
         try {
-            val json = gson.toJson(connectionHistory)
-            sharedPreferences.edit { putString("connection_history", json) }
+            sharedPreferences.edit { putString("connection_history", gson.toJson(connectionHistory)) }
         } catch (e: Exception) {
-            Log.e(TAG, "保存历史记录失败: ${e.message}", e)
+            Log.e(TAG, "保存历史记录失败", e)
         }
     }
 
     private fun showToast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-    }
-
-    // ==================== 背景切换功能 ====================
-    /**
-     * 显示调色盘弹窗，用户选择颜色后立即切换背景
-     */
-    private fun showColorPickerDialog() {
-        // 将预设颜色转换为颜色块视图的适配器
-        val colors = presetColors.toMutableList()
-        // 可以额外添加几个深色
-        colors.addAll(listOf(0xFFBBDEFB.toInt(), 0xFFC8E6C9.toInt(), 0xFFFFCDD2.toInt(), 0xFFD1C4E9.toInt()))
-
-        val adapter = object : ArrayAdapter<Int>(this, android.R.layout.simple_list_item_1, colors) {
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = super.getView(position, convertView, parent)
-                val color = colors[position]
-                view.setBackgroundColor(color)
-                // 根据亮度决定文字颜色
-                val luminance = (0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)) / 255
-                (view as TextView).setTextColor(if (luminance > 0.5) Color.BLACK else Color.WHITE)
-                view.text = String.format("#%06X", 0xFFFFFF and color)
-                view.gravity = Gravity.CENTER
-                view.setPadding(32, 16, 32, 16)
-                return view
-            }
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("选择背景颜色")
-            .setAdapter(adapter) { _, which ->
-                currentBgColor = colors[which]
-                rootLayout.setBackgroundColor(currentBgColor)
-                sharedPreferences.edit { putInt(PREF_BG_COLOR, currentBgColor) }
-                showToast("背景已更改")
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-    // ====================================================
-
-    private fun onAppExit() {
-        Log.d(TAG, "清理音频服务")
-        audioBackgroundManager?.shutdownService()
-        if (isAudioServiceBound) {
-            try {
-                unbindService(audioServiceConnection)
-                isAudioServiceBound = false
-            } catch (e: IllegalArgumentException) {
-                Log.d(TAG, "服务未绑定: ${e.message}")
-            }
-        }
     }
 
     override fun onBackPressed() {
