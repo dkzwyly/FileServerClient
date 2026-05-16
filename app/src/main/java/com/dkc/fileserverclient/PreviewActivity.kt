@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.graphics.drawable.Animatable
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
@@ -20,21 +19,14 @@ import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
-import coil.ImageLoader
-import coil.load
-import coil.request.CachePolicy
-import coil.request.ImageRequest
 import kotlinx.coroutines.*
-import java.io.File
 import java.util.*
 
 @UnstableApi
 class PreviewActivity : AppCompatActivity(),
-    ImagePreviewManager.ImageStateListener,
     AutoPlayManager.AutoPlayListener,
     MediaPlaybackListener,
     MediaProgressListener {
@@ -49,15 +41,10 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var fileTypeTextView: TextView
     private lateinit var downloadButton: Button
 
-    private lateinit var imageContainer: FrameLayout
     private lateinit var mediaContainer: FrameLayout
     private lateinit var textContainer: FrameLayout
     private lateinit var generalContainer: FrameLayout
     private lateinit var errorTextView: TextView
-
-    // 图片预览组件
-    private lateinit var imagePreview: ImageView
-    private lateinit var imageLoadingProgress: ProgressBar
 
     // 视频播放组件
     private lateinit var playerView: PlayerView
@@ -79,12 +66,8 @@ class PreviewActivity : AppCompatActivity(),
     private var currentFileType = ""
     private var currentFileUrl = ""
     private var currentFileName = ""
-    private var currentImageIndex = -1
-    private var imageFileList = mutableListOf<FileSystemItem>()
-    private var currentImageDirectoryPath = ""
 
     // 视频相关变量
-    private var videoFileList: ArrayList<FileSystemItem>? = null
     private var currentVideoIndex = -1
 
     // 手势检测
@@ -101,7 +84,6 @@ class PreviewActivity : AppCompatActivity(),
     private val handler = Handler(Looper.getMainLooper())
 
     // 管理器实例
-    private lateinit var imageManager: ImagePreviewManager
     private lateinit var fullscreenManager: FullscreenManager
     private lateinit var autoPlayManager: AutoPlayManager
 
@@ -132,7 +114,7 @@ class PreviewActivity : AppCompatActivity(),
         setupEventListeners()
         loadPreview()
 
-        // 获取自动连播相关参数（仅用于非音频文件）
+        // 获取自动连播相关参数（仅用于视频）
         val autoPlayEnabled = intent.getBooleanExtra("AUTO_PLAY_ENABLED", false)
         val mediaFileList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableArrayListExtra("MEDIA_FILE_LIST", FileSystemItem::class.java)
@@ -144,15 +126,14 @@ class PreviewActivity : AppCompatActivity(),
         currentVideoIndex = intent.getIntExtra("CURRENT_INDEX", -1)
         currentServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
         currentDirectoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
-
         currentFileType = intent.getStringExtra("FILE_TYPE") ?: "unknown"
 
-        // 图片和视频自动连播设置（音频已分离）
-        if (currentFileType != "image") {
+        // 视频自动连播设置
+        if (currentFileType == "video") {
             autoPlayManager.setupAutoPlay(
                 enabled = autoPlayEnabled,
                 fileList = mediaFileList,
-                audioTracks = null,  // 不再使用音频列表
+                audioTracks = null,
                 currentIndex = currentVideoIndex,
                 serverUrl = currentServerUrl,
                 directoryPath = currentDirectoryPath
@@ -167,14 +148,10 @@ class PreviewActivity : AppCompatActivity(),
         fileTypeTextView = findViewById(R.id.fileTypeTextView)
         downloadButton = findViewById(R.id.downloadButton)
 
-        imageContainer = findViewById(R.id.imageContainer)
         mediaContainer = findViewById(R.id.mediaContainer)
         textContainer = findViewById(R.id.textContainer)
         generalContainer = findViewById(R.id.generalContainer)
         errorTextView = findViewById(R.id.errorTextView)
-
-        imagePreview = findViewById(R.id.imagePreview)
-        imageLoadingProgress = findViewById(R.id.imageLoadingProgress)
 
         playerView = findViewById(R.id.playerView)
         mediaLoadingProgress = findViewById(R.id.mediaLoadingProgress)
@@ -313,25 +290,14 @@ class PreviewActivity : AppCompatActivity(),
 
         fileNameTextView.text = currentFileName
         fileTypeTextView.text = when (currentFileType) {
-            "image" -> "图片"
             "video" -> "视频"
-            "audio" -> "音频"  // 但实际会跳转
             "text" -> "文本"
             else -> "文件"
         }
     }
 
     private fun initManagers() {
-        imageManager = ImagePreviewManager(
-            context = this,
-            coroutineScope = coroutineScope,
-            imageView = imagePreview,
-            loadingProgress = imageLoadingProgress,
-            httpClient = client
-        )
-        imageManager.setListener(this)
-
-        // 只创建视频播放控制器
+        // 视频播放控制器
         mediaPlaybackController = MediaPlaybackFactory.createController(
             type = PlaybackType.VIDEO,
             httpClient = client,
@@ -402,7 +368,7 @@ class PreviewActivity : AppCompatActivity(),
         })
 
         mediaContainer.setOnTouchListener { view, event ->
-            val handledByGesture = gestureDetector.onTouchEvent(event)
+            gestureDetector.onTouchEvent(event)
             gestureControlManager.handleTouchEvent(event, view.width)
 
             when (event.action) {
@@ -420,34 +386,6 @@ class PreviewActivity : AppCompatActivity(),
             }
             true
         }
-
-        // 图片滑动切换
-        imagePreview.setOnTouchListener(object : View.OnTouchListener {
-            private var startX = 0f
-            private val SWIPE_THRESHOLD = 100f
-
-            override fun onTouch(v: View, event: MotionEvent): Boolean {
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        startX = event.x
-                        return true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        val endX = event.x
-                        val diffX = endX - startX
-                        if (Math.abs(diffX) > SWIPE_THRESHOLD) {
-                            if (diffX > 0) {
-                                loadPreviousImage()
-                            } else {
-                                loadNextImage()
-                            }
-                            return true
-                        }
-                    }
-                }
-                return true
-            }
-        })
     }
 
     private fun handleLongPress() {
@@ -495,52 +433,14 @@ class PreviewActivity : AppCompatActivity(),
 
     private fun loadPreview() {
         when (currentFileType) {
-            "image" -> loadImagePreview()
-            "audio" -> {
-                // 音频跳转至独立界面
-                val intent = Intent(this, AudioPlayerActivity::class.java).apply {
-                    putExtra("FILE_NAME", currentFileName)
-                    putExtra("FILE_URL", currentFileUrl)
-                    putExtra("FILE_TYPE", "audio")
-                    putExtra("FILE_PATH", intent.getStringExtra("FILE_PATH"))
-                    // 音频轨道数据若存在则传递
-                    val audioTrack = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableExtra("AUDIO_TRACK")
-                    }
-                    putExtra("AUDIO_TRACK", audioTrack)
-                    val audioTracks = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getParcelableArrayListExtra("AUDIO_TRACKS", AudioTrack::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableArrayListExtra("AUDIO_TRACKS")
-                    }
-                    putExtra("AUDIO_TRACKS", audioTracks)
-                    putExtra("CURRENT_INDEX", intent.getIntExtra("CURRENT_INDEX", 0))
-                    putExtra("SERVER_URL", currentServerUrl)
-                }
-                startActivity(intent)
-                finish()
+            "image", "audio" -> {
+                // 图片和音频不应再进入 PreviewActivity，若有意外则显示错误
+                showError("不支持在此界面预览${if (currentFileType == "image") "图片" else "音频"}，请从文件列表直接打开")
             }
             "video" -> loadVideoPreview()
             "text" -> loadTextPreview()
             else -> loadGeneralPreview()
         }
-    }
-
-    private fun loadImagePreview() {
-        val intent = Intent(this, ImageActivity::class.java).apply {
-            putExtra("FILE_NAME", currentFileName)
-            putExtra("FILE_URL", currentFileUrl)
-            putExtra("FILE_TYPE", "image")
-            putExtra("FILE_PATH", intent.getStringExtra("FILE_PATH"))
-            putExtra("SERVER_URL", currentServerUrl)
-            putExtra("CURRENT_PATH", currentDirectoryPath)
-        }
-        startActivity(intent)
-        finish()
     }
 
     private fun loadVideoPreview() {
@@ -580,7 +480,6 @@ class PreviewActivity : AppCompatActivity(),
     }
 
     private fun showContainer(container: View) {
-        imageContainer.visibility = View.GONE
         mediaContainer.visibility = View.GONE
         textContainer.visibility = View.GONE
         generalContainer.visibility = View.GONE
@@ -605,7 +504,6 @@ class PreviewActivity : AppCompatActivity(),
         currentFileType = fileType
         fileNameTextView.text = currentFileName
         fileTypeTextView.text = when (currentFileType) {
-            "image" -> "图片"
             "video" -> "视频"
             else -> "文件"
         }
@@ -613,35 +511,11 @@ class PreviewActivity : AppCompatActivity(),
     }
 
     override fun onLoadAudioTrack(track: AudioTrack, index: Int) {
-        // 不再使用
+        // 空实现，音频逻辑已完全移除，此方法不会被调用
     }
 
     override fun onAutoPlayError(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-    }
-
-    // ImagePreviewManager.ImageStateListener
-    override fun onImageLoadStart() {
-        imageLoadingProgress.visibility = View.VISIBLE
-    }
-
-    override fun onImageLoadSuccess(isGif: Boolean) {
-        imageLoadingProgress.visibility = View.GONE
-        if (isGif) {
-            val drawable = imagePreview.drawable
-            if (drawable is Animatable) {
-                (drawable as Animatable).start()
-            }
-        }
-    }
-
-    override fun onImageLoadError(message: String) {
-        imageLoadingProgress.visibility = View.GONE
-        showError(message)
-    }
-
-    override fun onDoubleTap() {
-        // 图片双击事件
     }
 
     // MediaPlaybackListener
@@ -702,91 +576,7 @@ class PreviewActivity : AppCompatActivity(),
     override fun onBufferingProgress(percent: Int) {
         // 缓冲进度
     }
-// ========== 图片左右滑动相关方法 ==========
 
-    private fun loadPreviousImage() {
-        if (imageFileList.isEmpty() || currentImageIndex <= 0) {
-            Log.d("PreviewActivity", "已经是第一张图片")
-            return
-        }
-        val prevIndex = currentImageIndex - 1
-        if (prevIndex in 0 until imageFileList.size) {
-            val prevItem = imageFileList[prevIndex]
-            loadImageByItem(prevItem, prevIndex)
-        }
-    }
-
-    private fun loadNextImage() {
-        if (imageFileList.isEmpty() || currentImageIndex >= imageFileList.size - 1) {
-            Log.d("PreviewActivity", "已经是最后一张图片")
-            return
-        }
-        val nextIndex = currentImageIndex + 1
-        if (nextIndex in 0 until imageFileList.size) {
-            val nextItem = imageFileList[nextIndex]
-            loadImageByItem(nextItem, nextIndex)
-        }
-    }
-
-    private fun loadImageByItem(item: FileSystemItem, index: Int) {
-        try {
-            val imageUrl = buildImageUrl(item)
-            currentFileName = item.name
-            currentFileUrl = imageUrl
-            currentImageIndex = index
-
-            fileNameTextView.text = currentFileName
-            imageLoadingProgress.visibility = View.VISIBLE
-            imageManager.loadImage(imageUrl, currentFileName)
-        } catch (e: Exception) {
-            Log.e("PreviewActivity", "切换图片失败", e)
-        }
-    }
-
-    private fun buildImageUrl(item: FileSystemItem): String {
-        val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
-        return "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
-    }
-
-    private fun getImageDirectoryPath(): String {
-        // 优先从 Intent 的 FILE_PATH 提取父目录
-        val filePath = intent.getStringExtra("FILE_PATH")
-        if (!filePath.isNullOrEmpty()) {
-            val parent = File(filePath).parent
-            if (!parent.isNullOrEmpty()) return parent
-        }
-        // 其次使用 currentDirectoryPath
-        if (currentDirectoryPath.isNotEmpty()) return currentDirectoryPath
-        return ""
-    }
-
-    private fun isImageFile(item: FileSystemItem): Boolean {
-        val imageExtensions = listOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "JPG", "JPEG", "PNG", "GIF", "BMP", "WEBP")
-        return imageExtensions.any { item.name.endsWith(it) }
-    }
-
-    // 在加载图片预览时（如果还没调用），需要事先加载图片列表
-    private fun loadImageFileListIfNeeded() {
-        if (imageFileList.isNotEmpty()) return
-        coroutineScope.launch {
-            try {
-                val dirPath = getImageDirectoryPath()
-                if (dirPath.isEmpty()) return@launch
-                val allFiles = withContext(Dispatchers.IO) {
-                    FileServerService(this@PreviewActivity).getFileList(currentServerUrl, dirPath)
-                }
-                imageFileList.clear()
-                imageFileList.addAll(allFiles.filter { !it.isDirectory && isImageFile(it) })
-                currentImageIndex = imageFileList.indexOfFirst { buildImageUrl(it) == currentFileUrl }
-                if (currentImageIndex == -1) {
-                    currentImageIndex = imageFileList.indexOfFirst { it.name == currentFileName }
-                }
-                Log.d("PreviewActivity", "图片列表加载: ${imageFileList.size}张, 当前索引$currentImageIndex")
-            } catch (e: Exception) {
-                Log.e("PreviewActivity", "加载图片列表失败", e)
-            }
-        }
-    }
     private fun formatTime(millis: Long): String {
         val seconds = millis / 1000
         val minutes = seconds / 60
@@ -796,10 +586,6 @@ class PreviewActivity : AppCompatActivity(),
         } else {
             String.format(Locale.getDefault(), "%d:%02d", minutes, seconds % 60)
         }
-    }
-
-    private fun showToast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     override fun onPause() {
@@ -826,11 +612,10 @@ class PreviewActivity : AppCompatActivity(),
         super.onDestroy()
         gestureControlManager.clear()
         if (currentFileType == "video") {
-            mediaPlaybackController.release(false)  // 视频不需要后台
+            mediaPlaybackController.release(false)
         }
         coroutineScope.cancel()
         handler.removeCallbacksAndMessages(null)
-        imageManager.clear()
     }
 
     override fun onBackPressed() {
