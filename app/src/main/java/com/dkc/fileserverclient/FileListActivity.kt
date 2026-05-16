@@ -353,7 +353,36 @@ class FileListActivity : AppCompatActivity() {
         try {
             val fileType = getFileType(item)
 
-            if (fileType == "video" || fileType == "audio") {
+            // ========== 音频直接跳转 AudioPlayerActivity ==========
+            if (fileType == "audio") {
+                // 构建当前目录下所有音频文件列表（用于自动连播）
+                val allAudioItems = if (autoPlayEnabled && mediaFileList.isNotEmpty()) {
+                    mediaFileList.filter { !it.isDirectory && getFileType(it) == "audio" }
+                } else {
+                    fileList.filter { !it.isDirectory && getFileType(it) == "audio" }
+                }
+
+                val audioTracks = allAudioItems.map { AudioTrack.fromFileSystemItem(it, currentServerUrl) }
+                val currentTrack = AudioTrack.fromFileSystemItem(item, currentServerUrl)
+                val currentIndex = audioTracks.indexOfFirst { it.id == currentTrack.id }.coerceAtLeast(0)
+
+                val intent = Intent(this, AudioPlayerActivity::class.java).apply {
+                    putExtra("AUDIO_TRACK", currentTrack)
+                    putExtra("AUDIO_TRACKS", ArrayList(audioTracks))
+                    putExtra("CURRENT_INDEX", currentIndex)
+                    putExtra("SERVER_URL", currentServerUrl)
+                    putExtra("FILE_PATH", item.path)
+                    putExtra("FILE_NAME", item.name)
+                    putExtra("FILE_TYPE", "audio")
+                    // 可传递播放模式，默认为列表循环
+                    putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
+                }
+                startActivity(intent)
+                return
+            }
+
+            // ========== 视频/图片/其他类型继续使用 PreviewActivity ==========
+            if (fileType == "video") {
                 setupAutoPlay(item)
             } else if (fileType == "image") {
                 resetAutoPlay()

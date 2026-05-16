@@ -97,7 +97,8 @@ class FileListAdapter(
 
             // 设置按钮可见性
             val isPreviewable = isPreviewableFile(item)
-            previewButton.visibility = if (isPreviewable) View.VISIBLE else View.GONE
+// 音频文件不需要预览按钮（点击文件名即可播放），其他可预览文件显示
+            previewButton.visibility = if (isPreviewable && !item.isAudio) View.VISIBLE else View.GONE
             downloadButton.visibility = View.VISIBLE
             deleteButton.visibility = View.VISIBLE
 
