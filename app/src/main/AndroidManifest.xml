@@ -102,6 +102,8 @@
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
+
+
         <!-- FileProvider配置，用于相机拍照 -->
         <provider
             android:name="androidx.core.content.FileProvider"
