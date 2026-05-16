@@ -11,15 +11,16 @@
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
         android:background="?attr/colorPrimary"
-        android:theme="@style/ThemeOverlay.MaterialComponents.Light" />
+        android:theme="@style/ThemeOverlay.MaterialComponents.Light"
         app:title="文件空间"
         app:titleTextColor="@android:color/white" />
 
-    <!-- 可滚动内容区域 -->
+    <!-- 可滚动内容区域（背景改为透明） -->
     <ScrollView
+        android:id="@+id/scrollView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/background_light"
+        android:background="@android:color/transparent"
         android:fillViewport="true"
         android:padding="16dp">
 

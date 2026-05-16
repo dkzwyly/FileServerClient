@@ -1,19 +1,24 @@
 package com.dkc.fileserverclient
 
+import android.app.AlertDialog
 import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.SharedPreferences
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
+import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.view.animation.AnimationUtils
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
@@ -21,6 +26,7 @@ import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.graphics.toColorInt
+import androidx.core.view.ViewCompat
 import com.google.android.material.card.MaterialCardView
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -57,6 +63,24 @@ class MainActivity : AppCompatActivity() {
     private var audioBackgroundManager: AudioBackgroundManager? = null
     private var isAudioServiceBound = false
 
+    // ========== 背景切换相关变量 ==========
+    private lateinit var rootLayout: View              // 根布局，用于设置背景
+    private var currentBgColor = 0                     // 当前背景颜色值
+    // 预设颜色列表（可随意增删）
+    private val presetColors = listOf(
+        0xFFFFFFFF.toInt(),  // 白色
+        0xFFFCE4EC.toInt(),  // 浅粉
+        0xFFE8F0FE.toInt(),  // 浅蓝
+        0xFFFFF3E0.toInt(),  // 暖米色
+        0xFFE0F7FA.toInt(),  // 浅青
+        0xFFF3E5F5.toInt(),  // 浅紫
+        0xFFD1C4E9.toInt(),  // 淡紫
+        0xFFFFCDD2.toInt(),  // 浅红
+        0xFFC8E6C9.toInt()   // 浅绿
+    )
+    private val PREF_BG_COLOR = "bg_color_value"
+    // ==================================
+
     companion object {
         private const val TAG = "MainActivity"
         private const val PREF_AUTO_CONNECT = "auto_connect_enabled"
@@ -80,6 +104,14 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         val toolbar = findViewById<com.google.android.material.appbar.MaterialToolbar>(R.id.toolbar)
         setSupportActionBar(toolbar)
+
+        // ========== 初始化背景切换 ==========
+        rootLayout = findViewById(android.R.id.content)
+        currentBgColor = sharedPreferences.getInt(PREF_BG_COLOR, presetColors[0])
+        rootLayout.setBackgroundColor(currentBgColor)
+        // 确保 ScrollView 背景透明（已在 XML 中设置）
+        findViewById<ScrollView>(R.id.scrollView)?.setBackgroundColor(Color.TRANSPARENT)
+        // ==================================
 
         // 检查是否从intent传入服务器地址
         val intentServerUrl = intent.getStringExtra("SERVER_URL")
@@ -159,6 +191,10 @@ class MainActivity : AppCompatActivity() {
                 val status = if (autoConnectEnabled) "启用" else "禁用"
                 showToast("已${status}自动连接")
                 item.isChecked = autoConnectEnabled
+                true
+            }
+            R.id.menu_toggle_bg -> {
+                showColorPickerDialog()
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -462,6 +498,44 @@ class MainActivity : AppCompatActivity() {
     private fun showToast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
+
+    // ==================== 背景切换功能 ====================
+    /**
+     * 显示调色盘弹窗，用户选择颜色后立即切换背景
+     */
+    private fun showColorPickerDialog() {
+        // 将预设颜色转换为颜色块视图的适配器
+        val colors = presetColors.toMutableList()
+        // 可以额外添加几个深色
+        colors.addAll(listOf(0xFFBBDEFB.toInt(), 0xFFC8E6C9.toInt(), 0xFFFFCDD2.toInt(), 0xFFD1C4E9.toInt()))
+
+        val adapter = object : ArrayAdapter<Int>(this, android.R.layout.simple_list_item_1, colors) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent)
+                val color = colors[position]
+                view.setBackgroundColor(color)
+                // 根据亮度决定文字颜色
+                val luminance = (0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)) / 255
+                (view as TextView).setTextColor(if (luminance > 0.5) Color.BLACK else Color.WHITE)
+                view.text = String.format("#%06X", 0xFFFFFF and color)
+                view.gravity = Gravity.CENTER
+                view.setPadding(32, 16, 32, 16)
+                return view
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("选择背景颜色")
+            .setAdapter(adapter) { _, which ->
+                currentBgColor = colors[which]
+                rootLayout.setBackgroundColor(currentBgColor)
+                sharedPreferences.edit { putInt(PREF_BG_COLOR, currentBgColor) }
+                showToast("背景已更改")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+    // ====================================================
 
     private fun onAppExit() {
         Log.d(TAG, "清理音频服务")

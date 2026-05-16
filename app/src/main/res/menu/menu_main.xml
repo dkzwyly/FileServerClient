@@ -4,20 +4,25 @@
 
     <item
         android:id="@+id/menu_settings"
-        android:icon="@drawable/ic_settings"
         android:title="设置"
+        android:icon="@drawable/ic_settings"
         app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/menu_toggle_bg"
+        android:title="切换背景"
+        android:icon="@drawable/ic_palette"
+        app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/menu_auto_connect"
+        android:title="自动连接"
+        android:checkable="true"
+        app:showAsAction="never" />
 
     <item
         android:id="@+id/menu_about"
         android:title="关于"
         app:showAsAction="never" />
-
-    <item
-    android:id="@+id/menu_auto_connect"
-    android:title="自动连接"
-    android:checkable="true"
-    android:icon="@drawable/ic_auto_connect_off"
-    app:showAsAction="never" />
 
 </menu>
