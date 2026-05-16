@@ -89,6 +89,8 @@ class SnowView @JvmOverloads constructor(
         snowflakePath.close()
     }
 
+
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         viewWidth = w
