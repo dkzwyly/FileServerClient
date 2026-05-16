@@ -373,18 +373,34 @@ class FileListActivity : AppCompatActivity() {
                     putExtra("SERVER_URL", currentServerUrl)
                     putExtra("FILE_PATH", item.path)
                     putExtra("FILE_NAME", item.name)
-                    putExtra("FILE_TYPE", "audio")
-                    // 可传递播放模式，默认为列表循环
                     putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
                 }
                 startActivity(intent)
                 return
             }
 
-            // ========== 视频/图片/其他类型继续使用 PreviewActivity ==========
+            // ========== 图片直接跳转 ImageActivity ==========
+            if (fileType == "image") {
+                val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
+                val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+                val intent = Intent(this, ImageActivity::class.java).apply {
+                    putExtra("FILE_NAME", item.name)
+                    putExtra("FILE_URL", fileUrl)
+                    putExtra("FILE_TYPE", "image")
+                    putExtra("FILE_PATH", item.path)
+                    putExtra("SERVER_URL", currentServerUrl)
+                    putExtra("CURRENT_PATH", currentPath)
+                    putExtra("SORT_BY", "name")      // 可选排序
+                    putExtra("SORT_ORDER", "asc")
+                }
+                startActivity(intent)
+                return
+            }
+
+            // ========== 视频/其他类型继续使用 PreviewActivity ==========
             if (fileType == "video") {
                 setupAutoPlay(item)
-            } else if (fileType == "image") {
+            } else {
                 resetAutoPlay()
             }
 

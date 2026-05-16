@@ -170,13 +170,44 @@ class FileListAdapter(
                 val fileType = getFileType(item)
                 val fileUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/preview/${java.net.URLEncoder.encode(item.path, "UTF-8")}"
 
-                Log.d("Preview", "预览文件: ${item.name}, 类型: $fileType")
+                // 图片直接跳转 ImageActivity
+                if (fileType == "image") {
+                    val intent = Intent(context, ImageActivity::class.java).apply {
+                        putExtra("FILE_NAME", item.name)
+                        putExtra("FILE_URL", fileUrl)
+                        putExtra("FILE_TYPE", "image")
+                        putExtra("FILE_PATH", item.path)
+                        putExtra("SERVER_URL", serverUrl)
+                        // CURRENT_PATH 留空，ImageActivity 会从 FILE_PATH 提取父目录
+                        putExtra("CURRENT_PATH", "")
+                    }
+                    context.startActivity(intent)
+                    return
+                }
 
+                // 音频直接跳转 AudioPlayerActivity
+                if (fileType == "audio") {
+                    val audioTrack = AudioTrack.fromFileSystemItem(item, serverUrl)
+                    val intent = Intent(context, AudioPlayerActivity::class.java).apply {
+                        putExtra("AUDIO_TRACK", audioTrack)
+                        putExtra("AUDIO_TRACKS", arrayListOf(audioTrack))
+                        putExtra("CURRENT_INDEX", 0)
+                        putExtra("SERVER_URL", serverUrl)
+                        putExtra("FILE_PATH", item.path)
+                        putExtra("FILE_NAME", item.name)
+                        putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
+                    }
+                    context.startActivity(intent)
+                    return
+                }
+
+                // 其他类型（视频、文本等）走 PreviewActivity
                 val intent = Intent(context, PreviewActivity::class.java).apply {
                     putExtra("FILE_NAME", item.name)
                     putExtra("FILE_URL", fileUrl)
                     putExtra("FILE_TYPE", fileType)
                     putExtra("FILE_PATH", item.path)
+                    putExtra("SERVER_URL", serverUrl)
                 }
                 context.startActivity(intent)
             } catch (e: Exception) {

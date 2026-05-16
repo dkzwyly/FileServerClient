@@ -328,11 +328,16 @@ class ImageActivity : AppCompatActivity() {
     // ImageActivity.kt
     private fun loadIntentData() {
         val serverUrl = intent.getStringExtra("SERVER_URL") ?: ""
-        val directoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
+        var directoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
         val imagePath = intent.getStringExtra("FILE_URL") ?: ""
-        // 新增：读取排序参数
+        val filePath = intent.getStringExtra("FILE_PATH") ?: ""
         val sortBy = intent.getStringExtra("SORT_BY") ?: ""
         val sortOrder = intent.getStringExtra("SORT_ORDER") ?: ""
+
+        // 如果 CURRENT_PATH 为空，则从 FILE_PATH 提取父目录
+        if (directoryPath.isEmpty() && filePath.isNotEmpty()) {
+            directoryPath = File(filePath).parent ?: ""
+        }
 
         if (serverUrl.isEmpty()) {
             showError("服务器地址不能为空")
