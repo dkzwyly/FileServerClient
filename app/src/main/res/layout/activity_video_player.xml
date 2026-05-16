@@ -3,8 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
-    android:orientation="vertical">
+    android:background="#000000">
 
     <!-- 顶部标题栏 -->
     <LinearLayout
@@ -30,7 +29,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="文件名"
+            android:text="视频名称"
             android:textColor="#FFFFFF"
             android:textSize="18sp"
             android:textStyle="bold"
@@ -57,30 +56,26 @@
         android:layout_below="@id/titleBar"
         android:layout_centerHorizontal="true"
         android:layout_marginTop="8dp"
-        android:text="文件类型"
+        android:text="视频"
         android:textColor="#CCCCCC"
         android:textSize="14sp"
         android:background="#40000000"
         android:padding="8dp"
-        android:visibility="gone" />
+        android:visibility="visible" />
 
-    <!-- 媒体播放容器（仅视频） -->
+    <!-- 视频播放容器 -->
     <FrameLayout
         android:id="@+id/mediaContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_below="@id/titleBar"
-        android:visibility="gone">
+        android:layout_below="@id/titleBar">
 
-        <!-- 视频播放视图 -->
         <androidx.media3.ui.PlayerView
             android:id="@+id/playerView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#000000"
-            android:visibility="visible" />
+            android:background="#000000" />
 
-        <!-- 加载进度 -->
         <ProgressBar
             android:id="@+id/mediaLoadingProgress"
             android:layout_width="wrap_content"
@@ -88,18 +83,18 @@
             android:layout_gravity="center"
             android:indeterminate="true" />
 
-        <!-- 播放控制栏 -->
+        <!-- 控制栏 -->
         <LinearLayout
             android:id="@+id/mediaControls"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
-            android:background="@android:color/transparent"
+            android:background="#80000000"
             android:orientation="horizontal"
             android:paddingVertical="12dp"
             android:paddingHorizontal="16dp"
             android:gravity="center_vertical"
-            android:visibility="gone">
+            android:visibility="visible">
 
             <ImageButton
                 android:id="@+id/previousButton"
@@ -169,35 +164,13 @@
 
     </FrameLayout>
 
-    <!-- 通用预览容器（用于其他文件类型，如PDF、Office、网页等） -->
-    <FrameLayout
-        android:id="@+id/generalContainer"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_below="@id/titleBar"
-        android:visibility="gone">
-
-        <WebView
-            android:id="@+id/webViewPreview"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
-
-        <ProgressBar
-            android:id="@+id/generalLoadingProgress"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:indeterminate="true" />
-
-    </FrameLayout>
-
     <!-- 错误提示 -->
     <TextView
         android:id="@+id/errorTextView"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_centerInParent="true"
-        android:text="预览加载失败"
+        android:text="视频加载失败"
         android:textColor="#FF4444"
         android:textSize="18sp"
         android:gravity="center"

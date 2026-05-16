@@ -339,7 +339,7 @@ class VideoLibraryActivity : AppCompatActivity() {
             // 找到当前视频在列表中的位置
             val currentIndex = allVideosInFolder.indexOfFirst { it.path == videoItem.path }
 
-            val intent = Intent(this, PreviewActivity::class.java).apply {
+            val intent = Intent(this, VideoPlayerActivity::class.java).apply {
                 putExtra("FILE_NAME", videoItem.name)
                 putExtra("FILE_URL", fileUrl)
                 putExtra("FILE_TYPE", "video")

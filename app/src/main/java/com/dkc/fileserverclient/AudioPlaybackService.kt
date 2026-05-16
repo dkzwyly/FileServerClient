@@ -232,7 +232,7 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         val playlist = audioPlayerManager.getPlaylist()
         val currentIndex = audioPlayerManager.getCurrentIndex()
 
-        val contentIntent = Intent(this, PreviewActivity::class.java).apply {
+        val contentIntent = Intent(this, AudioPlayerActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("AUDIO_TRACK", track)
             putExtra("AUDIO_TRACKS", ArrayList(playlist))

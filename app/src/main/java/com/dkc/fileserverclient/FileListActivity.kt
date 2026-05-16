@@ -3,7 +3,6 @@ package com.dkc.fileserverclient
 
 import android.app.Activity
 import android.content.Intent
-import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -22,8 +21,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.appbar.MaterialToolbar
 import kotlinx.coroutines.*
 import java.io.File
-import java.io.InputStream
-import java.io.OutputStream
 import android.os.Handler
 import android.os.Looper
 
@@ -63,11 +60,7 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
-    private val previewLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            handlePreviewResult(result.data)
-        }
-    }
+
 
     // 自动连播相关变量
     private var autoPlayEnabled = false
@@ -351,15 +344,14 @@ class FileListActivity : AppCompatActivity() {
 
     private fun previewFile(item: FileSystemItem) {
         try {
-            val fileType = getFileType(item)
+            val fileType = FileTypeUtils.getFileType(item)  // 使用工具类
 
-            // 音频直接跳转 AudioPlayerActivity
+            // 音频 → AudioPlayerActivity
             if (fileType == "audio") {
-                // 构建当前目录下所有音频文件列表（用于自动连播）
                 val allAudioItems = if (autoPlayEnabled && mediaFileList.isNotEmpty()) {
-                    mediaFileList.filter { !it.isDirectory && getFileType(it) == "audio" }
+                    mediaFileList.filter { !it.isDirectory && FileTypeUtils.getFileType(it) == "audio" }
                 } else {
-                    fileList.filter { !it.isDirectory && getFileType(it) == "audio" }
+                    fileList.filter { !it.isDirectory && FileTypeUtils.getFileType(it) == "audio" }
                 }
 
                 val audioTracks = allAudioItems.map { AudioTrack.fromFileSystemItem(it, currentServerUrl) }
@@ -379,7 +371,7 @@ class FileListActivity : AppCompatActivity() {
                 return
             }
 
-            // 图片直接跳转 ImageActivity
+            // 图片 → ImageActivity
             if (fileType == "image") {
                 val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
                 val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
@@ -397,7 +389,7 @@ class FileListActivity : AppCompatActivity() {
                 return
             }
 
-            // 文本直接跳转 TextPreviewActivity
+            // 文本 → TextPreviewActivity
             if (fileType == "text") {
                 val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
                 val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
@@ -410,34 +402,46 @@ class FileListActivity : AppCompatActivity() {
                 return
             }
 
-            // 视频及其他类型继续使用 PreviewActivity
+            // 视频 → VideoPlayerActivity（新建的独立视频播放器）
             if (fileType == "video") {
-                setupAutoPlay(item)
-            } else {
-                resetAutoPlay()
+                setupAutoPlay(item)  // 构建播放列表和当前索引
+
+                val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
+                val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+
+                val intent = Intent(this, VideoPlayerActivity::class.java).apply {
+                    putExtra("FILE_NAME", item.name)
+                    putExtra("FILE_URL", fileUrl)
+                    putExtra("FILE_TYPE", "video")
+                    putExtra("FILE_PATH", item.path)
+                    putExtra("AUTO_PLAY_ENABLED", autoPlayEnabled)
+                    putExtra("MEDIA_FILE_LIST", ArrayList(mediaFileList))   // 用于连播
+                    putExtra("CURRENT_INDEX", currentPlayingIndex)
+                    putExtra("SERVER_URL", currentServerUrl)
+                    putExtra("CURRENT_PATH", currentPath)
+                }
+                startActivity(intent)
+                return
             }
 
+            // 通用文件（PDF、Office、网页等） → GeneralPreviewActivity（WebView 预览）
             val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
             val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
 
-            val intent = Intent(this, PreviewActivity::class.java).apply {
+            val intent = Intent(this, GeneralPreviewActivity::class.java).apply {
                 putExtra("FILE_NAME", item.name)
                 putExtra("FILE_URL", fileUrl)
                 putExtra("FILE_TYPE", fileType)
                 putExtra("FILE_PATH", item.path)
-                putExtra("AUTO_PLAY_ENABLED", autoPlayEnabled)
-                putExtra("MEDIA_FILE_LIST", ArrayList(mediaFileList))
-                putExtra("CURRENT_INDEX", currentPlayingIndex)
                 putExtra("SERVER_URL", currentServerUrl)
-                putExtra("CURRENT_PATH", currentPath)
             }
-            previewLauncher.launch(intent)
+            startActivity(intent)
+
         } catch (e: Exception) {
             Log.e("FileListActivity", "预览文件失败", e)
             showToast("预览失败: ${e.message}")
         }
     }
-
     private fun setupAutoPlay(selectedItem: FileSystemItem) {
         mediaFileList.clear()
         mediaFileList.addAll(fileList.filter { item ->
@@ -546,19 +550,6 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
-    private fun handlePreviewResult(data: Intent?) {
-        data?.let { intent ->
-            when (intent.getStringExtra("ACTION")) {
-                "PLAY_NEXT" -> playNextMedia()
-                "PLAY_PREVIOUS" -> playPreviousMedia()
-                "REFRESH_LIST" -> loadCurrentDirectory(currentPath)
-                "EXIT_AUTO_PLAY" -> {
-                    resetAutoPlay()
-                    showToast("已退出自动连播")
-                }
-            }
-        }
-    }
 
     private fun uriToFile(uri: Uri): File? {
         return try {

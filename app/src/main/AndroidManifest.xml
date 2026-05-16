@@ -102,6 +102,8 @@
             android:name=".PlaylistDetailActivity"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
+        <activity android:name=".VideoPlayerActivity" />
+
         <!-- FileProvider配置，用于相机拍照 -->
         <provider
             android:name="androidx.core.content.FileProvider"

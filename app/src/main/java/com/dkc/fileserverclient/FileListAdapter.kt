@@ -167,10 +167,10 @@ class FileListAdapter(
 
         private fun showPreview(item: FileSystemItem, context: Context) {
             try {
-                val fileType = getFileType(item)
+                val fileType = FileTypeUtils.getFileType(item)
                 val fileUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/preview/${java.net.URLEncoder.encode(item.path, "UTF-8")}"
 
-                // 图片直接跳转 ImageActivity
+                // 图片 → ImageActivity
                 if (fileType == "image") {
                     val intent = Intent(context, ImageActivity::class.java).apply {
                         putExtra("FILE_NAME", item.name)
@@ -184,7 +184,7 @@ class FileListAdapter(
                     return
                 }
 
-                // 音频直接跳转 AudioPlayerActivity
+                // 音频 → AudioPlayerActivity
                 if (fileType == "audio") {
                     val audioTrack = AudioTrack.fromFileSystemItem(item, serverUrl)
                     val intent = Intent(context, AudioPlayerActivity::class.java).apply {
@@ -200,7 +200,7 @@ class FileListAdapter(
                     return
                 }
 
-                // 文本直接跳转 TextPreviewActivity
+                // 文本 → TextPreviewActivity
                 if (fileType == "text") {
                     val intent = Intent(context, TextPreviewActivity::class.java).apply {
                         putExtra("FILE_NAME", item.name)
@@ -211,8 +211,24 @@ class FileListAdapter(
                     return
                 }
 
-                // 其他类型（视频、通用等）走 PreviewActivity
-                val intent = Intent(context, PreviewActivity::class.java).apply {
+                // 视频 → VideoPlayerActivity
+                if (fileType == "video") {
+                    val intent = Intent(context, VideoPlayerActivity::class.java).apply {
+                        putExtra("FILE_NAME", item.name)
+                        putExtra("FILE_URL", fileUrl)
+                        putExtra("FILE_TYPE", "video")
+                        putExtra("FILE_PATH", item.path)
+                        putExtra("SERVER_URL", serverUrl)
+                        // 注意：适配器中无法获取完整的连播列表，此处简单处理仅播放单文件
+                        // 若需要连播，可从外部传入列表或使用全局单例
+                        putExtra("AUTO_PLAY_ENABLED", false)
+                    }
+                    context.startActivity(intent)
+                    return
+                }
+
+                // 通用文件 → GeneralPreviewActivity
+                val intent = Intent(context, GeneralPreviewActivity::class.java).apply {
                     putExtra("FILE_NAME", item.name)
                     putExtra("FILE_URL", fileUrl)
                     putExtra("FILE_TYPE", fileType)
@@ -220,23 +236,10 @@ class FileListAdapter(
                     putExtra("SERVER_URL", serverUrl)
                 }
                 context.startActivity(intent)
+
             } catch (e: Exception) {
-                Log.e("Preview", "预览文件失败: ${e.message}", e)
+                Log.e("FileListAdapter", "预览失败", e)
                 Toast.makeText(context, "预览失败: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        private fun getFileType(item: FileSystemItem): String {
-            // 添加日志
-            Log.d("FileListAdapter", "getFileType: name=${item.name}, isVideo=${item.isVideo}, isAudio=${item.isAudio}, extension=${item.extension}")
-
-            val ext = item.extension.removePrefix(".")
-            return when {
-                item.isVideo -> "video"
-                item.isAudio -> "audio"
-                item.isImage -> "image"
-                ext in listOf("txt", "log", "json", "xml", "csv", "md", "html", "htm", "css", "js", "java", "kt", "py") -> "text"
-                else -> "general"
             }
         }
 
