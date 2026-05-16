@@ -42,7 +42,6 @@ class PreviewActivity : AppCompatActivity(),
     private lateinit var downloadButton: Button
 
     private lateinit var mediaContainer: FrameLayout
-    private lateinit var textContainer: FrameLayout
     private lateinit var generalContainer: FrameLayout
     private lateinit var errorTextView: TextView
 
@@ -149,7 +148,6 @@ class PreviewActivity : AppCompatActivity(),
         downloadButton = findViewById(R.id.downloadButton)
 
         mediaContainer = findViewById(R.id.mediaContainer)
-        textContainer = findViewById(R.id.textContainer)
         generalContainer = findViewById(R.id.generalContainer)
         errorTextView = findViewById(R.id.errorTextView)
 
@@ -291,7 +289,6 @@ class PreviewActivity : AppCompatActivity(),
         fileNameTextView.text = currentFileName
         fileTypeTextView.text = when (currentFileType) {
             "video" -> "视频"
-            "text" -> "文本"
             else -> "文件"
         }
     }
@@ -433,12 +430,14 @@ class PreviewActivity : AppCompatActivity(),
 
     private fun loadPreview() {
         when (currentFileType) {
-            "image", "audio" -> {
-                // 图片和音频不应再进入 PreviewActivity，若有意外则显示错误
-                showError("不支持在此界面预览${if (currentFileType == "image") "图片" else "音频"}，请从文件列表直接打开")
+            "image", "audio", "text" -> {
+                showError("不支持在此界面预览${when (currentFileType) {
+                    "image" -> "图片"
+                    "audio" -> "音频"
+                    else -> "文本"
+                }}，请从文件列表直接打开")
             }
             "video" -> loadVideoPreview()
-            "text" -> loadTextPreview()
             else -> loadGeneralPreview()
         }
     }
@@ -463,16 +462,6 @@ class PreviewActivity : AppCompatActivity(),
         mediaPlaybackController.play(currentFileUrl, mediaItem)
     }
 
-    private fun loadTextPreview() {
-        val intent = Intent(this, TextPreviewActivity::class.java).apply {
-            putExtra("FILE_NAME", currentFileName)
-            putExtra("FILE_URL", currentFileUrl)
-            putExtra("FILE_PATH", intent.getStringExtra("FILE_PATH"))
-        }
-        startActivity(intent)
-        finish()
-    }
-
     private fun loadGeneralPreview() {
         showContainer(generalContainer)
         fileTypeTextView.visibility = View.VISIBLE
@@ -481,7 +470,6 @@ class PreviewActivity : AppCompatActivity(),
 
     private fun showContainer(container: View) {
         mediaContainer.visibility = View.GONE
-        textContainer.visibility = View.GONE
         generalContainer.visibility = View.GONE
         errorTextView.visibility = View.GONE
         container.visibility = View.VISIBLE
@@ -511,7 +499,7 @@ class PreviewActivity : AppCompatActivity(),
     }
 
     override fun onLoadAudioTrack(track: AudioTrack, index: Int) {
-        // 空实现，音频逻辑已完全移除，此方法不会被调用
+        // 空实现，音频逻辑已完全移除
     }
 
     override fun onAutoPlayError(message: String) {
@@ -538,7 +526,6 @@ class PreviewActivity : AppCompatActivity(),
     }
 
     override fun onTrackChanged(item: MediaPlaybackItem, index: Int) {
-        // 视频切换处理
         currentFileName = item.name
         currentFileUrl = item.url
         handler.post {

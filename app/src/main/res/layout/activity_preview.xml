@@ -64,31 +64,7 @@
         android:padding="8dp"
         android:visibility="gone" />
 
-    <!-- 图片预览容器 -->
-    <FrameLayout
-        android:id="@+id/imageContainer"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_below="@id/titleBar"
-        android:visibility="gone">
-
-        <ImageView
-            android:id="@+id/imagePreview"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:scaleType="fitCenter"
-            android:contentDescription="图片预览" />
-
-        <ProgressBar
-            android:id="@+id/imageLoadingProgress"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:indeterminate="true" />
-
-    </FrameLayout>
-
-    <!-- 媒体播放容器 - 统一处理音频和视频 -->
+    <!-- 媒体播放容器（仅视频） -->
     <FrameLayout
         android:id="@+id/mediaContainer"
         android:layout_width="match_parent"
@@ -102,26 +78,9 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="#000000"
-            android:visibility="gone" />
+            android:visibility="visible" />
 
-        <!-- 音频封面显示 -->
-        <ImageView
-            android:id="@+id/audioCoverView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:scaleType="centerCrop"
-            android:src="@drawable/ic_music_image_placeholder"
-            android:contentDescription="音频封面"
-            android:visibility="gone" />
-
-        <!-- 新增：动态可视化背景 -->
-        <com.dkc.fileserverclient.MusicVisualizerView
-            android:id="@+id/musicVisualizerView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-
-
+        <!-- 加载进度 -->
         <ProgressBar
             android:id="@+id/mediaLoadingProgress"
             android:layout_width="wrap_content"
@@ -129,62 +88,7 @@
             android:layout_gravity="center"
             android:indeterminate="true" />
 
-        <!-- 歌词显示容器 -->
-        <LinearLayout
-            android:id="@+id/lyricsContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:padding="16dp"
-            android:visibility="gone"
-            android:background="@android:color/transparent">
-
-            <TextView
-                android:id="@+id/lyricsTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="歌词"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:padding="4dp" />
-
-            <TextView
-                android:id="@+id/currentLyricsLine"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="正在加载歌词..."
-                android:textColor="#FFFFFF"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:gravity="center"
-                android:padding="8dp" />
-
-            <TextView
-                android:id="@+id/nextLyricsLine"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=""
-                android:textColor="#CCCCCC"
-                android:textSize="14sp"
-                android:gravity="center"
-                android:padding="4dp" />
-
-            <Button
-                android:id="@+id/lyricsSettingsButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="歌词设置"
-                android:textSize="12sp"
-                android:background="@android:color/transparent"
-                android:textColor="#AAAAAA"
-                android:layout_marginTop="8dp" />
-
-        </LinearLayout>
-
-        <!-- 统一的控制栏 -->
+        <!-- 播放控制栏 -->
         <LinearLayout
             android:id="@+id/mediaControls"
             android:layout_width="match_parent"
@@ -265,41 +169,7 @@
 
     </FrameLayout>
 
-    <!-- 文本预览容器 -->
-    <FrameLayout
-        android:id="@+id/textContainer"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_below="@id/titleBar"
-        android:visibility="gone">
-
-        <ScrollView
-            android:layout_width="match_parent"
-            android:layout_height="match_parent">
-
-            <TextView
-                android:id="@+id/textPreview"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="文本内容加载中..."
-                android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:lineSpacingExtra="4dp"
-                android:padding="16dp"
-                android:textIsSelectable="true" />
-
-        </ScrollView>
-
-        <ProgressBar
-            android:id="@+id/textLoadingProgress"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:indeterminate="true" />
-
-    </FrameLayout>
-
-    <!-- 通用预览容器（用于其他文件类型） -->
+    <!-- 通用预览容器（用于其他文件类型，如PDF、Office、网页等） -->
     <FrameLayout
         android:id="@+id/generalContainer"
         android:layout_width="match_parent"
