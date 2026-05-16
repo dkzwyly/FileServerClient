@@ -47,7 +47,7 @@
     <color name="tab_selected_background">#FFFFFF</color>
     <color name="search_border">#E0E0E0</color>
     <color name="on_background">#FF000000</color>
-    <color name="background_color">#FF000000</color>
+    <color name="background_color">#FFE0E0E0</color>
 
     <!-- 唱片图标颜色 -->
     <color name="record_dark">#424242</color>
