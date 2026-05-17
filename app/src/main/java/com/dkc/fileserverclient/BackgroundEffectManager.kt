@@ -14,6 +14,7 @@ class BackgroundEffectManager(private val activity: Activity) {
         const val GRADIENT_CYAN = 2
         const val GRADIENT_PURPLE = 3
         const val GRADIENT_SUNSET_ORANGE = 4
+        const val GRADIENT_CLASSIC_WHITE = 5
     }
 
     private var snowView: SnowView? = null
@@ -75,6 +76,9 @@ class BackgroundEffectManager(private val activity: Activity) {
             GRADIENT_PINK -> enablePetal(true)
             GRADIENT_CYAN -> enableBubble(true)
             GRADIENT_PURPLE -> enableStar(true)
+            GRADIENT_CLASSIC_WHITE -> {
+                // 纯白背景，不启用任何特效
+            }
         }
     }
 

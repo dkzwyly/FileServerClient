@@ -58,13 +58,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rootFrame: FrameLayout
     private lateinit var rootLayout: LinearLayout
     private var currentGradientIndex = 0
+    // 修改 gradientList，新增第6个纯白背景
     private val gradientList = listOf(
         createGradientDrawable(intArrayOf(0xFFFCE4EC.toInt(), 0xFFFFF0F5.toInt(), 0xFFF8BBD0.toInt()), GradientDrawable.Orientation.TL_BR),
         createGradientDrawable(intArrayOf(0xFFE8F0FE.toInt(), 0xFFD4E4FC.toInt(), 0xFFBBDEFB.toInt()), GradientDrawable.Orientation.TL_BR),
         createGradientDrawable(intArrayOf(0xFFE0F7FA.toInt(), 0xFFB2EBF2.toInt(), 0xFF80DEEA.toInt()), GradientDrawable.Orientation.TOP_BOTTOM),
         createGradientDrawable(intArrayOf(0xFFF3E5F5.toInt(), 0xFFE1BEE7.toInt(), 0xFFCE93D8.toInt()), GradientDrawable.Orientation.LEFT_RIGHT),
-        createGradientDrawable(intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()), GradientDrawable.Orientation.BL_TR)
+        createGradientDrawable(intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()), GradientDrawable.Orientation.BL_TR),
+        createSolidWhiteDrawable()   // 新增纯白背景
     )
+    private fun createSolidWhiteDrawable(): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(Color.WHITE)
+        }
+    }
     private val PREF_GRADIENT_INDEX = "gradient_index"
     private lateinit var effectManager: BackgroundEffectManager
 
@@ -153,13 +160,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyGradient(index: Int) {
-        if (index in gradientList.indices) {
-            rootFrame.background = gradientList[index]          // 背景设置到根视图
+        currentGradientIndex = index
+        if (index == 5) {
+            // 纯白背景：直接设置白色，无渐变
+            rootFrame.setBackgroundColor(Color.WHITE)
+        } else if (index in gradientList.indices) {
+            rootFrame.background = gradientList[index]
         } else {
             rootFrame.background = gradientList[0]
         }
-        rootLayout.setBackgroundColor(Color.TRANSPARENT)        // 内容层背景透明
-        currentGradientIndex = index
+        rootLayout.setBackgroundColor(Color.TRANSPARENT)
         effectManager.applyEffectForGradient(index)
         sharedPreferences.edit { putInt(PREF_GRADIENT_INDEX, currentGradientIndex) }
     }
