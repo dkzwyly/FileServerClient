@@ -35,7 +35,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var browseFilesButton: Button
     private lateinit var historyListView: ListView
 
-    // 库按钮
     private lateinit var mediaLibraryButton: Button
     private lateinit var textLibraryButton: Button
     private lateinit var videoLibraryButton: Button
@@ -53,31 +52,27 @@ class MainActivity : AppCompatActivity() {
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
 
-    // 音频服务相关变量
     private var audioBackgroundManager: AudioBackgroundManager? = null
     private var isAudioServiceBound = false
 
-    // 渐变背景相关
+    private lateinit var rootFrame: FrameLayout
     private lateinit var rootLayout: LinearLayout
     private var currentGradientIndex = 0
     private val gradientList = listOf(
-        createGradientDrawable(intArrayOf(0xFFFCE4EC.toInt(), 0xFFFFF0F5.toInt(), 0xFFF8BBD0.toInt()), GradientDrawable.Orientation.TL_BR), // 暖粉
-        createGradientDrawable(intArrayOf(0xFFE8F0FE.toInt(), 0xFFD4E4FC.toInt(), 0xFFBBDEFB.toInt()), GradientDrawable.Orientation.TL_BR), // 冷蓝 ★
-        createGradientDrawable(intArrayOf(0xFFE0F7FA.toInt(), 0xFFB2EBF2.toInt(), 0xFF80DEEA.toInt()), GradientDrawable.Orientation.TOP_BOTTOM), // 薄荷
-        createGradientDrawable(intArrayOf(0xFFF3E5F5.toInt(), 0xFFE1BEE7.toInt(), 0xFFCE93D8.toInt()), GradientDrawable.Orientation.LEFT_RIGHT), // 薰衣草
-        createGradientDrawable(intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()), GradientDrawable.Orientation.BL_TR) // 日落橙
+        createGradientDrawable(intArrayOf(0xFFFCE4EC.toInt(), 0xFFFFF0F5.toInt(), 0xFFF8BBD0.toInt()), GradientDrawable.Orientation.TL_BR),
+        createGradientDrawable(intArrayOf(0xFFE8F0FE.toInt(), 0xFFD4E4FC.toInt(), 0xFFBBDEFB.toInt()), GradientDrawable.Orientation.TL_BR),
+        createGradientDrawable(intArrayOf(0xFFE0F7FA.toInt(), 0xFFB2EBF2.toInt(), 0xFF80DEEA.toInt()), GradientDrawable.Orientation.TOP_BOTTOM),
+        createGradientDrawable(intArrayOf(0xFFF3E5F5.toInt(), 0xFFE1BEE7.toInt(), 0xFFCE93D8.toInt()), GradientDrawable.Orientation.LEFT_RIGHT),
+        createGradientDrawable(intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()), GradientDrawable.Orientation.BL_TR)
     )
     private val PREF_GRADIENT_INDEX = "gradient_index"
-
-    // 雪花特效
-    private lateinit var snowView: SnowView
+    private lateinit var effectManager: BackgroundEffectManager
 
     companion object {
         private const val TAG = "MainActivity"
         private const val PREF_AUTO_CONNECT = "auto_connect_enabled"
     }
 
-    // 音频服务连接
     private val audioServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.d(TAG, "音频服务连接成功")
@@ -95,17 +90,16 @@ class MainActivity : AppCompatActivity() {
         val toolbar = findViewById<com.google.android.material.appbar.MaterialToolbar>(R.id.toolbar)
         setSupportActionBar(toolbar)
 
-        // 根布局（用于设置渐变背景）
+        rootFrame = findViewById(R.id.rootFrame)
         rootLayout = findViewById(R.id.rootLayout)
+
         currentGradientIndex = sharedPreferences.getInt(PREF_GRADIENT_INDEX, 0)
+
+        effectManager = BackgroundEffectManager(this)
+        effectManager.attachTo(rootFrame)
+
         applyGradient(currentGradientIndex)
 
-        // 初始化雪花视图
-        snowView = findViewById(R.id.snowView)
-        // 根据当前渐变决定是否激活雪花（非冷蓝时不生成雪花）
-        snowView.setSnowEnabled(isColdBlueGradient(currentGradientIndex))
-
-        // 检查 Intent 传入服务器地址
         val intentServerUrl = intent.getStringExtra("SERVER_URL")
         if (!intentServerUrl.isNullOrEmpty()) {
             currentServerUrl = intentServerUrl
@@ -136,16 +130,20 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (::snowView.isInitialized) {
-            snowView.setSnowEnabled(isColdBlueGradient(currentGradientIndex))
-        }
+        effectManager.onResume()
     }
 
     override fun onPause() {
         super.onPause()
-        if (::snowView.isInitialized) {
-            snowView.setSnowEnabled(false)   // 后台时禁用雪花动画
-        }
+        effectManager.onPause()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        audioBackgroundManager?.cleanup()
+        audioBackgroundManager = null
+        effectManager.onDestroy()
+        coroutineScope.cancel()
     }
 
     private fun createGradientDrawable(colors: IntArray, orientation: GradientDrawable.Orientation): GradientDrawable {
@@ -154,27 +152,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun isColdBlueGradient(index: Int): Boolean {
-        // 仅索引 1 为冷蓝渐变
-        return index == 1
-    }
-
     private fun applyGradient(index: Int) {
         if (index in gradientList.indices) {
-            rootLayout.background = gradientList[index]
+            rootFrame.background = gradientList[index]          // 背景设置到根视图
         } else {
-            rootLayout.background = gradientList[0]
+            rootFrame.background = gradientList[0]
         }
-        if (::snowView.isInitialized) {
-            snowView.setSnowEnabled(isColdBlueGradient(index))
-        }
+        rootLayout.setBackgroundColor(Color.TRANSPARENT)        // 内容层背景透明
+        currentGradientIndex = index
+        effectManager.applyEffectForGradient(index)
+        sharedPreferences.edit { putInt(PREF_GRADIENT_INDEX, currentGradientIndex) }
     }
 
     private fun cycleGradient() {
         currentGradientIndex = (currentGradientIndex + 1) % gradientList.size
         applyGradient(currentGradientIndex)
-        sharedPreferences.edit { putInt(PREF_GRADIENT_INDEX, currentGradientIndex) }
-
     }
 
     private fun autoConnectToLastServer() {
@@ -455,15 +447,5 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "音频后台播放中，返回时保持服务")
         }
         super.onBackPressed()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        audioBackgroundManager?.cleanup()
-        audioBackgroundManager = null
-        if (::snowView.isInitialized) {
-            snowView.setSnowEnabled(false)
-        }
-        coroutineScope.cancel()
     }
 }
