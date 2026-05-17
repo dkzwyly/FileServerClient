@@ -43,7 +43,8 @@
         <!-- 文件列表活动 -->
         <activity
             android:name=".FileListActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/Theme.MaterialComponents.Light.NoActionBar" />
 
 
         <activity
