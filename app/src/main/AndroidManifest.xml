@@ -47,6 +47,8 @@
             android:theme="@style/Theme.MaterialComponents.Light.NoActionBar" />
 
 
+
+
         <activity
             android:name=".TextPreviewActivity"
             android:label="文本预览"
