@@ -178,7 +178,6 @@ class AudioLibraryActivity : AppCompatActivity() {
 
         playlistAdapter = PlaylistAdapter(
             playlists = playlistList,
-            serverUrl = currentServerUrl,
             onPlaylistClick = { playlist ->
                 val intent = Intent(this, PlaylistDetailActivity::class.java).apply {
                     putExtra("PLAYLIST_ID", playlist.id)

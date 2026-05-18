@@ -8,14 +8,10 @@ import android.widget.ImageView
 import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import coil.ImageLoader
-import coil.request.CachePolicy
-import coil.request.ImageRequest
-import java.net.URLEncoder
+import coil.load
 
 class PlaylistAdapter(
     private var playlists: List<Playlist>,
-    private val serverUrl: String,
     private val onPlaylistClick: (Playlist) -> Unit,
     private val onRenameClick: (Playlist) -> Unit,
     private val onDeleteClick: (Playlist) -> Unit
@@ -57,41 +53,37 @@ class PlaylistAdapter(
 
     private fun loadPlaylistCover(holder: PlaylistViewHolder, playlist: Playlist) {
         val firstTrack = playlist.tracks.firstOrNull()
-        if (firstTrack != null && serverUrl.isNotEmpty() && firstTrack.path.isNotEmpty()) {
-            val coverUrl = buildCoverUrl(firstTrack.path)
-            Log.d(TAG, "加载歌单封面: ${playlist.name}, URL: $coverUrl")
+        Log.d(TAG, "loadPlaylistCover: playlistId=${playlist.id}, name=${playlist.name}, firstTrack=${firstTrack?.name}")
 
-            val imageLoader = ImageLoader.Builder(holder.itemView.context.applicationContext)
-                .okHttpClient(UnsafeHttpClient.createUnsafeOkHttpClient())
-                .build()
+        if (firstTrack == null) {
+            Log.d(TAG, "No tracks in playlist, using placeholder")
+            holder.playlistIcon.setImageResource(R.drawable.ic_music_image_placeholder)
+            return
+        }
 
-            val request = ImageRequest.Builder(holder.itemView.context)
-                .data(coverUrl)
-                .placeholder(R.drawable.ic_music_image_placeholder)
-                .error(R.drawable.ic_music_image_placeholder)
-                .diskCachePolicy(CachePolicy.DISABLED)
-                .memoryCachePolicy(CachePolicy.DISABLED)
-                .target { drawable ->
-                    holder.playlistIcon.setImageDrawable(drawable)
-                }
-                .build()
+        val coverUrl = firstTrack.coverUrl
+        Log.d(TAG, "firstTrack coverUrl: $coverUrl")
 
-            imageLoader.enqueue(request)
+        if (coverUrl.isNullOrEmpty()) {
+            Log.d(TAG, "coverUrl is null or empty, using placeholder")
+            holder.playlistIcon.setImageResource(R.drawable.ic_music_image_placeholder)
+            return
+        }
+
+        val localFile = CoverImageStorage.getLocalFile(firstTrack.id, coverUrl)
+        Log.d(TAG, "localFile path: ${localFile.absolutePath}, exists=${localFile.exists()}, length=${localFile.length()}")
+
+        if (localFile.exists()) {
+            Log.d(TAG, "Local cache found for playlist ${playlist.name}, loading from file")
+            holder.playlistIcon.load(localFile) {
+                placeholder(R.drawable.ic_music_image_placeholder)
+                error(R.drawable.ic_music_image_placeholder)
+                crossfade(true)
+            }
         } else {
-            Log.d(TAG, "无首歌曲或路径为空，使用默认图标: ${playlist.name}")
+            Log.d(TAG, "No local cache for playlist ${playlist.name}, using placeholder")
             holder.playlistIcon.setImageResource(R.drawable.ic_music_image_placeholder)
         }
-    }
-
-    /**
-     * 完全参考 PreviewActivity 中 SongMetadataManager.getCoverUrl 的实现
-     */
-    private fun buildCoverUrl(songPath: String): String {
-        val encodedPath = URLEncoder.encode(songPath, "UTF-8")
-        var url = "${serverUrl.removeSuffix("/")}/api/fileserver/song/cover/$encodedPath"
-        // 添加时间戳避免缓存，与 PreviewActivity 保持一致
-        url += "?t=${System.currentTimeMillis()}"
-        return url
     }
 
     private fun showPopupMenu(anchor: View, playlist: Playlist) {

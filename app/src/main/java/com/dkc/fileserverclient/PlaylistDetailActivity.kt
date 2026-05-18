@@ -66,7 +66,6 @@ class PlaylistDetailActivity : AppCompatActivity() {
 
         adapter = PlaylistDetailAdapter(
             tracks = emptyList(),
-            serverUrl = serverUrl,
             onItemClick = { track, index ->
                 playTrack(track, index)
             },
