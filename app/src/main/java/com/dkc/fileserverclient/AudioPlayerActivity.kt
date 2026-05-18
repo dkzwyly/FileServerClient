@@ -280,9 +280,12 @@ class AudioPlayerActivity : AppCompatActivity() {
         viewModel.onActivityPause()
     }
 
+    // AudioPlayerActivity.kt 中的 onResume 修改为：
     override fun onResume() {
         super.onResume()
         viewModel.onActivityResume()
+        // 立即同步进度（先用缓存，再用播放器确认）
+        viewModel.refreshPositionImmediately()
     }
 
     override fun onDestroy() {
