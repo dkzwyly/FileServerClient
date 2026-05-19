@@ -26,7 +26,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     val coverLocalPath = MutableLiveData<String?>()
     val isPlaying = MutableLiveData<Boolean>()
     val playbackState = MutableLiveData<PlaybackState>()
-    // 使用缓存值初始化，避免从 0 开始
     private val prefs: SharedPreferences = application.getSharedPreferences("audio_cache", Context.MODE_PRIVATE)
     val currentPosition = MutableLiveData(prefs.getLong("last_position", 0L))
     val duration = MutableLiveData(prefs.getLong("last_duration", 0L))
@@ -58,6 +57,13 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // 频谱监听器引用，用于后续移除
+    private val spectrumListener = object : AudioSpectrumListener {
+        override fun onSpectrumData(spectrum: FloatArray) {
+            spectrumData.postValue(spectrum)
+        }
+    }
 
     init {
         CoverImageStorage.init(application, UnsafeHttpClient.createUnsafeOkHttpClient())
@@ -93,6 +99,10 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         audioBackgroundManager = AudioBackgroundManager(getApplication())
         audioBackgroundManager.addPlaybackListener(this)
         audioBackgroundManager.addProgressListener(this)
+
+        // ========== 新增：添加频谱监听 ==========
+        audioBackgroundManager.addSpectrumListener(spectrumListener)
+        // =====================================
 
         // 初始化歌词管理器
         lyricsManager = LyricsManager(getApplication(), handler, scope)
@@ -303,6 +313,8 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun release() {
         audioBackgroundManager.removePlaybackListener(this)
         audioBackgroundManager.removeProgressListener(this)
+        // 移除频谱监听
+        audioBackgroundManager.removeSpectrumListener(spectrumListener)
         audioBackgroundManager.unbindService()
         scope.cancel()
     }
@@ -354,7 +366,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         latestDuration = duration
         currentPosition.postValue(position)
         this.duration.postValue(duration)
-        // 持久化缓存进度
         prefs.edit().putLong("last_position", position).putLong("last_duration", duration).apply()
     }
 
@@ -389,7 +400,14 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     override fun isPlaying(): Boolean = isPlaying.value ?: false
 
     override fun onCleared() {
-        super.onCleared()
+        // 确保移除所有监听器，防止内存泄漏
+        if (::audioBackgroundManager.isInitialized) {
+            audioBackgroundManager.removePlaybackListener(this)
+            audioBackgroundManager.removeProgressListener(this)
+            audioBackgroundManager.removeSpectrumListener(spectrumListener)
+            audioBackgroundManager.unbindService()
+        }
         scope.cancel()
+        super.onCleared()
     }
 }
