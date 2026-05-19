@@ -131,8 +131,9 @@
 
         <activity
             android:name=".AudioPlayerActivity"
-            android:theme="@style/Theme.AppCompat.NoActionBar"
-            android:configChanges="orientation|screenSize" />
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize"
+            android:exported="false" />
     </application>
 
 </manifest>

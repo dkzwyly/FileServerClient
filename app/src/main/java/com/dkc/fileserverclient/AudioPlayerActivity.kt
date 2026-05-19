@@ -43,6 +43,7 @@ class AudioPlayerActivity : AppCompatActivity() {
     private lateinit var currentLyricsLine: TextView
     private lateinit var nextLyricsLine: TextView
     private lateinit var lyricsSettingsButton: Button
+    private var currentCoverPath: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -132,11 +133,14 @@ class AudioPlayerActivity : AppCompatActivity() {
     private fun observeViewModel() {
         viewModel.artistAlbum.observe(this) { lyricsTitle.text = it }
         viewModel.coverLocalPath.observe(this) { path ->
-            if (!path.isNullOrEmpty()) {
-                loadCoverFromFile(path)
-            } else {
-                audioCoverView.setImageDrawable(null)
-                audioCoverView.setBackgroundColor(Color.BLACK)
+            if (path != currentCoverPath) {
+                currentCoverPath = path
+                if (!path.isNullOrEmpty()) {
+                    loadCoverFromFile(path)
+                } else {
+                    audioCoverView.setImageDrawable(null)
+                    audioCoverView.setBackgroundColor(Color.BLACK)
+                }
             }
         }
         viewModel.isPlaying.observe(this) {
@@ -169,7 +173,11 @@ class AudioPlayerActivity : AppCompatActivity() {
             }
         }
     }
-
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        viewModel.updateIntent(intent)
+    }
     private fun loadCoverFromFile(filePath: String) {
         val file = File(filePath)
         if (!file.exists()) {

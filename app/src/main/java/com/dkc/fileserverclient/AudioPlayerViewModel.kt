@@ -197,7 +197,54 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
     }
+    fun updateIntent(intent: Intent) {
+        // 获取新的歌曲信息
+        val newTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra("AUDIO_TRACK")
+        } ?: return
 
+        val newIndex = intent.getIntExtra("CURRENT_INDEX", 0)
+        val newPlayMode = intent.getIntExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
+        val newServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
+
+        // 如果歌曲没有变化（通过 path 比较），只更新播放模式并刷新进度
+        if (newTrack.path == songPath && currentTrack?.path == songPath) {
+            if (currentPlayMode != newPlayMode) {
+                currentPlayMode = newPlayMode
+                applyPlayMode(currentPlayMode)
+            }
+            // 确保从服务同步最新进度和状态
+            refreshPositionImmediately()
+            return
+        }
+
+        // 歌曲变化，需要完整更新
+        currentTrack = newTrack
+        currentIndex = newIndex.coerceIn(0, playlist.size - 1)
+        currentPlayMode = newPlayMode
+        songPath = newTrack.path
+        serverUrl = newServerUrl
+
+        // 更新界面显示
+        updateTrackInfo(newTrack)
+
+        // 重新加载元数据和封面
+        loadCoverAndMetadata()
+
+        // 重新加载歌词
+        lyricsManager.loadLyrics(serverUrl, songPath, newTrack.name)
+
+        // 应用播放模式
+        applyPlayMode(currentPlayMode)
+
+        // 如果后台服务当前播放的不是这首歌，则切换播放
+        if (audioBackgroundManager.getCurrentTrack()?.path != songPath) {
+            audioBackgroundManager.startService(newTrack, ArrayList(playlist), currentIndex)
+        }
+    }
     // ---------- 播放控制（全部委托给后台服务） ----------
     fun togglePlayback() {
         audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
