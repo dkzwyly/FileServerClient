@@ -1,4 +1,3 @@
-// AudioPlaybackService.kt
 package com.dkc.fileserverclient
 
 import android.annotation.SuppressLint
@@ -36,6 +35,14 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         const val ACTION_PREVIOUS = "com.dkc.fileserverclient.ACTION_PREVIOUS"
         const val ACTION_STOP = "com.dkc.fileserverclient.ACTION_STOP"
         const val ACTION_CLOSE = "com.dkc.fileserverclient.ACTION_CLOSE"
+
+        // 新增的控制常量
+        const val ACTION_SET_SPEED = "com.dkc.fileserverclient.ACTION_SET_SPEED"
+        const val EXTRA_SPEED = "extra_speed"
+        const val ACTION_SET_REPEAT_MODE = "com.dkc.fileserverclient.ACTION_SET_REPEAT_MODE"
+        const val EXTRA_REPEAT_MODE = "extra_repeat_mode"
+        const val ACTION_SET_SHUFFLE = "com.dkc.fileserverclient.ACTION_SET_SHUFFLE"
+        const val EXTRA_SHUFFLE_ENABLED = "extra_shuffle_enabled"
 
         const val EXTRA_TRACK = "extra_track"
         const val EXTRA_PLAYLIST = "extra_playlist"
@@ -155,6 +162,20 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                     stopSelf()
                     sendBroadcast(Intent("AUDIO_SERVICE_CLOSED"))
                 }
+                // 新增的处理分支
+                ACTION_SET_SPEED -> {
+                    val speed = intent.getFloatExtra(EXTRA_SPEED, 1.0f)
+                    audioPlayerManager.setPlaybackSpeed(speed)
+                }
+                ACTION_SET_REPEAT_MODE -> {
+                    val modeOrdinal = intent.getIntExtra(EXTRA_REPEAT_MODE, RepeatMode.NONE.ordinal)
+                    val mode = RepeatMode.values().getOrElse(modeOrdinal) { RepeatMode.NONE }
+                    audioPlayerManager.setRepeatMode(mode)
+                }
+                ACTION_SET_SHUFFLE -> {
+                    val enabled = intent.getBooleanExtra(EXTRA_SHUFFLE_ENABLED, false)
+                    audioPlayerManager.setShuffleEnabled(enabled)
+                }
             }
         }
         return START_STICKY
@@ -162,6 +183,12 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
 
     override fun onBind(intent: Intent?): IBinder {
         isBound = true
+        // 新客户端绑定时，主动推送一次当前状态
+        handler.post {
+            val status = audioPlayerManager.getPlaybackStatus()
+            playbackListeners.forEach { it.onPlaybackStateChanged(status) }
+            progressListeners.forEach { it.onProgressUpdated(status.position, status.duration) }
+        }
         return binder
     }
 

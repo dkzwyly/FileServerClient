@@ -1,4 +1,3 @@
-// AudioBackgroundManager.kt
 package com.dkc.fileserverclient
 
 import android.content.ComponentName
@@ -27,6 +26,15 @@ class AudioBackgroundManager(private val context: Context) {
             val binder = service as AudioPlaybackService.AudioServiceBinder
             audioService = binder.getService()
             isBound = true
+
+            // 关键：连接成功后立即拉取一次完整状态并通知所有监听器
+            val status = audioService?.getPlaybackStatus()
+            if (status != null) {
+                playbackListeners.forEach { it.onPlaybackStateChanged(status) }
+                progressListeners.forEach { it.onProgressUpdated(status.position, status.duration) }
+            }
+
+            // 添加已注册的监听器
             playbackListeners.forEach { audioService?.addPlaybackListener(it) }
             progressListeners.forEach { audioService?.addProgressListener(it) }
             spectrumListeners.forEach { audioService?.addSpectrumListener(it) }
@@ -80,19 +88,44 @@ class AudioBackgroundManager(private val context: Context) {
         }
     }
 
+    /**
+     * 设置播放速度（仅通过 Intent 发送，简单可靠）
+     */
+    fun setPlaybackSpeed(speed: Float) {
+        val intent = Intent(context, AudioPlaybackService::class.java).apply {
+            action = AudioPlaybackService.ACTION_SET_SPEED
+            putExtra(AudioPlaybackService.EXTRA_SPEED, speed)
+        }
+        context.startService(intent)
+    }
+
+    /**
+     * 设置重复模式（优先使用绑定，否则通过 Intent）
+     */
     fun setRepeatMode(mode: RepeatMode) {
         if (isBound && audioService != null) {
             audioService?.setRepeatMode(mode)
         } else {
-            ensureServiceReady { if (it) audioService?.setRepeatMode(mode) }
+            val intent = Intent(context, AudioPlaybackService::class.java).apply {
+                action = AudioPlaybackService.ACTION_SET_REPEAT_MODE
+                putExtra(AudioPlaybackService.EXTRA_REPEAT_MODE, mode.ordinal)
+            }
+            context.startService(intent)
         }
     }
 
+    /**
+     * 设置随机播放（优先使用绑定，否则通过 Intent）
+     */
     fun setShuffleEnabled(enabled: Boolean) {
         if (isBound && audioService != null) {
             audioService?.setShuffleEnabled(enabled)
         } else {
-            ensureServiceReady { if (it) audioService?.setShuffleEnabled(enabled) }
+            val intent = Intent(context, AudioPlaybackService::class.java).apply {
+                action = AudioPlaybackService.ACTION_SET_SHUFFLE
+                putExtra(AudioPlaybackService.EXTRA_SHUFFLE_ENABLED, enabled)
+            }
+            context.startService(intent)
         }
     }
 
@@ -104,6 +137,33 @@ class AudioBackgroundManager(private val context: Context) {
             bindService()
         }
         return null
+    }
+
+    /**
+     * 同步获取播放状态（会等待绑定完成，超时 300ms）
+     * 用于 Activity 恢复时立即获得真实进度，避免跳变
+     */
+    fun getPlaybackStatusSync(): AudioPlaybackStatus? {
+        if (isBound && audioService != null) {
+            return audioService?.getPlaybackStatus()
+        }
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var result: AudioPlaybackStatus? = null
+        val bound = bindService()
+        if (bound) {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                latch.countDown()
+            }, 300)
+            try {
+                latch.await(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (e: InterruptedException) {
+                // ignore
+            }
+            if (isBound && audioService != null) {
+                result = audioService?.getPlaybackStatus()
+            }
+        }
+        return result
     }
 
     fun getCurrentTrack(): AudioTrack? = audioService?.getCurrentTrack()

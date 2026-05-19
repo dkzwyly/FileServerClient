@@ -284,8 +284,7 @@ class AudioPlayerActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.onActivityResume()
-        // 立即同步进度（先用缓存，再用播放器确认）
-        viewModel.refreshPositionImmediately()
+        viewModel.refreshPositionImmediately()   // 立即从后台服务同步进度
     }
 
     override fun onDestroy() {
