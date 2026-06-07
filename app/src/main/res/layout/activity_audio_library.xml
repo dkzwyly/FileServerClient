@@ -46,6 +46,16 @@
             android:padding="12dp"
             android:contentDescription="播放模式" />
 
+        <!-- 动画切换按钮（新增） -->
+        <ImageButton
+            android:id="@+id/animationSwitchButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:src="@android:drawable/ic_menu_edit"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:padding="12dp"
+            android:contentDescription="切换动画" />
+
         <!-- 搜索按钮 -->
         <ImageButton
             android:id="@+id/searchIconButton"

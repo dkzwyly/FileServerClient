@@ -27,6 +27,9 @@ class PlaylistDetailActivity : AppCompatActivity() {
         const val MODE_LIST = 0
         const val MODE_SINGLE = 1
         const val MODE_RANDOM = 2
+
+        private const val PREFS_ANIMATION = "playlist_detail_animation"
+        private const val KEY_ANIMATION_INDEX = "animation_index"
     }
 
     private lateinit var recyclerView: RecyclerView
@@ -38,9 +41,15 @@ class PlaylistDetailActivity : AppCompatActivity() {
     private var serverUrl: String = ""
     private var currentPlayMode: Int = MODE_LIST
 
-    // 播放服务相关
     private var playbackService: AudioPlaybackService? = null
     private var isBound = false
+
+    // 动画列表（目前仅扫光，未来可扩展）
+    private val animations = listOf(
+        ShineAnimationSimple()
+        // 未来可添加更多动画，如 PulseAnimation, GlowAnimation 等
+    )
+    private var currentAnimationIndex = 0
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -95,6 +104,7 @@ class PlaylistDetailActivity : AppCompatActivity() {
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         currentPlayMode = prefs.getInt(KEY_MODE_PREFIX + playlistId, MODE_LIST)
 
+        loadAnimationIndexFromPrefs()
         initViews()
         loadPlaylist()
     }
@@ -119,26 +129,6 @@ class PlaylistDetailActivity : AppCompatActivity() {
         playbackService?.removePlaybackListener(playbackListener)
     }
 
-    private fun initViews() {
-        toolbar = findViewById(R.id.toolbar)
-        setSupportActionBar(toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
-
-        recyclerView = findViewById(R.id.recyclerView)
-        recyclerView.layoutManager = LinearLayoutManager(this)
-
-        adapter = PlaylistDetailAdapter(
-            tracks = emptyList(),
-            onItemClick = { track, index ->
-                playTrack(track, index)
-            },
-            onRemoveClick = { track ->
-                removeTrackFromPlaylist(track)
-            }
-        )
-        recyclerView.adapter = adapter
-    }
-
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.playlist_detail_menu, menu)
         return true
@@ -154,8 +144,58 @@ class PlaylistDetailActivity : AppCompatActivity() {
                 showPlayModeDialog()
                 return true
             }
+            R.id.action_switch_animation -> {
+                switchToNextAnimation()
+                return true
+            }
         }
         return super.onOptionsItemSelected(item)
+    }
+
+    private fun loadAnimationIndexFromPrefs() {
+        val prefsAnim = getSharedPreferences(PREFS_ANIMATION, Context.MODE_PRIVATE)
+        currentAnimationIndex = prefsAnim.getInt(KEY_ANIMATION_INDEX, 0)
+        if (currentAnimationIndex >= animations.size) currentAnimationIndex = 0
+    }
+
+    private fun saveAnimationIndex() {
+        getSharedPreferences(PREFS_ANIMATION, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_ANIMATION_INDEX, currentAnimationIndex)
+            .apply()
+    }
+
+    private fun switchToNextAnimation() {
+        currentAnimationIndex = (currentAnimationIndex + 1) % animations.size
+        val newAnimation = animations[currentAnimationIndex]
+        adapter.setAnimation(newAnimation)
+        saveAnimationIndex()
+        val animationName = getAnimationName(newAnimation)
+        Toast.makeText(this, "动画: $animationName", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun getAnimationName(animation: PlayingAnimation): String {
+        return when (animation) {
+            is ShineAnimationSimple -> "扫光"
+            else -> "默认"
+        }
+    }
+
+    private fun initViews() {
+        toolbar = findViewById(R.id.toolbar)
+        setSupportActionBar(toolbar)
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+
+        recyclerView = findViewById(R.id.recyclerView)
+        recyclerView.layoutManager = LinearLayoutManager(this)
+
+        adapter = PlaylistDetailAdapter(
+            tracks = emptyList(),
+            onItemClick = { track, index -> playTrack(track, index) },
+            onRemoveClick = { track -> removeTrackFromPlaylist(track) },
+            animation = animations[currentAnimationIndex]
+        )
+        recyclerView.adapter = adapter
     }
 
     private fun showPlayModeDialog() {
@@ -220,14 +260,10 @@ class PlaylistDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 滚动到列表指定位置并使其偏上显示（例如屏幕高度的 35% 处）
-     */
     private fun scrollToCenter(position: Int) {
         val layoutManager = recyclerView.layoutManager as? LinearLayoutManager ?: return
-        val targetView = layoutManager.findViewByPosition(position)
-        // 可调整偏上的比例，值越小越靠上，0.35 表示顶部在屏幕 35% 处
         val targetTopRatio = 0.35f
+        val targetView = layoutManager.findViewByPosition(position)
         if (targetView != null) {
             val itemHeight = targetView.height
             val recyclerHeight = recyclerView.height

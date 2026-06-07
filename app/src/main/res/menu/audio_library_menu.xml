@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<menu xmlns:android="http://schemas.android.com/apk/res/android">
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
     <item
         android:id="@+id/action_play_mode"
         android:title="播放模式"
-        android:icon="@android:drawable/ic_menu_sort_by_size" />
+        android:icon="@android:drawable/ic_menu_sort_by_size"
+        app:showAsAction="always" />
+    <item
+        android:id="@+id/action_switch_animation"
+        android:title="切换动画"
+        android:icon="@android:drawable/ic_menu_edit"
+        app:showAsAction="always" />
 </menu>

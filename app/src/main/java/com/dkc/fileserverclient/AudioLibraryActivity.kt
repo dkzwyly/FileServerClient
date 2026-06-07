@@ -30,6 +30,7 @@ class AudioLibraryActivity : AppCompatActivity() {
     private lateinit var titleText: TextView
     private lateinit var backButton: ImageButton
     private lateinit var modeSwitchButton: ImageButton
+    private lateinit var animationSwitchButton: ImageButton
     private lateinit var searchIconButton: ImageButton
     private lateinit var searchEditText: EditText
     private lateinit var clearSearchButton: ImageButton
@@ -59,9 +60,13 @@ class AudioLibraryActivity : AppCompatActivity() {
 
     private var currentPlayMode: Int = PlaylistDetailActivity.MODE_LIST
 
-    // 播放服务相关
     private var playbackService: AudioPlaybackService? = null
     private var isBound = false
+
+    private val animations = listOf(
+        ShineAnimationSimple()
+    )
+    private var currentAnimationIndex = 0
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -109,6 +114,8 @@ class AudioLibraryActivity : AppCompatActivity() {
         private const val TAG = "AudioLibraryActivity"
         private const val PREFS_NAME = "audio_library_play_mode"
         private const val KEY_MODE = "current_play_mode"
+        private const val PREFS_ANIMATION = "audio_library_animation"
+        private const val KEY_ANIMATION_INDEX = "animation_index"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -128,6 +135,7 @@ class AudioLibraryActivity : AppCompatActivity() {
         PlaylistManager.initialize(this)
 
         loadPlayMode()
+        loadAnimationIndexFromPrefs()
 
         initViews()
         setupTabs()
@@ -161,7 +169,31 @@ class AudioLibraryActivity : AppCompatActivity() {
         loadPlaylists()
     }
 
-    // ---------- 播放模式相关 ----------
+    private fun loadAnimationIndexFromPrefs() {
+        val prefs = getSharedPreferences(PREFS_ANIMATION, Context.MODE_PRIVATE)
+        currentAnimationIndex = prefs.getInt(KEY_ANIMATION_INDEX, 0)
+        if (currentAnimationIndex >= animations.size) currentAnimationIndex = 0
+    }
+
+    private fun saveAnimationIndex() {
+        getSharedPreferences(PREFS_ANIMATION, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_ANIMATION_INDEX, currentAnimationIndex)
+            .apply()
+    }
+
+    private fun switchToNextAnimation() {
+        currentAnimationIndex = (currentAnimationIndex + 1) % animations.size
+        val newAnimation = animations[currentAnimationIndex]
+        audioAdapter.setAnimation(newAnimation)
+        saveAnimationIndex()
+        val animationName = when (newAnimation) {
+            is ShineAnimationSimple -> "扫光"
+            else -> "默认"
+        }
+        Toast.makeText(this, "动画: $animationName", Toast.LENGTH_SHORT).show()
+    }
+
     private fun loadPlayMode() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         currentPlayMode = prefs.getInt(KEY_MODE, PlaylistDetailActivity.MODE_LIST)
@@ -207,6 +239,7 @@ class AudioLibraryActivity : AppCompatActivity() {
         titleText = findViewById(R.id.audioTitleText)
         backButton = findViewById(R.id.backButton)
         modeSwitchButton = findViewById(R.id.modeSwitchButton)
+        animationSwitchButton = findViewById(R.id.animationSwitchButton)
         searchIconButton = findViewById(R.id.searchIconButton)
         searchEditText = findViewById(R.id.searchEditText)
         clearSearchButton = findViewById(R.id.clearSearchButton)
@@ -221,6 +254,7 @@ class AudioLibraryActivity : AppCompatActivity() {
 
         backButton.setOnClickListener { finish() }
         modeSwitchButton.setOnClickListener { switchPlayMode() }
+        animationSwitchButton.setOnClickListener { switchToNextAnimation() }
         searchIconButton.setOnClickListener { showSearchContainer() }
         closeSearchButton.setOnClickListener { hideSearchContainer() }
         setupSearch()
@@ -231,12 +265,13 @@ class AudioLibraryActivity : AppCompatActivity() {
         playlistRecyclerView.layoutManager = LinearLayoutManager(this)
 
         audioAdapter = AudioLibraryAdapter(
-            currentServerUrl,
-            filteredAudioTracks,
+            serverUrl = currentServerUrl,
+            audioTracks = filteredAudioTracks,
             onAudioClick = { playAudio(it) },
             onAudioLongClick = { showAddToPlaylistDialog(it) },
             lifecycleScope = coroutineScope,
-            resources = resources
+            resources = resources,
+            animation = animations[currentAnimationIndex]
         )
         audioRecyclerView.adapter = audioAdapter
 
@@ -381,7 +416,7 @@ class AudioLibraryActivity : AppCompatActivity() {
         searchContainer.visibility = View.GONE
         searchIconButton.visibility = View.VISIBLE
         searchEditText.setText("")
-        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
         imm.hideSoftInputFromWindow(searchEditText.windowToken, 0)
         performSearch("")
     }
@@ -536,26 +571,14 @@ class AudioLibraryActivity : AppCompatActivity() {
         }
     }
 
-    private fun getDirectoryFromPath(filePath: String): String {
-        return try {
-            java.io.File(filePath).parent ?: ""
-        } catch (e: Exception) {
-            ""
-        }
-    }
-
     private fun showToast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-    /**
-     * 滚动到列表指定位置并使其偏上显示（例如屏幕高度的 35% 处）
-     */
     private fun scrollToCenter(position: Int) {
         val layoutManager = audioRecyclerView.layoutManager as? LinearLayoutManager ?: return
-        val targetView = layoutManager.findViewByPosition(position)
-        // 可调整偏上的比例，值越小越靠上，0.35 表示顶部在屏幕 35% 处
         val targetTopRatio = 0.35f
+        val targetView = layoutManager.findViewByPosition(position)
         if (targetView != null) {
             val itemHeight = targetView.height
             val recyclerHeight = audioRecyclerView.height

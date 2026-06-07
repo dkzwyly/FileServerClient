@@ -13,14 +13,14 @@ import coil.load
 class PlaylistDetailAdapter(
     private var tracks: List<AudioTrack>,
     private val onItemClick: (AudioTrack, Int) -> Unit,
-    private val onRemoveClick: (AudioTrack) -> Unit
+    private val onRemoveClick: (AudioTrack) -> Unit,
+    private var animation: PlayingAnimation = ShineAnimationSimple()   // 默认扫光动画
 ) : RecyclerView.Adapter<PlaylistDetailAdapter.ViewHolder>() {
 
     companion object {
         private const val TAG = "PlaylistDetailAdapter"
     }
 
-    // 当前正在播放的歌曲 ID
     private var currentlyPlayingId: String? = null
 
     class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -44,15 +44,18 @@ class PlaylistDetailAdapter(
 
         loadTrackCover(holder, track)
 
-        // 高亮当前播放的歌曲
-        if (currentlyPlayingId == track.id) {
+        val isPlaying = currentlyPlayingId == track.id
+        if (isPlaying) {
             holder.itemView.setBackgroundColor(
                 holder.itemView.context.getColor(R.color.playing_highlight)
             )
+            // 动画应用到整个 itemView
+            animation.start(holder.itemView)
         } else {
             holder.itemView.setBackgroundColor(
                 holder.itemView.context.getColor(android.R.color.transparent)
             )
+            animation.stop(holder.itemView)
         }
 
         holder.itemView.setOnClickListener {
@@ -96,9 +99,6 @@ class PlaylistDetailAdapter(
         notifyDataSetChanged()
     }
 
-    /**
-     * 设置正在播放的歌曲 ID，并刷新高亮
-     */
     fun setCurrentlyPlaying(trackId: String?) {
         if (currentlyPlayingId != trackId) {
             currentlyPlayingId = trackId
@@ -106,10 +106,20 @@ class PlaylistDetailAdapter(
         }
     }
 
-    /**
-     * 根据 trackId 获取在列表中的位置
-     */
     fun getPositionByTrackId(trackId: String): Int {
         return tracks.indexOfFirst { it.id == trackId }
+    }
+
+    /**
+     * 动态更换动画风格（目前仅扫光，未来可扩展）
+     */
+    fun setAnimation(newAnimation: PlayingAnimation) {
+        animation = newAnimation
+        notifyDataSetChanged()
+    }
+
+    override fun onViewRecycled(holder: ViewHolder) {
+        super.onViewRecycled(holder)
+        animation.stop(holder.itemView)
     }
 }

@@ -17,14 +17,14 @@ class AudioLibraryAdapter(
     private val onAudioClick: (AudioTrack) -> Unit,
     private val onAudioLongClick: (AudioTrack) -> Unit,
     private val lifecycleScope: CoroutineScope,
-    private val resources: Resources
+    private val resources: Resources,
+    private var animation: PlayingAnimation = ShineAnimationSimple()
 ) : RecyclerView.Adapter<AudioLibraryAdapter.AudioViewHolder>() {
 
     private val thumbnailSize by lazy {
         (48 * resources.displayMetrics.density).toInt()
     }
 
-    // 当前正在播放的歌曲 ID
     private var currentlyPlayingId: String? = null
 
     class AudioViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -57,15 +57,17 @@ class AudioLibraryAdapter(
 
         loadCoverImage(holder, track)
 
-        // 高亮当前播放的歌曲
-        if (currentlyPlayingId == track.id) {
+        val isPlaying = currentlyPlayingId == track.id
+        if (isPlaying) {
             holder.itemView.setBackgroundColor(
                 holder.itemView.context.getColor(R.color.playing_highlight)
             )
+            animation.start(holder.itemView)
         } else {
             holder.itemView.setBackgroundColor(
                 holder.itemView.context.getColor(android.R.color.transparent)
             )
+            animation.stop(holder.itemView)
         }
 
         holder.itemView.setOnClickListener { onAudioClick(track) }
@@ -132,9 +134,6 @@ class AudioLibraryAdapter(
         notifyDataSetChanged()
     }
 
-    /**
-     * 设置正在播放的歌曲 ID，并刷新高亮
-     */
     fun setCurrentlyPlaying(trackId: String?) {
         if (currentlyPlayingId != trackId) {
             currentlyPlayingId = trackId
@@ -142,16 +141,18 @@ class AudioLibraryAdapter(
         }
     }
 
-    /**
-     * 根据 trackId 获取在当前列表中的位置
-     * （用于滚动）
-     */
     fun getPositionByTrackId(trackId: String): Int {
         return audioTracks.indexOfFirst { it.id == trackId }
     }
 
+    fun setAnimation(newAnimation: PlayingAnimation) {
+        animation = newAnimation
+        notifyDataSetChanged()
+    }
+
     override fun onViewRecycled(holder: AudioViewHolder) {
         super.onViewRecycled(holder)
+        animation.stop(holder.itemView)
         holder.audioIcon.setImageDrawable(null)
         holder.currentTrackId = null
     }
