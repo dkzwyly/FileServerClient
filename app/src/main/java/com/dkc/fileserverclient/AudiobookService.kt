@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.SharedPreferences
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -23,6 +24,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         const val CHANNEL_ID = "audiobook_channel"
         const val NOTIFICATION_ID = 1001
         const val TAG = "AudiobookService"
+        const val PREF_TTS_ENGINE = "tts_engine_package"
     }
 
     private var tts: TextToSpeech? = null
@@ -55,7 +57,15 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "Service onCreate")
         createNotificationChannel()
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-        tts = TextToSpeech(this, this)
+
+        // 读取用户保存的引擎包名，若未选则使用系统默认（null）
+        val prefs = getSharedPreferences("tts_prefs", MODE_PRIVATE)
+        val enginePackage = prefs.getString(PREF_TTS_ENGINE, null)
+        tts = if (enginePackage.isNullOrEmpty()) {
+            TextToSpeech(this, this)
+        } else {
+            TextToSpeech(this, this, enginePackage)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -74,23 +84,27 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
     }
 
-    // 新增：重新初始化TTS，用于检测系统默认引擎更改
-    fun reinitializeTts() {
+    /**
+     * 重新初始化TTS，可传入引擎包名；若为null则使用系统默认
+     */
+    fun reinitializeTts(enginePackage: String? = null) {
         tts?.stop()
         tts?.shutdown()
         isTtsReady = false
-        tts = TextToSpeech(this, this)
+        tts = if (enginePackage.isNullOrEmpty()) {
+            TextToSpeech(this, this)
+        } else {
+            TextToSpeech(this, this, enginePackage)
+        }
     }
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            // 尝试设置中文，失败则回退到默认语言
             var result = tts?.setLanguage(Locale.CHINESE) ?: TextToSpeech.LANG_MISSING_DATA
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                 result = tts?.setLanguage(Locale.getDefault()) ?: TextToSpeech.LANG_MISSING_DATA
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    Log.e(TAG, "不支持中文且默认语言不可用")
-                    callback?.onPlaybackError("当前TTS引擎不支持中文，请在系统设置中安装中文语音数据或更换引擎")
+                    callback?.onPlaybackError("当前TTS引擎不支持中文，请安装中文语音数据或更换引擎")
                     return
                 }
             }
@@ -118,14 +132,17 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             isTtsReady = true
             onTtsReadyListener?.invoke()
         } else {
-            Log.e(TAG, "TTS 初始化失败")
-            callback?.onPlaybackError("TTS 初始化失败，请检查系统TTS设置")
+            callback?.onPlaybackError("TTS初始化失败，请检查系统TTS设置")
         }
     }
 
     fun isReady(): Boolean = isTtsReady
 
-    fun play(text: String, utteranceId: String = "page_${System.currentTimeMillis()}") {
+    /**
+     * 播放文本
+     * @param flush true=清除队列立即播放，false=追加到队列末尾
+     */
+    fun play(text: String, utteranceId: String, flush: Boolean = true) {
         if (!isTtsReady) {
             callback?.onPlaybackError("语音引擎未就绪")
             return
@@ -136,7 +153,13 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         }
         requestAudioFocus()
         startForegroundIfNeeded()
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        val queueMode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+        tts?.speak(text, queueMode, null, utteranceId)
+    }
+
+    /** 追加文本到队列末尾，用于无缝预加载下一页 */
+    fun appendPlay(text: String, utteranceId: String) {
+        play(text, utteranceId, false)
     }
 
     fun pause() {
