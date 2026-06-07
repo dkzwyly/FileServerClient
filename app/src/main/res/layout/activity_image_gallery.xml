@@ -17,6 +17,7 @@
         android:paddingEnd="8dp"
         android:elevation="4dp">
 
+        <!-- 返回按钮 -->
         <ImageButton
             android:id="@+id/backButton"
             android:layout_width="48dp"
@@ -45,19 +46,7 @@
             android:orientation="horizontal"
             android:gravity="center">
 
-            <!-- 相机按钮（显示但功能待扩展） -->
-            <ImageButton
-                android:id="@+id/cameraButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_camera"
-                app:tint="#2196F3"
-                android:contentDescription="相机"
-                android:visibility="visible"
-                android:layout_marginEnd="8dp" />
-
-            <!-- 新增：排序按钮 -->
+            <!-- 排序按钮（第一） -->
             <ImageButton
                 android:id="@+id/sortButton"
                 android:layout_width="40dp"
@@ -68,7 +57,29 @@
                 android:contentDescription="排序"
                 android:layout_marginEnd="8dp" />
 
-            <!-- 多选删除按钮 -->
+            <!-- 相机按钮（第二） -->
+            <ImageButton
+                android:id="@+id/cameraButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_camera"
+                app:tint="#2196F3"
+                android:contentDescription="相机"
+                android:layout_marginEnd="8dp" />
+
+            <!-- 上传按钮（第三） -->
+            <ImageButton
+                android:id="@+id/reindexButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_upload"
+                app:tint="#4CAF50"
+                android:contentDescription="上传图片"
+                android:layout_marginEnd="8dp" />
+
+            <!-- 多选删除按钮（第四） -->
             <ImageButton
                 android:id="@+id/deleteSelectedButton"
                 android:layout_width="40dp"
@@ -81,7 +92,6 @@
                 android:enabled="false" />
 
         </LinearLayout>
-
     </LinearLayout>
 
     <!-- 多选状态栏 -->

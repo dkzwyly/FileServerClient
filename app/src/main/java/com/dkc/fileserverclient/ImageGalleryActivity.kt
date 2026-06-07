@@ -39,7 +39,7 @@ class ImageGalleryActivity : AppCompatActivity() {
     private lateinit var backButton: ImageButton
     private lateinit var cameraButton: ImageButton
     private lateinit var sortButton: ImageButton
-    //private lateinit var reindexButton: ImageButton
+    private lateinit var reindexButton: ImageButton   // 上传按钮
     private lateinit var deleteSelectedButton: ImageButton
     private lateinit var selectionToolbar: View
     private lateinit var selectedCountText: TextView
@@ -95,7 +95,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         backButton = findViewById(R.id.backButton)
         cameraButton = findViewById(R.id.cameraButton)
         sortButton = findViewById(R.id.sortButton)
-        //reindexButton = findViewById(R.id.reindexButton)
+        reindexButton = findViewById(R.id.reindexButton)   // 上传按钮
         deleteSelectedButton = findViewById(R.id.deleteSelectedButton)
         selectionToolbar = findViewById(R.id.selectionToolbar)
         selectedCountText = findViewById(R.id.selectedCountText)
@@ -110,7 +110,8 @@ class ImageGalleryActivity : AppCompatActivity() {
 
         cameraButton.setOnClickListener { checkAndRequestPermissions() }
         sortButton.setOnClickListener { showSortDialog() }
-        //reindexButton.setOnClickListener { startReindex() }
+        // 原重建功能替换为上传选择
+        reindexButton.setOnClickListener { openFilePicker() }
         deleteSelectedButton.setOnClickListener { showDeleteConfirmation() }
         selectAllButton.setOnClickListener { toggleSelectAll() }
         cancelSelectionButton.setOnClickListener { exitMultiSelectionMode() }
@@ -119,7 +120,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         gridLayoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
             override fun getSpanSize(position: Int): Int {
                 return when (adapter.getItemViewType(position)) {
-                    // 日期头部占满 3 列
+                    // 日期头部占满 4 列
                     0 -> 4   // VIEW_TYPE_HEADER = 0
                     else -> 1 // 图片占 1 列
                 }
@@ -261,7 +262,7 @@ class ImageGalleryActivity : AppCompatActivity() {
 
     // ---------- 原有方法（相机、多选、删除等）保持不变 ----------
     private fun startReindex() {
-        //reindexButton.isEnabled = false
+        // 此方法保留但不再调用，可忽略
         Toast.makeText(this, "请求重建元数据...", Toast.LENGTH_SHORT).show()
         coroutineScope.launch {
             try {
@@ -273,14 +274,10 @@ class ImageGalleryActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 Toast.makeText(this@ImageGalleryActivity, "异常: ${e.message}", Toast.LENGTH_SHORT).show()
-            } finally {
-                delay(5000)
-                //reindexButton.isEnabled = true
             }
         }
     }
 
-    // ImageGalleryActivity.kt
     private fun previewImage(item: FileSystemItem) {
         try {
             val encoded = java.net.URLEncoder.encode(item.path, "UTF-8")
@@ -291,7 +288,6 @@ class ImageGalleryActivity : AppCompatActivity() {
                 putExtra("FILE_PATH", item.path)
                 putExtra("SERVER_URL", currentServerUrl)
                 putExtra("CURRENT_PATH", imageGalleryPath)
-                // 新增：传递当前排序参数
                 putExtra("SORT_BY", currentSortBy)
                 putExtra("SORT_ORDER", currentSortOrder)
             })
@@ -300,7 +296,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
-    // ==================== 相机权限及拍照（完全不变） ====================
+    // ==================== 相机权限及拍照 ====================
     private fun checkAndRequestPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -402,7 +398,76 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
-    // ==================== 多选模式（完全不变） ====================
+    // ==================== 新增：上传选择（替换重建功能） ====================
+    private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val data = result.data ?: return@registerForActivityResult
+            val uris = if (data.clipData != null) {
+                (0 until data.clipData!!.itemCount).map { data.clipData!!.getItemAt(it).uri }
+            } else if (data.data != null) {
+                listOf(data.data!!)
+            } else {
+                emptyList()
+            }
+            if (uris.isNotEmpty()) {
+                uploadSelectedFiles(uris)
+            }
+        }
+    }
+
+    private fun openFilePicker() {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        filePickerLauncher.launch(intent)
+    }
+
+    private fun uploadSelectedFiles(uris: List<Uri>) {
+        coroutineScope.launch {
+            statusText.text = "准备上传 (${uris.size} 张)..."
+            var successCount = 0
+            val tempFiles = mutableListOf<File>()
+            try {
+                for (uri in uris) {
+                    val tempFile = createTempImageFile(uri) ?: continue
+                    tempFiles.add(tempFile)
+                    val result = withContext(Dispatchers.IO) {
+                        fileServerService.uploadFiles(
+                            currentServerUrl,
+                            listOf(tempFile to tempFile.name),
+                            imageGalleryPath
+                        )
+                    }
+                    if (result.success) successCount++
+                }
+                Toast.makeText(this@ImageGalleryActivity, "上传成功 $successCount / ${uris.size} 张", Toast.LENGTH_LONG).show()
+                if (successCount > 0) loadImages()
+            } catch (e: Exception) {
+                Toast.makeText(this@ImageGalleryActivity, "上传异常: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                tempFiles.forEach { if (it.exists()) it.delete() }
+                statusText.text = if (adapter.itemCount == 0) "无图片" else "共 ${adapter.itemCount} 张"
+            }
+        }
+    }
+
+    private fun createTempImageFile(uri: Uri): File? {
+        return try {
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                val tempFile = File.createTempFile("upload_", ".jpg", cacheDir)
+                tempFile.outputStream().use { output ->
+                    inputStream.copyTo(output)
+                }
+                tempFile
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "创建临时文件失败", e)
+            null
+        }
+    }
+
+    // ==================== 多选模式 ====================
     private fun enterMultiSelectionMode() {
         isMultiSelectionMode = true
         selectionToolbar.visibility = View.VISIBLE
@@ -427,7 +492,6 @@ class ImageGalleryActivity : AppCompatActivity() {
         val path = item.path
         if (selectedItems.contains(path)) selectedItems.remove(path) else selectedItems.add(path)
         updateSelectionUI()
-        // 查找在适配器中的位置并通知更新
         val pos = adapter.currentList.indexOfFirst {
             it is GalleryItem.ImageEntry && it.image.path == path
         }
