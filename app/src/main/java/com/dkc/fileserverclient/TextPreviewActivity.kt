@@ -62,17 +62,20 @@ class TextPreviewActivity : AppCompatActivity() {
     private var isBound = false
     private var selectedEngineType: EngineType? = null
 
-    private var pendingAutoPlay = false   // 标记是否期望开始自动播放
-    private var lastUtteranceId = ""      // 防止重复播放同一页
+    private var pendingAutoPlay = false
+    private var lastUtteranceId = ""
 
     private enum class EngineType { LOCAL, CLOUD }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             audiobookService = (service as AudiobookService.LocalBinder).getService()
+            // 应用已保存的语速
+            val savedSpeed = prefs.getFloat("tts_speed", 1.0f)
+            audiobookService?.setSpeechRate(savedSpeed)
+
             if (selectedEngineType == EngineType.LOCAL) {
                 ensureLocalEngineReady()
-                // 如果 TTS 已就绪则尝试播放，否则等待就绪回调
                 if (audiobookService?.isReady() == true) {
                     tryStartAutoPlay()
                 } else {
@@ -300,6 +303,7 @@ class TextPreviewActivity : AppCompatActivity() {
         }
     }
 
+    // ==================== 设置对话框（含语速调节） ====================
     private fun showAppearanceDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_reading_settings, null)
         val seekBarFontSize = dialogView.findViewById<SeekBar>(R.id.seekBarFontSize)
@@ -311,13 +315,25 @@ class TextPreviewActivity : AppCompatActivity() {
         val btnCancel = dialogView.findViewById<Button>(R.id.btnCancel)
         val btnApply = dialogView.findViewById<Button>(R.id.btnApply)
 
+        // 新增语速控件
+        val seekBarSpeed = dialogView.findViewById<SeekBar>(R.id.seekBarSpeed)
+        val speedValue = dialogView.findViewById<TextView>(R.id.speedValue)
+
         val originalFontSize = currentFontSize
         val originalBgColor = currentBackgroundColor
+        val originalSpeed = prefs.getFloat("tts_speed", 1.0f)
 
+        // 字体大小 SeekBar 初始化
         seekBarFontSize.max = 30 - 12
         seekBarFontSize.progress = (currentFontSize - 12).toInt()
         fontSizeValue.text = "${currentFontSize.toInt()}sp"
 
+        // 语速 SeekBar 初始化
+        val speedProgress = ((originalSpeed - 0.5f) / 1.5f * 100).toInt().coerceIn(0, 100)
+        seekBarSpeed.progress = speedProgress
+        speedValue.text = String.format("%.1fx", originalSpeed)
+
+        // 字体大小变化监听
         seekBarFontSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val size = (progress + 12).toFloat()
@@ -328,6 +344,19 @@ class TextPreviewActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
+        // 语速变化监听：实时预览
+        seekBarSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val speed = 0.5f + (progress / 100f) * 1.5f
+                speedValue.text = String.format("%.1fx", speed)
+                // 实时应用到 TTS 引擎，以便试听
+                audiobookService?.setSpeechRate(speed)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        // 颜色按钮监听
         btnColorWhite.setOnClickListener {
             currentBackgroundColor = Color.WHITE
             rootLayout.setBackgroundColor(Color.WHITE)
@@ -357,6 +386,7 @@ class TextPreviewActivity : AppCompatActivity() {
         btnCancel.setOnClickListener {
             currentFontSize = originalFontSize
             currentBackgroundColor = originalBgColor
+            audiobookService?.setSpeechRate(originalSpeed) // 恢复语速
             applyAppearance()
             recalcLinesPerPageAndKeepPosition()
             dialog.dismiss()
@@ -364,7 +394,11 @@ class TextPreviewActivity : AppCompatActivity() {
 
         btnApply.setOnClickListener {
             currentFontSize = (seekBarFontSize.progress + 12).toFloat()
+            val finalSpeed = 0.5f + (seekBarSpeed.progress / 100f) * 1.5f
             saveAppearancePrefs()
+            // 保存语速到 SharedPreferences
+            prefs.edit().putFloat("tts_speed", finalSpeed).apply()
+            audiobookService?.setSpeechRate(finalSpeed)
             applyAppearance()
             recalcLinesPerPageAndKeepPosition()
             dialog.dismiss()
@@ -451,7 +485,7 @@ class TextPreviewActivity : AppCompatActivity() {
                 when (item.title) {
                     "本地 TTS" -> {
                         selectedEngineType = EngineType.LOCAL
-                        pendingAutoPlay = true   // 标记期望播放
+                        pendingAutoPlay = true
                         if (!isBound) {
                             bindService(Intent(this@TextPreviewActivity, AudiobookService::class.java),
                                 serviceConnection, Context.BIND_AUTO_CREATE)
@@ -484,7 +518,6 @@ class TextPreviewActivity : AppCompatActivity() {
         currentEngine?.release()
         audiobookService?.let { service ->
             currentEngine = LocalTtsEngine(service)
-            // 如果 TTS 尚未就绪，设置回调等待就绪后播放
             if (!service.isReady()) {
                 service.onTtsReadyListener = {
                     tryStartAutoPlay()
@@ -507,13 +540,11 @@ class TextPreviewActivity : AppCompatActivity() {
         if (!pendingAutoPlay) return
         val content = viewModel.pageContent.value
         if (content.isNullOrBlank()) {
-            // 内容未就绪，等待内容观察者触发
             return
         }
-        // 检查引擎是否就绪
         val engineReady = when (selectedEngineType) {
             EngineType.LOCAL -> audiobookService?.isReady() == true
-            EngineType.CLOUD -> true   // 云引擎模拟，默认就绪
+            EngineType.CLOUD -> true
             else -> false
         }
         if (engineReady && currentEngine?.isPlaying() != true) {
@@ -525,13 +556,11 @@ class TextPreviewActivity : AppCompatActivity() {
 
     private fun playCurrentPage() {
         val content = viewModel.pageContent.value ?: run {
-            // 如果内容意外为空，重新标记待播放
             pendingAutoPlay = true
             return
         }
         val engine = currentEngine ?: return
         val utteranceId = "page_${viewModel.currentAbsoluteCharOffset.value ?: 0}"
-        // 防止重复播放同一页
         if (utteranceId == lastUtteranceId && engine.isPlaying()) return
 
         lastUtteranceId = utteranceId
@@ -542,7 +571,7 @@ class TextPreviewActivity : AppCompatActivity() {
             override fun onComplete(utteranceId: String) {
                 runOnUiThread {
                     if (isAutoPlay) {
-                        viewModel.nextPage()   // 翻页后会自动触发 pageContent 变化 -> observer 播放下一页
+                        viewModel.nextPage()
                     } else {
                         statusLabel.text = "朗读完成"
                     }
@@ -563,14 +592,12 @@ class TextPreviewActivity : AppCompatActivity() {
             if (content != null && pendingAutoPlay) {
                 tryStartAutoPlay()
             } else if (content != null && isAutoPlay && currentEngine?.isPlaying() == false) {
-                // 自动翻页模式下的正常续播
                 playCurrentPage()
             }
         }
     }
 
     private fun manualNextPage() {
-        // 停止自动播放
         if (isAutoPlay) {
             currentEngine?.stop()
             isAutoPlay = false
