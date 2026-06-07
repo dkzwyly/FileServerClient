@@ -67,4 +67,12 @@
     <color name="library_text_bg">#E3F2FD</color>
     <color name="library_video_bg">#E8F0FE</color>
     <color name="library_audio_bg">#F3E5F5</color>
+    <!-- 基础/强调色 -->
+    <color name="accent">#FF6200EE</color>   <!-- Material Design 紫色，可替换为你喜欢的颜色 -->
+
+    <!-- 分割线颜色 -->
+    <color name="divider">#1F000000</color>  <!-- 半透黑，常用作分割线，可调透明度/色值 -->
+
+    <!-- 深色背景表面色（Dark Mode 下卡片/面板背景） -->
+    <color name="surface_dark">#121212</color> <!-- Material Design 深色主题推荐色 -->
 </resources>
