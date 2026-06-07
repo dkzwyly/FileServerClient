@@ -1,7 +1,10 @@
 package com.dkc.fileserverclient
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -45,6 +48,15 @@ class AudioPlayerActivity : AppCompatActivity() {
     private lateinit var lyricsSettingsButton: Button
     private var currentCoverPath: String? = null
 
+    // 新增：用于监听服务关闭的广播接收器
+    private val closeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "AUDIO_SERVICE_CLOSED") {
+                finish()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_audio_player)
@@ -54,6 +66,15 @@ class AudioPlayerActivity : AppCompatActivity() {
         initViews()
         setupClickListeners()
         observeViewModel()
+
+        // 注册服务关闭广播
+        val filter = IntentFilter("AUDIO_SERVICE_CLOSED")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(closeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnreceiverdException")
+            registerReceiver(closeReceiver, filter)
+        }
     }
 
     private fun enableImmersiveMode() {
@@ -173,11 +194,13 @@ class AudioPlayerActivity : AppCompatActivity() {
             }
         }
     }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         viewModel.updateIntent(intent)
     }
+
     private fun loadCoverFromFile(filePath: String) {
         val file = File(filePath)
         if (!file.exists()) {
@@ -288,16 +311,21 @@ class AudioPlayerActivity : AppCompatActivity() {
         viewModel.onActivityPause()
     }
 
-    // AudioPlayerActivity.kt 中的 onResume 修改为：
     override fun onResume() {
         super.onResume()
         viewModel.onActivityResume()
-        viewModel.refreshPositionImmediately()   // 立即从后台服务同步进度
+        viewModel.refreshPositionImmediately()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         viewModel.release()
+        // 注销广播接收器，防止内存泄漏
+        try {
+            unregisterReceiver(closeReceiver)
+        } catch (e: IllegalArgumentException) {
+            // 忽略未注册的情况
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {

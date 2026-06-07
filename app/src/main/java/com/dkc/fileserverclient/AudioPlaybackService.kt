@@ -36,7 +36,6 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         const val ACTION_STOP = "com.dkc.fileserverclient.ACTION_STOP"
         const val ACTION_CLOSE = "com.dkc.fileserverclient.ACTION_CLOSE"
 
-        // 新增的控制常量
         const val ACTION_SET_SPEED = "com.dkc.fileserverclient.ACTION_SET_SPEED"
         const val EXTRA_SPEED = "extra_speed"
         const val ACTION_SET_REPEAT_MODE = "com.dkc.fileserverclient.ACTION_SET_REPEAT_MODE"
@@ -159,10 +158,17 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                 ACTION_CLOSE -> {
                     audioPlayerManager.stop()
                     stopForeground(true)
-                    stopSelf()
-                    sendBroadcast(Intent("AUDIO_SERVICE_CLOSED"))
+                    isForeground = false
+                    // 发送显式广播，确保 Activity 收到
+                    val closeIntent = Intent("AUDIO_SERVICE_CLOSED").apply {
+                        setPackage(packageName)
+                    }
+                    sendBroadcast(closeIntent)
+                    // 延迟停止服务，保证广播发送
+                    handler.postDelayed({
+                        stopSelf()
+                    }, 100)
                 }
-                // 新增的处理分支
                 ACTION_SET_SPEED -> {
                     val speed = intent.getFloatExtra(EXTRA_SPEED, 1.0f)
                     audioPlayerManager.setPlaybackSpeed(speed)
@@ -176,14 +182,16 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                     val enabled = intent.getBooleanExtra(EXTRA_SHUFFLE_ENABLED, false)
                     audioPlayerManager.setShuffleEnabled(enabled)
                 }
+                // ✅ 添加 else 分支，保证 when 完备
+                else -> {}
             }
         }
-        return START_STICKY
+        // 返回 START_NOT_STICKY 防止服务被系统重启
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder {
         isBound = true
-        // 新客户端绑定时，主动推送一次当前状态
         handler.post {
             val status = audioPlayerManager.getPlaybackStatus()
             playbackListeners.forEach { it.onPlaybackStateChanged(status) }
