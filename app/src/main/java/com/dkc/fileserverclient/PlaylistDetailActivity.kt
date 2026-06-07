@@ -1,10 +1,13 @@
 @file:OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.dkc.fileserverclient
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.os.Bundle
+import android.os.IBinder
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.Toast
@@ -21,10 +24,9 @@ class PlaylistDetailActivity : AppCompatActivity() {
         private const val KEY_MODE_PREFIX = "mode_"
         const val EXTRA_PLAY_MODE = "PLAY_MODE"
 
-        // 播放模式常量
-        const val MODE_LIST = 0      // 列表循环
-        const val MODE_SINGLE = 1    // 单曲循环
-        const val MODE_RANDOM = 2    // 随机播放
+        const val MODE_LIST = 0
+        const val MODE_SINGLE = 1
+        const val MODE_RANDOM = 2
     }
 
     private lateinit var recyclerView: RecyclerView
@@ -34,7 +36,49 @@ class PlaylistDetailActivity : AppCompatActivity() {
 
     private var playlistId: String? = null
     private var serverUrl: String = ""
-    private var currentPlayMode: Int = MODE_LIST   // 默认列表循环
+    private var currentPlayMode: Int = MODE_LIST
+
+    // 播放服务相关
+    private var playbackService: AudioPlaybackService? = null
+    private var isBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            playbackService = (service as AudioPlaybackService.AudioServiceBinder).getService()
+            playbackService?.addPlaybackListener(playbackListener)
+            val currentTrack = playbackService?.getCurrentTrack()
+            adapter.setCurrentlyPlaying(currentTrack?.id)
+            currentTrack?.let {
+                val position = adapter.getPositionByTrackId(it.id)
+                if (position != -1) {
+                    scrollToCenter(position)
+                }
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            playbackService?.removePlaybackListener(playbackListener)
+            playbackService = null
+            isBound = false
+        }
+    }
+
+    private val playbackListener = object : AudioPlaybackListener {
+        override fun onTrackChanged(track: AudioTrack, index: Int) {
+            runOnUiThread {
+                adapter.setCurrentlyPlaying(track.id)
+                val position = adapter.getPositionByTrackId(track.id)
+                if (position != -1) {
+                    scrollToCenter(position)
+                }
+            }
+        }
+
+        override fun onPlaybackStateChanged(status: AudioPlaybackStatus) {}
+        override fun onPlaybackError(error: String) {}
+        override fun onPlaybackEnded() {}
+        override fun onAudioBuffering(isBuffering: Boolean) {}
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,11 +93,30 @@ class PlaylistDetailActivity : AppCompatActivity() {
         }
 
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        // 读取保存的播放模式
         currentPlayMode = prefs.getInt(KEY_MODE_PREFIX + playlistId, MODE_LIST)
 
         initViews()
         loadPlaylist()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val intent = Intent(this, AudioPlaybackService::class.java)
+        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        isBound = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        playbackService?.removePlaybackListener(playbackListener)
     }
 
     private fun initViews() {
@@ -95,9 +158,6 @@ class PlaylistDetailActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    /**
-     * 显示播放模式选择对话框
-     */
     private fun showPlayModeDialog() {
         val modes = arrayOf(
             getString(R.string.list_cycle),
@@ -109,7 +169,6 @@ class PlaylistDetailActivity : AppCompatActivity() {
             .setSingleChoiceItems(modes, currentPlayMode) { dialog, which ->
                 if (currentPlayMode != which) {
                     currentPlayMode = which
-                    // 保存到 SharedPreferences
                     prefs.edit().putInt(KEY_MODE_PREFIX + playlistId, currentPlayMode).apply()
                     Toast.makeText(this, getString(R.string.play_mode_set, modes[which]), Toast.LENGTH_SHORT).show()
                 }
@@ -140,7 +199,7 @@ class PlaylistDetailActivity : AppCompatActivity() {
             putExtra("FILE_NAME", track.name)
             putExtra("FILE_TYPE", "audio")
             putExtra("FROM_MUSIC_LIBRARY", true)
-            putExtra(EXTRA_PLAY_MODE, currentPlayMode)   // 传递播放模式
+            putExtra(EXTRA_PLAY_MODE, currentPlayMode)
         }
         startActivity(intent)
     }
@@ -151,8 +210,45 @@ class PlaylistDetailActivity : AppCompatActivity() {
             if (success) {
                 Toast.makeText(this, "已从歌单移除", Toast.LENGTH_SHORT).show()
                 loadPlaylist()
+                val currentPlayingId = playbackService?.getCurrentTrack()?.id
+                if (currentPlayingId == track.id) {
+                    adapter.setCurrentlyPlaying(null)
+                }
             } else {
                 Toast.makeText(this, "移除失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * 滚动到列表指定位置并使其偏上显示（例如屏幕高度的 35% 处）
+     */
+    private fun scrollToCenter(position: Int) {
+        val layoutManager = recyclerView.layoutManager as? LinearLayoutManager ?: return
+        val targetView = layoutManager.findViewByPosition(position)
+        // 可调整偏上的比例，值越小越靠上，0.35 表示顶部在屏幕 35% 处
+        val targetTopRatio = 0.35f
+        if (targetView != null) {
+            val itemHeight = targetView.height
+            val recyclerHeight = recyclerView.height
+            val targetTop = (recyclerHeight * targetTopRatio).toInt()
+            val offset = targetTop - (itemHeight / 2)
+            val currentTop = targetView.top
+            val delta = currentTop - offset
+            recyclerView.smoothScrollBy(0, delta)
+        } else {
+            layoutManager.scrollToPositionWithOffset(position, 0)
+            recyclerView.post {
+                val newTargetView = layoutManager.findViewByPosition(position)
+                newTargetView?.let {
+                    val itemHeight = it.height
+                    val recyclerHeight = recyclerView.height
+                    val targetTop = (recyclerHeight * targetTopRatio).toInt()
+                    val offset = targetTop - (itemHeight / 2)
+                    val currentTop = it.top
+                    val delta = currentTop - offset
+                    recyclerView.smoothScrollBy(0, delta)
+                }
             }
         }
     }

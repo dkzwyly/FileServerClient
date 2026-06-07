@@ -20,6 +20,9 @@ class PlaylistDetailAdapter(
         private const val TAG = "PlaylistDetailAdapter"
     }
 
+    // 当前正在播放的歌曲 ID
+    private var currentlyPlayingId: String? = null
+
     class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val icon: ImageView = itemView.findViewById(R.id.audioIcon)
         val fileName: TextView = itemView.findViewById(R.id.audioFileName)
@@ -40,6 +43,17 @@ class PlaylistDetailAdapter(
         holder.artistAlbum.text = track.artist ?: "未知艺术家"
 
         loadTrackCover(holder, track)
+
+        // 高亮当前播放的歌曲
+        if (currentlyPlayingId == track.id) {
+            holder.itemView.setBackgroundColor(
+                holder.itemView.context.getColor(R.color.playing_highlight)
+            )
+        } else {
+            holder.itemView.setBackgroundColor(
+                holder.itemView.context.getColor(android.R.color.transparent)
+            )
+        }
 
         holder.itemView.setOnClickListener {
             onItemClick(track, position)
@@ -80,5 +94,22 @@ class PlaylistDetailAdapter(
     fun updateData(newTracks: List<AudioTrack>) {
         tracks = newTracks
         notifyDataSetChanged()
+    }
+
+    /**
+     * 设置正在播放的歌曲 ID，并刷新高亮
+     */
+    fun setCurrentlyPlaying(trackId: String?) {
+        if (currentlyPlayingId != trackId) {
+            currentlyPlayingId = trackId
+            notifyDataSetChanged()
+        }
+    }
+
+    /**
+     * 根据 trackId 获取在列表中的位置
+     */
+    fun getPositionByTrackId(trackId: String): Int {
+        return tracks.indexOfFirst { it.id == trackId }
     }
 }

@@ -1,9 +1,12 @@
 @file:OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.dkc.fileserverclient
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
+import android.os.IBinder
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
@@ -26,7 +29,7 @@ class AudioLibraryActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var titleText: TextView
     private lateinit var backButton: ImageButton
-    private lateinit var modeSwitchButton: ImageButton          // 新增：播放模式切换按钮
+    private lateinit var modeSwitchButton: ImageButton
     private lateinit var searchIconButton: ImageButton
     private lateinit var searchEditText: EditText
     private lateinit var clearSearchButton: ImageButton
@@ -54,8 +57,51 @@ class AudioLibraryActivity : AppCompatActivity() {
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private val audioLibraryPath = "data/音乐"
 
-    // 播放模式相关
-    private var currentPlayMode: Int = PlaylistDetailActivity.MODE_LIST  // 默认列表循环
+    private var currentPlayMode: Int = PlaylistDetailActivity.MODE_LIST
+
+    // 播放服务相关
+    private var playbackService: AudioPlaybackService? = null
+    private var isBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            playbackService = (service as AudioPlaybackService.AudioServiceBinder).getService()
+            playbackService?.addPlaybackListener(playbackListener)
+            val currentTrack = playbackService?.getCurrentTrack()
+            audioAdapter.setCurrentlyPlaying(currentTrack?.id)
+            currentTrack?.let {
+                val position = audioAdapter.getPositionByTrackId(it.id)
+                if (position != -1 && currentTab == TabType.SONGS) {
+                    scrollToCenter(position)
+                }
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            playbackService?.removePlaybackListener(playbackListener)
+            playbackService = null
+            isBound = false
+        }
+    }
+
+    private val playbackListener = object : AudioPlaybackListener {
+        override fun onTrackChanged(track: AudioTrack, index: Int) {
+            runOnUiThread {
+                audioAdapter.setCurrentlyPlaying(track.id)
+                if (currentTab == TabType.SONGS) {
+                    val position = audioAdapter.getPositionByTrackId(track.id)
+                    if (position != -1) {
+                        scrollToCenter(position)
+                    }
+                }
+            }
+        }
+
+        override fun onPlaybackStateChanged(status: AudioPlaybackStatus) {}
+        override fun onPlaybackError(error: String) {}
+        override fun onPlaybackEnded() {}
+        override fun onAudioBuffering(isBuffering: Boolean) {}
+    }
 
     private enum class TabType { PLAYLISTS, SONGS }
 
@@ -69,7 +115,6 @@ class AudioLibraryActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_audio_library)
 
-        // 隐藏系统 ActionBar（使用自定义标题栏）
         supportActionBar?.hide()
 
         currentServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
@@ -82,7 +127,6 @@ class AudioLibraryActivity : AppCompatActivity() {
         metadataManager = SongMetadataManager(this, fileServerService)
         PlaylistManager.initialize(this)
 
-        // 加载保存的播放模式
         loadPlayMode()
 
         initViews()
@@ -91,12 +135,33 @@ class AudioLibraryActivity : AppCompatActivity() {
         loadPlaylists()
     }
 
+    override fun onStart() {
+        super.onStart()
+        val intent = Intent(this, AudioPlaybackService::class.java)
+        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        isBound = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        coroutineScope.cancel()
+        playbackService?.removePlaybackListener(playbackListener)
+    }
+
     override fun onResume() {
         super.onResume()
         loadPlaylists()
     }
 
-    // ---------- 播放模式相关方法 ----------
+    // ---------- 播放模式相关 ----------
     private fun loadPlayMode() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         currentPlayMode = prefs.getInt(KEY_MODE, PlaylistDetailActivity.MODE_LIST)
@@ -141,7 +206,7 @@ class AudioLibraryActivity : AppCompatActivity() {
         statusText = findViewById(R.id.audioStatusText)
         titleText = findViewById(R.id.audioTitleText)
         backButton = findViewById(R.id.backButton)
-        modeSwitchButton = findViewById(R.id.modeSwitchButton)       // 新增
+        modeSwitchButton = findViewById(R.id.modeSwitchButton)
         searchIconButton = findViewById(R.id.searchIconButton)
         searchEditText = findViewById(R.id.searchEditText)
         clearSearchButton = findViewById(R.id.clearSearchButton)
@@ -155,12 +220,11 @@ class AudioLibraryActivity : AppCompatActivity() {
         titleText.text = "音频库"
 
         backButton.setOnClickListener { finish() }
-        modeSwitchButton.setOnClickListener { switchPlayMode() }    // 模式切换点击事件
+        modeSwitchButton.setOnClickListener { switchPlayMode() }
         searchIconButton.setOnClickListener { showSearchContainer() }
         closeSearchButton.setOnClickListener { hideSearchContainer() }
         setupSearch()
 
-        // 设置当前图标
         updateModeIcon()
 
         audioRecyclerView.layoutManager = LinearLayoutManager(this)
@@ -239,6 +303,13 @@ class AudioLibraryActivity : AppCompatActivity() {
                 if (searchContainer.visibility == View.VISIBLE) {
                     searchEditText.hint = "搜索音频..."
                     performSearch(searchEditText.text.toString())
+                }
+
+                playbackService?.getCurrentTrack()?.let { track ->
+                    val position = audioAdapter.getPositionByTrackId(track.id)
+                    if (position != -1) {
+                        scrollToCenter(position)
+                    }
                 }
             }
         }
@@ -343,6 +414,16 @@ class AudioLibraryActivity : AppCompatActivity() {
                 audioAdapter.updateData(filteredAudioTracks)
                 statusText.text = if (searchQuery.isNotEmpty()) "找到 ${filteredAudioTracks.size} 个匹配的音频文件"
                 else "共找到 ${audioTracks.size} 个音频文件"
+
+                playbackService?.getCurrentTrack()?.let { track ->
+                    val position = audioAdapter.getPositionByTrackId(track.id)
+                    if (position != -1) {
+                        audioAdapter.setCurrentlyPlaying(track.id)
+                        scrollToCenter(position)
+                    } else {
+                        audioAdapter.setCurrentlyPlaying(null)
+                    }
+                }
             }
             TabType.PLAYLISTS -> {
                 val filtered = if (searchQuery.isEmpty()) playlistList else playlistList.filter { it.name.contains(searchQuery, true) }
@@ -392,6 +473,14 @@ class AudioLibraryActivity : AppCompatActivity() {
 
                 audioAdapter.updateData(filteredAudioTracks)
                 statusText.text = if (audioTracks.isEmpty()) "没有找到音频文件" else "共找到 ${audioTracks.size} 个音频文件"
+
+                playbackService?.getCurrentTrack()?.let { track ->
+                    val position = audioAdapter.getPositionByTrackId(track.id)
+                    if (position != -1) {
+                        audioAdapter.setCurrentlyPlaying(track.id)
+                        scrollToCenter(position)
+                    }
+                }
             } catch (e: Exception) {
                 statusText.text = "加载失败: ${e.message}"
                 Log.e(TAG, "加载音频异常", e)
@@ -439,7 +528,7 @@ class AudioLibraryActivity : AppCompatActivity() {
                 putExtra("CURRENT_INDEX", currentIndex)
                 putExtra("SERVER_URL", currentServerUrl)
                 putExtra("FROM_MUSIC_LIBRARY", true)
-                putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, currentPlayMode)   // 传递播放模式
+                putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, currentPlayMode)
             }
             startActivity(intent)
         } catch (e: Exception) {
@@ -459,8 +548,36 @@ class AudioLibraryActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        coroutineScope.cancel()
+    /**
+     * 滚动到列表指定位置并使其偏上显示（例如屏幕高度的 35% 处）
+     */
+    private fun scrollToCenter(position: Int) {
+        val layoutManager = audioRecyclerView.layoutManager as? LinearLayoutManager ?: return
+        val targetView = layoutManager.findViewByPosition(position)
+        // 可调整偏上的比例，值越小越靠上，0.35 表示顶部在屏幕 35% 处
+        val targetTopRatio = 0.35f
+        if (targetView != null) {
+            val itemHeight = targetView.height
+            val recyclerHeight = audioRecyclerView.height
+            val targetTop = (recyclerHeight * targetTopRatio).toInt()
+            val offset = targetTop - (itemHeight / 2)
+            val currentTop = targetView.top
+            val delta = currentTop - offset
+            audioRecyclerView.smoothScrollBy(0, delta)
+        } else {
+            layoutManager.scrollToPositionWithOffset(position, 0)
+            audioRecyclerView.post {
+                val newTargetView = layoutManager.findViewByPosition(position)
+                newTargetView?.let {
+                    val itemHeight = it.height
+                    val recyclerHeight = audioRecyclerView.height
+                    val targetTop = (recyclerHeight * targetTopRatio).toInt()
+                    val offset = targetTop - (itemHeight / 2)
+                    val currentTop = it.top
+                    val delta = currentTop - offset
+                    audioRecyclerView.smoothScrollBy(0, delta)
+                }
+            }
+        }
     }
 }

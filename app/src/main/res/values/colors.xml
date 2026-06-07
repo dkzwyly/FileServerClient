@@ -75,4 +75,5 @@
 
     <!-- 深色背景表面色（Dark Mode 下卡片/面板背景） -->
     <color name="surface_dark">#121212</color> <!-- Material Design 深色主题推荐色 -->
+    <color name="playing_highlight">#D0E5FF</color>
 </resources>
