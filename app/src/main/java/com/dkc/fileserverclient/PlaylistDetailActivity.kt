@@ -44,10 +44,10 @@ class PlaylistDetailActivity : AppCompatActivity() {
     private var playbackService: AudioPlaybackService? = null
     private var isBound = false
 
-    // 动画列表（目前仅扫光，未来可扩展）
+    // 两种风格：静态蓝（索引0）、扫光（索引1）
     private val animations = listOf(
+        StaticBackgroundAnimation(),
         ShineAnimationSimple()
-        // 未来可添加更多动画，如 PulseAnimation, GlowAnimation 等
     )
     private var currentAnimationIndex = 0
 
@@ -170,15 +170,12 @@ class PlaylistDetailActivity : AppCompatActivity() {
         val newAnimation = animations[currentAnimationIndex]
         adapter.setAnimation(newAnimation)
         saveAnimationIndex()
-        val animationName = getAnimationName(newAnimation)
-        Toast.makeText(this, "动画: $animationName", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun getAnimationName(animation: PlayingAnimation): String {
-        return when (animation) {
+        val animationName = when (newAnimation) {
+            is StaticBackgroundAnimation -> "静态蓝"
             is ShineAnimationSimple -> "扫光"
-            else -> "默认"
+            else -> "未知"
         }
+        Toast.makeText(this, "动画: $animationName", Toast.LENGTH_SHORT).show()
     }
 
     private fun initViews() {

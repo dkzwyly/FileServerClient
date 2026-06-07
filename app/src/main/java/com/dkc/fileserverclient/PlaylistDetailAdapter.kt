@@ -14,7 +14,7 @@ class PlaylistDetailAdapter(
     private var tracks: List<AudioTrack>,
     private val onItemClick: (AudioTrack, Int) -> Unit,
     private val onRemoveClick: (AudioTrack) -> Unit,
-    private var animation: PlayingAnimation = ShineAnimationSimple()   // 默认扫光动画
+    private var animation: PlayingAnimation = ShineAnimationSimple()
 ) : RecyclerView.Adapter<PlaylistDetailAdapter.ViewHolder>() {
 
     companion object {
@@ -22,6 +22,7 @@ class PlaylistDetailAdapter(
     }
 
     private var currentlyPlayingId: String? = null
+    private var recyclerView: RecyclerView? = null
 
     class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val icon: ImageView = itemView.findViewById(R.id.audioIcon)
@@ -49,7 +50,6 @@ class PlaylistDetailAdapter(
             holder.itemView.setBackgroundColor(
                 holder.itemView.context.getColor(R.color.playing_highlight)
             )
-            // 动画应用到整个 itemView
             animation.start(holder.itemView)
         } else {
             holder.itemView.setBackgroundColor(
@@ -110,12 +110,30 @@ class PlaylistDetailAdapter(
         return tracks.indexOfFirst { it.id == trackId }
     }
 
-    /**
-     * 动态更换动画风格（目前仅扫光，未来可扩展）
-     */
     fun setAnimation(newAnimation: PlayingAnimation) {
+        // 停止当前正在播放的项上的旧动画
+        val playingId = currentlyPlayingId
+        if (playingId != null && recyclerView != null) {
+            val position = getPositionByTrackId(playingId)
+            if (position != -1) {
+                val holder = recyclerView?.findViewHolderForAdapterPosition(position) as? ViewHolder
+                if (holder != null) {
+                    animation.stop(holder.itemView)
+                }
+            }
+        }
         animation = newAnimation
         notifyDataSetChanged()
+    }
+
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        this.recyclerView = recyclerView
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        this.recyclerView = null
     }
 
     override fun onViewRecycled(holder: ViewHolder) {

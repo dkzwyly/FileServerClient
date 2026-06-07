@@ -63,8 +63,10 @@ class AudioLibraryActivity : AppCompatActivity() {
     private var playbackService: AudioPlaybackService? = null
     private var isBound = false
 
+    // 两种风格：静态蓝（索引0）、扫光（索引1）
     private val animations = listOf(
-        ShineAnimationSimple()
+        StaticBackgroundAnimation(),   // 索引0
+        ShineAnimationSimple()        // 索引1
     )
     private var currentAnimationIndex = 0
 
@@ -183,13 +185,15 @@ class AudioLibraryActivity : AppCompatActivity() {
     }
 
     private fun switchToNextAnimation() {
+        // 顺序切换：0 -> 1 -> 0 -> 1 ...
         currentAnimationIndex = (currentAnimationIndex + 1) % animations.size
         val newAnimation = animations[currentAnimationIndex]
         audioAdapter.setAnimation(newAnimation)
         saveAnimationIndex()
         val animationName = when (newAnimation) {
+            is StaticBackgroundAnimation -> "静态蓝"
             is ShineAnimationSimple -> "扫光"
-            else -> "默认"
+            else -> "未知"
         }
         Toast.makeText(this, "动画: $animationName", Toast.LENGTH_SHORT).show()
     }
