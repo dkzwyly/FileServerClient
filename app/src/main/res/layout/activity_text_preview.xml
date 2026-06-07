@@ -6,7 +6,7 @@
     android:background="@color/background"
     android:padding="0dp">
 
-    <!-- 文本内容区域 -->
+    <!-- 文本内容区域（不变） -->
     <TextView
         android:id="@+id/textContentTextView"
         android:layout_width="match_parent"
@@ -24,7 +24,7 @@
         android:fontFamily="monospace"
         android:scrollbars="none" />
 
-    <!-- 章节跳转按钮 -->
+    <!-- 章节跳转按钮（右上角透明） -->
     <ImageButton
         android:id="@+id/chapterButton"
         android:layout_width="48dp"
@@ -33,10 +33,11 @@
         android:layout_alignParentRight="true"
         android:layout_marginTop="8dp"
         android:layout_marginRight="8dp"
-        android:background="?android:attr/selectableItemBackground"
-        android:src="@android:drawable/ic_menu_sort_by_size"
+        android:background="@android:color/transparent"
+        android:src="@android:color/transparent"
+        android:alpha="0.0"
         android:contentDescription="章节跳转"
-        android:visibility="gone" />
+        android:visibility="visible" />
 
     <!-- 左下角进度 -->
     <TextView
@@ -52,7 +53,22 @@
         android:textColor="#80FFFFFF"
         android:textStyle="bold" />
 
-    <!-- 右下角设置按钮 -->
+    <!-- 透明听书按钮（左下角，完全透明，点击弹出菜单） -->
+    <ImageButton
+        android:id="@+id/voiceMenuButton"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentLeft="true"
+        android:layout_marginBottom="0dp"
+        android:layout_marginLeft="0dp"
+        android:background="@android:color/transparent"
+        android:src="@android:color/transparent"
+        android:alpha="0.0"
+        android:contentDescription="选择语音引擎"
+        android:visibility="visible" />
+
+    <!-- 右下角设置按钮（透明） -->
     <ImageButton
         android:id="@+id/settingsButton"
         android:layout_width="48dp"
@@ -61,8 +77,9 @@
         android:layout_alignParentRight="true"
         android:layout_marginBottom="8dp"
         android:layout_marginRight="8dp"
-        android:background="?android:attr/selectableItemBackground"
-        android:src="@android:drawable/ic_menu_manage"
+        android:background="@android:color/transparent"
+        android:src="@android:color/transparent"
+        android:alpha="0.0"
         android:contentDescription="阅读设置"
         android:visibility="visible" />
 

@@ -1,8 +1,13 @@
 package com.dkc.fileserverclient
 
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.os.Bundle
+import android.os.IBinder
 import android.util.Log
 import android.view.*
 import android.widget.*
@@ -47,8 +52,40 @@ class TextPreviewActivity : AppCompatActivity() {
     private var currentBackgroundColor: Int = Color.WHITE
     private lateinit var prefs: SharedPreferences
 
-    // 当前阅读位置的绝对字符偏移
     private var currentAbsoluteOffset: Int = 0
+
+    // 听书相关成员变量
+    private lateinit var voiceMenuButton: ImageButton
+    private var currentEngine: VoiceEngine? = null
+    private var isAutoPlay = false
+    private var audiobookService: AudiobookService? = null
+    private var isBound = false
+    private var selectedEngineType: EngineType? = null
+
+    private var pendingAutoPlay = false   // 标记是否期望开始自动播放
+    private var lastUtteranceId = ""      // 防止重复播放同一页
+
+    private enum class EngineType { LOCAL, CLOUD }
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            audiobookService = (service as AudiobookService.LocalBinder).getService()
+            if (selectedEngineType == EngineType.LOCAL) {
+                ensureLocalEngineReady()
+                // 如果 TTS 已就绪则尝试播放，否则等待就绪回调
+                if (audiobookService?.isReady() == true) {
+                    tryStartAutoPlay()
+                } else {
+                    audiobookService?.onTtsReadyListener = {
+                        tryStartAutoPlay()
+                    }
+                }
+            }
+        }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            audiobookService = null
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -117,6 +154,7 @@ class TextPreviewActivity : AppCompatActivity() {
         settingsButton = findViewById(R.id.settingsButton)
         progressTextView = findViewById(R.id.progressTextView)
         statusLabel = findViewById(R.id.statusLabel)
+        voiceMenuButton = findViewById(R.id.voiceMenuButton)
 
         supportActionBar?.hide()
         textContentTextView.isScrollContainer = false
@@ -136,6 +174,8 @@ class TextPreviewActivity : AppCompatActivity() {
         settingsButton.isVisible = true
 
         progressTextView.bringToFront()
+
+        voiceMenuButton.setOnClickListener { showVoiceEngineMenu() }
     }
 
     private fun setupIntentData() {
@@ -164,7 +204,6 @@ class TextPreviewActivity : AppCompatActivity() {
         viewModel.errorMessage.observe(this) { error ->
             error?.let { showErrorState(it) }
         }
-        // 只响应手动请求的章节弹窗事件
         viewModel.showChapterDialogEvent.observe(this) { chapters ->
             if (chapters.isNotEmpty()) showChapterList(chapters)
             else showNoChaptersDialog()
@@ -183,6 +222,7 @@ class TextPreviewActivity : AppCompatActivity() {
         viewModel.currentAbsoluteCharOffset.observe(this) { offset ->
             currentAbsoluteOffset = offset
         }
+        setupAutoPlayObserver()
     }
 
     private fun setupLayoutListener() {
@@ -248,8 +288,8 @@ class TextPreviewActivity : AppCompatActivity() {
                     return true
                 }
 
-                if (x < screenWidth / 3) viewModel.previousPage()
-                else if (x > screenWidth * 2 / 3) viewModel.nextPage()
+                if (x < screenWidth / 3) manualPrevPage()
+                else if (x > screenWidth * 2 / 3) manualNextPage()
                 return true
             }
         })
@@ -341,9 +381,7 @@ class TextPreviewActivity : AppCompatActivity() {
     }
 
     private fun showChapterList(chapters: List<TextPreviewViewModel.ChapterInfo>) {
-        // 按字符偏移排序，确保顺序正确
         val sortedChapters = chapters.sortedBy { it.startCharOffset }
-        // 根据当前绝对字符偏移找到所在章节索引
         val currentChapterIndex = if (sortedChapters.isNotEmpty()) {
             sortedChapters.indexOfLast { it.startCharOffset <= currentAbsoluteOffset }
                 .takeIf { it != -1 } ?: -1
@@ -402,6 +440,152 @@ class TextPreviewActivity : AppCompatActivity() {
             .setMessage("该文件可能没有章节标记，或者章节索引尚未构建。")
             .setPositiveButton("确定", null)
             .show()
+    }
+
+    // ---------- 听书相关 ----------
+    private fun showVoiceEngineMenu() {
+        PopupMenu(this, voiceMenuButton).apply {
+            menu.add("本地 TTS")
+            menu.add("云端语音服务")
+            setOnMenuItemClickListener { item ->
+                when (item.title) {
+                    "本地 TTS" -> {
+                        selectedEngineType = EngineType.LOCAL
+                        pendingAutoPlay = true   // 标记期望播放
+                        if (!isBound) {
+                            bindService(Intent(this@TextPreviewActivity, AudiobookService::class.java),
+                                serviceConnection, Context.BIND_AUTO_CREATE)
+                            isBound = true
+                        } else {
+                            ensureLocalEngineReady()
+                            tryStartAutoPlay()
+                        }
+                    }
+                    "云端语音服务" -> {
+                        selectedEngineType = EngineType.CLOUD
+                        pendingAutoPlay = true
+                        switchToCloudTts()
+                        tryStartAutoPlay()
+                    }
+                }
+                true
+            }
+            show()
+        }
+    }
+
+    private fun ensureLocalEngineReady() {
+        if (currentEngine == null && audiobookService != null) {
+            switchToLocalTts()
+        }
+    }
+
+    private fun switchToLocalTts() {
+        currentEngine?.release()
+        audiobookService?.let { service ->
+            currentEngine = LocalTtsEngine(service)
+            // 如果 TTS 尚未就绪，设置回调等待就绪后播放
+            if (!service.isReady()) {
+                service.onTtsReadyListener = {
+                    tryStartAutoPlay()
+                }
+            }
+        }
+    }
+
+    private fun switchToCloudTts() {
+        currentEngine?.release()
+        currentEngine = CloudTtsEngine(this)
+        if (isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+            audiobookService = null
+        }
+    }
+
+    private fun tryStartAutoPlay() {
+        if (!pendingAutoPlay) return
+        val content = viewModel.pageContent.value
+        if (content.isNullOrBlank()) {
+            // 内容未就绪，等待内容观察者触发
+            return
+        }
+        // 检查引擎是否就绪
+        val engineReady = when (selectedEngineType) {
+            EngineType.LOCAL -> audiobookService?.isReady() == true
+            EngineType.CLOUD -> true   // 云引擎模拟，默认就绪
+            else -> false
+        }
+        if (engineReady && currentEngine?.isPlaying() != true) {
+            pendingAutoPlay = false
+            isAutoPlay = true
+            playCurrentPage()
+        }
+    }
+
+    private fun playCurrentPage() {
+        val content = viewModel.pageContent.value ?: run {
+            // 如果内容意外为空，重新标记待播放
+            pendingAutoPlay = true
+            return
+        }
+        val engine = currentEngine ?: return
+        val utteranceId = "page_${viewModel.currentAbsoluteCharOffset.value ?: 0}"
+        // 防止重复播放同一页
+        if (utteranceId == lastUtteranceId && engine.isPlaying()) return
+
+        lastUtteranceId = utteranceId
+        engine.play(content.toString(), utteranceId, object : VoiceCallback {
+            override fun onStart(utteranceId: String) {
+                runOnUiThread { statusLabel.text = "正在朗读" }
+            }
+            override fun onComplete(utteranceId: String) {
+                runOnUiThread {
+                    if (isAutoPlay) {
+                        viewModel.nextPage()   // 翻页后会自动触发 pageContent 变化 -> observer 播放下一页
+                    } else {
+                        statusLabel.text = "朗读完成"
+                    }
+                }
+            }
+            override fun onError(utteranceId: String, error: String?) {
+                runOnUiThread {
+                    statusLabel.text = "错误: $error"
+                    isAutoPlay = false
+                    pendingAutoPlay = false
+                }
+            }
+        })
+    }
+
+    private fun setupAutoPlayObserver() {
+        viewModel.pageContent.observe(this) { content ->
+            if (content != null && pendingAutoPlay) {
+                tryStartAutoPlay()
+            } else if (content != null && isAutoPlay && currentEngine?.isPlaying() == false) {
+                // 自动翻页模式下的正常续播
+                playCurrentPage()
+            }
+        }
+    }
+
+    private fun manualNextPage() {
+        // 停止自动播放
+        if (isAutoPlay) {
+            currentEngine?.stop()
+            isAutoPlay = false
+        }
+        pendingAutoPlay = false
+        viewModel.nextPage()
+    }
+
+    private fun manualPrevPage() {
+        if (isAutoPlay) {
+            currentEngine?.stop()
+            isAutoPlay = false
+        }
+        pendingAutoPlay = false
+        viewModel.previousPage()
     }
 
     // ---------- 状态切换 ----------
@@ -483,6 +667,11 @@ class TextPreviewActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        currentEngine?.release()
+        if (isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+        }
         super.onDestroy()
         viewModel.getCurrentPageState()?.let {
             saveReadingHistory(it.blockPage, it.subPage)
@@ -493,7 +682,7 @@ class TextPreviewActivity : AppCompatActivity() {
 data class ReadingHistory(
     val fileName: String,
     val fileUrl: String,
-    val blockPage: Int,          // 仅用于加载对应的服务端大页
-    val absoluteCharOffset: Int, // 全文绝对字符偏移，用于精准恢复位置
+    val blockPage: Int,
+    val absoluteCharOffset: Int,
     val timestamp: Long
 ) : java.io.Serializable

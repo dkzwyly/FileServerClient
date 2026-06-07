@@ -37,9 +37,12 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     // 回调给 Activity 的接口
     var callback: Callback? = null
 
+    // 新增：TTS 就绪回调
+    var onTtsReadyListener: (() -> Unit)? = null
+
     interface Callback {
         fun onPlaybackStart()
-        fun onPlaybackComplete(utteranceId: String)   // 读完一句/一页
+        fun onPlaybackComplete(utteranceId: String)
         fun onPlaybackPause()
         fun onPlaybackStop()
         fun onPlaybackError(error: String?)
@@ -60,7 +63,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 保持服务存活，但实际由前台通知决定
         return START_STICKY
     }
 
@@ -76,7 +78,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
     }
 
-    // ---------- TTS 初始化 ----------
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             val result = tts?.setLanguage(Locale.CHINESE) ?: TextToSpeech.LANG_MISSING_DATA
@@ -98,7 +99,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                 override fun onDone(utteranceId: String?) {
                     Log.d(TAG, "朗读完成: $utteranceId")
                     isSpeaking = false
-                    // 通知 Activity，触发自动翻页逻辑
                     callback?.onPlaybackComplete(utteranceId ?: "")
                 }
 
@@ -109,13 +109,17 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                 }
             })
             isTtsReady = true
+            // 通知外部 TTS 已就绪
+            onTtsReadyListener?.invoke()
         } else {
             Log.e(TAG, "TTS 初始化失败")
             callback?.onPlaybackError("TTS 初始化失败")
         }
     }
 
-    // ---------- 公开控制方法 ----------
+    // 公开就绪状态
+    fun isReady(): Boolean = isTtsReady
+
     fun play(text: String, utteranceId: String = "page_${System.currentTimeMillis()}") {
         if (!isTtsReady) {
             callback?.onPlaybackError("语音引擎未就绪")
@@ -125,9 +129,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             callback?.onPlaybackError("没有可朗读的内容")
             return
         }
-        // 获取音频焦点（可选，避免和其他音频冲突）
         requestAudioFocus()
-        // 前台通知
         startForegroundIfNeeded()
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
@@ -136,7 +138,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         tts?.stop()
         isSpeaking = false
         abandonAudioFocus()
-        stopForegroundAndKeepService()   // 保留服务，移除前台状态
+        stopForegroundAndKeepService()
         callback?.onPlaybackPause()
     }
 
@@ -209,7 +211,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("正在听书")
-            .setContentText("《${callback?.let { "未知" }}》")  // 可后期动态设置书名
+            .setContentText("《未知》")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -218,7 +220,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun updateNotification(title: String) {
-        // 可更新通知上的书名
         val intent = Intent(this, TextPreviewActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
