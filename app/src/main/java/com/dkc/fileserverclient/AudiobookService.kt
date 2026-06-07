@@ -34,10 +34,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var hasAudioFocus = false
 
-    // 回调给 Activity 的接口
     var callback: Callback? = null
-
-    // 新增：TTS 就绪回调
     var onTtsReadyListener: (() -> Unit)? = null
 
     interface Callback {
@@ -48,7 +45,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         fun onPlaybackError(error: String?)
     }
 
-    // Binder
     private val binder = LocalBinder()
     inner class LocalBinder : Binder() {
         fun getService(): AudiobookService = this@AudiobookService
@@ -78,14 +74,25 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
     }
 
+    // 新增：重新初始化TTS，用于检测系统默认引擎更改
+    fun reinitializeTts() {
+        tts?.stop()
+        tts?.shutdown()
+        isTtsReady = false
+        tts = TextToSpeech(this, this)
+    }
+
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val result = tts?.setLanguage(Locale.CHINESE) ?: TextToSpeech.LANG_MISSING_DATA
-            if (result == TextToSpeech.LANG_MISSING_DATA ||
-                result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                Log.e(TAG, "中文不支持")
-                callback?.onPlaybackError("当前系统不支持中文语音")
-                return
+            // 尝试设置中文，失败则回退到默认语言
+            var result = tts?.setLanguage(Locale.CHINESE) ?: TextToSpeech.LANG_MISSING_DATA
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                result = tts?.setLanguage(Locale.getDefault()) ?: TextToSpeech.LANG_MISSING_DATA
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    Log.e(TAG, "不支持中文且默认语言不可用")
+                    callback?.onPlaybackError("当前TTS引擎不支持中文，请在系统设置中安装中文语音数据或更换引擎")
+                    return
+                }
             }
             tts?.setSpeechRate(speechRate)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -109,15 +116,13 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                 }
             })
             isTtsReady = true
-            // 通知外部 TTS 已就绪
             onTtsReadyListener?.invoke()
         } else {
             Log.e(TAG, "TTS 初始化失败")
-            callback?.onPlaybackError("TTS 初始化失败")
+            callback?.onPlaybackError("TTS 初始化失败，请检查系统TTS设置")
         }
     }
 
-    // 公开就绪状态
     fun isReady(): Boolean = isTtsReady
 
     fun play(text: String, utteranceId: String = "page_${System.currentTimeMillis()}") {

@@ -14,6 +14,7 @@ import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
+import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +65,9 @@ class TextPreviewActivity : AppCompatActivity() {
 
     private var pendingAutoPlay = false
     private var lastUtteranceId = ""
+
+    // 新增：用于observeForever的观察者，以便后台也能触发自动播放
+    private var autoPlayObserver: Observer<CharSequence>? = null
 
     private enum class EngineType { LOCAL, CLOUD }
 
@@ -315,7 +319,7 @@ class TextPreviewActivity : AppCompatActivity() {
         val btnCancel = dialogView.findViewById<Button>(R.id.btnCancel)
         val btnApply = dialogView.findViewById<Button>(R.id.btnApply)
 
-        // 新增语速控件
+        // 语速控件
         val seekBarSpeed = dialogView.findViewById<SeekBar>(R.id.seekBarSpeed)
         val speedValue = dialogView.findViewById<TextView>(R.id.speedValue)
 
@@ -323,17 +327,16 @@ class TextPreviewActivity : AppCompatActivity() {
         val originalBgColor = currentBackgroundColor
         val originalSpeed = prefs.getFloat("tts_speed", 1.0f)
 
-        // 字体大小 SeekBar 初始化
+        // 字体大小 SeekBar
         seekBarFontSize.max = 30 - 12
         seekBarFontSize.progress = (currentFontSize - 12).toInt()
         fontSizeValue.text = "${currentFontSize.toInt()}sp"
 
-        // 语速 SeekBar 初始化
+        // 语速 SeekBar
         val speedProgress = ((originalSpeed - 0.5f) / 1.5f * 100).toInt().coerceIn(0, 100)
         seekBarSpeed.progress = speedProgress
         speedValue.text = String.format("%.1fx", originalSpeed)
 
-        // 字体大小变化监听
         seekBarFontSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val size = (progress + 12).toFloat()
@@ -344,19 +347,16 @@ class TextPreviewActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
-        // 语速变化监听：实时预览
         seekBarSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 val speed = 0.5f + (progress / 100f) * 1.5f
                 speedValue.text = String.format("%.1fx", speed)
-                // 实时应用到 TTS 引擎，以便试听
                 audiobookService?.setSpeechRate(speed)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
-        // 颜色按钮监听
         btnColorWhite.setOnClickListener {
             currentBackgroundColor = Color.WHITE
             rootLayout.setBackgroundColor(Color.WHITE)
@@ -386,7 +386,7 @@ class TextPreviewActivity : AppCompatActivity() {
         btnCancel.setOnClickListener {
             currentFontSize = originalFontSize
             currentBackgroundColor = originalBgColor
-            audiobookService?.setSpeechRate(originalSpeed) // 恢复语速
+            audiobookService?.setSpeechRate(originalSpeed)
             applyAppearance()
             recalcLinesPerPageAndKeepPosition()
             dialog.dismiss()
@@ -396,7 +396,6 @@ class TextPreviewActivity : AppCompatActivity() {
             currentFontSize = (seekBarFontSize.progress + 12).toFloat()
             val finalSpeed = 0.5f + (seekBarSpeed.progress / 100f) * 1.5f
             saveAppearancePrefs()
-            // 保存语速到 SharedPreferences
             prefs.edit().putFloat("tts_speed", finalSpeed).apply()
             audiobookService?.setSpeechRate(finalSpeed)
             applyAppearance()
@@ -517,12 +516,14 @@ class TextPreviewActivity : AppCompatActivity() {
     private fun switchToLocalTts() {
         currentEngine?.release()
         audiobookService?.let { service ->
-            currentEngine = LocalTtsEngine(service)
+            // 如果引擎未就绪，重新初始化以检测系统默认引擎
             if (!service.isReady()) {
+                service.reinitializeTts()
                 service.onTtsReadyListener = {
                     tryStartAutoPlay()
                 }
             }
+            currentEngine = LocalTtsEngine(service)
         }
     }
 
@@ -539,9 +540,7 @@ class TextPreviewActivity : AppCompatActivity() {
     private fun tryStartAutoPlay() {
         if (!pendingAutoPlay) return
         val content = viewModel.pageContent.value
-        if (content.isNullOrBlank()) {
-            return
-        }
+        if (content.isNullOrBlank()) return
         val engineReady = when (selectedEngineType) {
             EngineType.LOCAL -> audiobookService?.isReady() == true
             EngineType.CLOUD -> true
@@ -560,7 +559,8 @@ class TextPreviewActivity : AppCompatActivity() {
             return
         }
         val engine = currentEngine ?: return
-        val utteranceId = "page_${viewModel.currentAbsoluteCharOffset.value ?: 0}"
+        val pageState = viewModel.currentPageState.value
+        val utteranceId = "page_${pageState?.blockPage}_${pageState?.subPage}_${System.currentTimeMillis()}"
         if (utteranceId == lastUtteranceId && engine.isPlaying()) return
 
         lastUtteranceId = utteranceId
@@ -588,13 +588,15 @@ class TextPreviewActivity : AppCompatActivity() {
     }
 
     private fun setupAutoPlayObserver() {
-        viewModel.pageContent.observe(this) { content ->
+        // 使用observeForever，确保后台也能触发翻页播放
+        autoPlayObserver = Observer { content ->
             if (content != null && pendingAutoPlay) {
                 tryStartAutoPlay()
             } else if (content != null && isAutoPlay && currentEngine?.isPlaying() == false) {
                 playCurrentPage()
             }
         }
+        viewModel.pageContent.observeForever(autoPlayObserver!!)
     }
 
     private fun manualNextPage() {
@@ -694,6 +696,8 @@ class TextPreviewActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        // 移除observeForever观察者，防止内存泄漏
+        autoPlayObserver?.let { viewModel.pageContent.removeObserver(it) }
         currentEngine?.release()
         if (isBound) {
             unbindService(serviceConnection)
