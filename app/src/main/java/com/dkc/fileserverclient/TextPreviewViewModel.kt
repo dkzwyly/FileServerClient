@@ -224,7 +224,6 @@ class TextPreviewViewModel : ViewModel() {
                 _chapters.value = list
                 _showChapterDialogEvent.value = list
 
-                // 章节更新后重新分页以体现标题断页
                 if (currentBlock != null) {
                     val currentOffset = _currentAbsoluteCharOffset.value ?: currentBlock!!.startChar
                     rebuildSubPages(currentBlock!!.fullText)
@@ -264,7 +263,6 @@ class TextPreviewViewModel : ViewModel() {
                 currentBlock = block
                 ensureChaptersLoaded()
 
-                // 后台分页
                 withContext(Dispatchers.Default) {
                     rebuildSubPages(block.fullText)
                 }
@@ -278,16 +276,9 @@ class TextPreviewViewModel : ViewModel() {
                     else -> 1
                 }
 
-                // 生成当前页内容
-                val spannable = withContext(Dispatchers.Default) {
-                    generatePageContent(block, currentSubPage)
-                }
-                pageContentCache["${block.blockPage}_$currentSubPage"] = spannable
-                _pageContent.postValue(spannable)
-                updatePageInfo()
+                showCurrentSubPage()
                 _loadingState.value = LoadingState(false)
 
-                // 预加载相邻块
                 if (page > 1 && prevBlock == null) preloadPrevBlock(page - 1)
                 if (page < block.totalBlockPages && nextBlock == null) preloadNextBlock(page + 1)
             } catch (e: Exception) {
@@ -345,7 +336,6 @@ class TextPreviewViewModel : ViewModel() {
     private fun switchToPrevBlock() {
         val block = prevBlock ?: return
         prevBlock = null
-        // 计算有效文本长度，减去已消费的末尾偏移
         val fullText = block.fullText
         val validLength = (fullText.length - prevBlockConsumedOffset).coerceAtLeast(1)
         val textForPagination = fullText.substring(0, validLength)
@@ -355,7 +345,7 @@ class TextPreviewViewModel : ViewModel() {
         currentSubPage = totalSubPages.coerceAtLeast(1)
         showCurrentSubPage()
         if (block.blockPage > 1) preloadPrevBlock(block.blockPage - 1)
-        nextBlock = null   // 旧当前块不再保留，需要时再加载
+        nextBlock = null
     }
 
     private fun switchToNextBlock() {
@@ -428,7 +418,6 @@ class TextPreviewViewModel : ViewModel() {
         var startLine = 0
         while (startLine < totalLines) {
             var endLine = minOf(startLine + linesPerPage, totalLines)
-            // 标题行不能作为页面中间行，需调整
             if (endLine < totalLines && chapterStartLines.contains(endLine)) {
                 if (endLine > startLine + 1) endLine--
             }
@@ -438,7 +427,6 @@ class TextPreviewViewModel : ViewModel() {
                     break
                 }
             }
-            // 避免最后一行单独成页
             if (endLine < totalLines && totalLines - endLine < 2 && startLine + 1 < endLine) {
                 endLine--
             }
@@ -464,24 +452,21 @@ class TextPreviewViewModel : ViewModel() {
     private fun showCurrentSubPage() {
         val block = currentBlock ?: return
         val cacheKey = "${block.blockPage}_$currentSubPage"
-        pageContentCache[cacheKey]?.let { cached ->
-            _pageContent.postValue(cached)
-            updatePageInfo()
-            return
-        }
+        // 即使缓存命中，也需要重新生成以获取最新偏移（或者缓存也存偏移，但简单起见每次都生成）
         viewModelScope.launch(Dispatchers.Default) {
-            val spannable = generatePageContent(block, currentSubPage)
+            val (spannable, offset) = generatePageContent(block, currentSubPage)
             pageContentCache[cacheKey] = spannable
             _pageContent.postValue(spannable)
-            // 在主线程更新页面信息
+            _currentAbsoluteCharOffset.postValue(offset)
             withContext(Dispatchers.Main) {
                 updatePageInfo()
             }
         }
     }
 
-    private suspend fun generatePageContent(block: BlockData, subPage: Int): CharSequence {
-        if (subPageBoundaries.isEmpty()) return block.fullText
+    // 核心方法：生成页面内容并返回绝对偏移
+    private suspend fun generatePageContent(block: BlockData, subPage: Int): Pair<CharSequence, Int> {
+        if (subPageBoundaries.isEmpty()) return Pair(block.fullText, block.startChar)
         val (startLine, endLine) = subPageBoundaries.getOrElse(subPage - 1) { subPageBoundaries.first() }
         val layout = buildStaticLayout(block.fullText)
         val startChar = layout.getLineStart(startLine)
@@ -490,7 +475,7 @@ class TextPreviewViewModel : ViewModel() {
         var pageAbsoluteStart = block.startChar + startChar
 
         // 第一子页向前补全
-        if (currentSubPage == 1 && prevBlock != null && textPaint != null) {
+        if (subPage == 1 && prevBlock != null && textPaint != null) {
             val currentLines = endLine - startLine
             if (currentLines < linesPerPage) {
                 val needed = linesPerPage - currentLines
@@ -514,7 +499,7 @@ class TextPreviewViewModel : ViewModel() {
         }
 
         // 最后一子页向后补全
-        if (currentSubPage == totalSubPages && nextBlock != null && textPaint != null) {
+        if (subPage == totalSubPages && nextBlock != null && textPaint != null) {
             val currentLines = endLine - startLine
             if (currentLines < linesPerPage) {
                 val needed = linesPerPage - currentLines
@@ -537,7 +522,8 @@ class TextPreviewViewModel : ViewModel() {
             }
         }
 
-        return applyChapterStylesForPage(pageText, pageAbsoluteStart)
+        val spannable = applyChapterStylesForPage(pageText, pageAbsoluteStart)
+        return Pair(spannable, pageAbsoluteStart)
     }
 
     private fun applyChapterStylesForPage(pageText: String, pageAbsoluteStart: Int): CharSequence {
@@ -615,19 +601,17 @@ class TextPreviewViewModel : ViewModel() {
         val block = currentBlock ?: run { callback(null); return }
         val nextSubPage = currentSubPage + 1
         if (nextSubPage <= totalSubPages) {
-            // 同块下一页
             val cached = pageContentCache["${block.blockPage}_$nextSubPage"]
             if (cached != null) {
                 callback(cached)
             } else {
                 viewModelScope.launch(Dispatchers.Default) {
-                    val content = generatePageContent(block, nextSubPage)
+                    val (content, _) = generatePageContent(block, nextSubPage)
                     pageContentCache["${block.blockPage}_$nextSubPage"] = content
                     callback(content)
                 }
             }
         } else if (nextBlock != null) {
-            // 跨块第一页，由于分页基于currentBlock，预加载下一块需要重新计算，这里暂时返回null，实际可添加
             callback(null)
         } else {
             callback(null)

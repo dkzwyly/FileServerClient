@@ -404,12 +404,86 @@ class TextPreviewActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // 章节相关（略，保持原有代码）
-    private fun showChapterDialog() { /* 同原代码 */ }
-    private fun showChapterList(chapters: List<TextPreviewViewModel.ChapterInfo>) { /* 同原代码 */ }
-    private fun showNoChaptersDialog() { /* 同原代码 */ }
+    // ========== 章节相关（完整实现） ==========
+    private fun showChapterDialog() {
+        statusLabel.isVisible = true
+        statusLabel.text = "正在从服务器加载章节..."
+        viewModel.loadChapters()
+    }
 
-    // ========== 听书 ==========
+    private fun showChapterList(chapters: List<TextPreviewViewModel.ChapterInfo>) {
+        // 按字符偏移排序，确保顺序正确
+        val sortedChapters = chapters.sortedBy { it.startCharOffset }
+        // 根据当前绝对字符偏移找到所在章节索引
+        val currentChapterIndex = if (sortedChapters.isNotEmpty()) {
+            sortedChapters.indexOfLast { it.startCharOffset <= currentAbsoluteOffset }
+                .takeIf { it != -1 } ?: -1
+        } else -1
+
+        // 调试日志：检查偏移量和章节索引
+        Log.d("Chapter", "currentAbsoluteOffset=$currentAbsoluteOffset, currentChapterIndex=$currentChapterIndex")
+
+        val dialogView = layoutInflater.inflate(R.layout.dialog_chapter_list, null)
+        val listView: ListView = dialogView.findViewById(R.id.chapterListView)
+
+        val adapter = object : ArrayAdapter<TextPreviewViewModel.ChapterInfo>(
+            this, android.R.layout.simple_list_item_1, sortedChapters
+        ) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent) as TextView
+                val chapter = getItem(position)
+                view.text = chapter?.title ?: ""
+                view.textSize = 16f
+                view.setPadding(16, 12, 16, 12)
+
+                val isCurrent = position == currentChapterIndex
+                view.setBackgroundColor(
+                    if (isCurrent) Color.parseColor("#E8F0FE") else Color.TRANSPARENT
+                )
+                view.setTextColor(
+                    if (isCurrent) Color.parseColor("#1A73E8") else Color.BLACK
+                )
+                return view
+            }
+        }
+
+        listView.adapter = adapter
+        listView.choiceMode = ListView.CHOICE_MODE_SINGLE
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .setNegativeButton("取消", null)
+            .create()
+
+        listView.onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
+            val chapter = sortedChapters[position]
+            viewModel.jumpToChapter(chapter)
+            Toast.makeText(this@TextPreviewActivity, "跳转到: ${chapter.title}", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+
+        dialog.show()
+        statusLabel.isVisible = false
+
+        // 等待 ListView 布局完成后滚动到当前章节位置并高亮
+        listView.post {
+            if (currentChapterIndex >= 0) {
+                listView.setItemChecked(currentChapterIndex, true)
+                listView.setSelection(currentChapterIndex)
+            }
+        }
+    }
+
+    private fun showNoChaptersDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("未发现章节")
+            .setMessage("该文件可能没有章节标记，或者章节索引尚未构建。")
+            .setPositiveButton("确定", null)
+            .show()
+        statusLabel.isVisible = false
+    }
+
+    // ========== 听书功能（保持不变） ==========
     private fun showVoiceEngineMenu() {
         PopupMenu(this, voiceMenuButton).apply {
             menu.add("本地 TTS")
@@ -532,14 +606,13 @@ class TextPreviewActivity : AppCompatActivity() {
             override fun onStart(utteranceId: String) {
                 runOnUiThread {
                     statusLabel.text = "正在朗读"
-                    // 翻页卡顿修复：当前页开始播放时，预加载下一页到队列
                     if (isAutoPlay) preloadNextPageToQueue()
                 }
             }
             override fun onComplete(utteranceId: String) {
                 runOnUiThread {
                     if (isAutoPlay) {
-                        viewModel.nextPage()   // 翻页，但下一页可能已在队列中
+                        viewModel.nextPage()
                     } else {
                         statusLabel.text = "朗读完成"
                     }
