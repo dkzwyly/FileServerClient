@@ -60,8 +60,9 @@ class TextPreviewViewModel : ViewModel() {
     private var currentBlock: BlockData? = null
     private var nextBlock: BlockData? = null
 
-    private var prevBlockConsumedOffset = 0
-    private var nextBlockConsumedOffset = 0
+    // 跨页补全时的临时偏移存储（当目标块尚未加载时使用）
+    private var pendingPrevConsumed: Int? = null
+    private var pendingNextConsumed: Int? = null
 
     private var currentSubPage = 1
     private var totalSubPages = 1
@@ -89,13 +90,19 @@ class TextPreviewViewModel : ViewModel() {
         val lineNumber: Int,
         val startCharOffset: Int
     )
-    data class PageState(val blockPage: Int, val subPage: Int, val totalBlockPages: Int, val totalSubPages: Int)
+    data class PageState(
+        val blockPage: Int,
+        val subPage: Int,
+        val totalBlockPages: Int,
+        val totalSubPages: Int
+    )
     data class BlockData(
         val fullText: String,
         val blockPage: Int,
         val totalBlockPages: Int,
         val startChar: Int,
-        val endChar: Int
+        val endChar: Int,
+        val consumedStartOffset: Int = 0   // 该块已被前页消费的字符数（相对于fullText）
     )
 
     fun initialize(fileName: String, fileUrl: String, filePath: String) {
@@ -149,7 +156,7 @@ class TextPreviewViewModel : ViewModel() {
         if (linesPerPage != safeLines) {
             linesPerPage = safeLines
             currentBlock?.let {
-                rebuildSubPages(it.fullText)
+                rebuildSubPages(it)
                 showCurrentSubPage()
             }
         }
@@ -160,8 +167,8 @@ class TextPreviewViewModel : ViewModel() {
         val currentStartChar = getCurrentVisibleStartChar()
         linesPerPage = newLinesPerPage.coerceAtLeast(2)
         currentBlock?.let { block ->
-            rebuildSubPages(block.fullText)
-            currentSubPage = findSubPageForCharOffset(block.fullText, block.startChar, currentStartChar)
+            rebuildSubPages(block)
+            currentSubPage = findSubPageForCharOffset(block, currentStartChar)
             showCurrentSubPage()
         }
     }
@@ -170,7 +177,9 @@ class TextPreviewViewModel : ViewModel() {
         val block = currentBlock ?: return 0
         val fullText = block.fullText
         if (subPageBoundaries.isEmpty()) return block.startChar
-        val (startLine, _) = subPageBoundaries.getOrElse(currentSubPage - 1) { return block.startChar }
+        val (startLine, _) = subPageBoundaries.getOrElse(currentSubPage - 1) {
+            return block.startChar
+        }
         val layout = buildStaticLayout(fullText)
         return block.startChar + layout.getLineStart(startLine)
     }
@@ -182,7 +191,9 @@ class TextPreviewViewModel : ViewModel() {
     }
 
     fun getCurrentPageState(): PageState? {
-        return currentBlock?.let { PageState(it.blockPage, currentSubPage, it.totalBlockPages, totalSubPages) }
+        return currentBlock?.let {
+            PageState(it.blockPage, currentSubPage, it.totalBlockPages, totalSubPages)
+        }
     }
 
     fun loadTextContent() {
@@ -199,7 +210,9 @@ class TextPreviewViewModel : ViewModel() {
         } else if (prevBlock != null) {
             switchToPrevBlock()
         } else if (currentBlock != null && currentBlock!!.blockPage > 1) {
-            loadBlock(currentBlock!!.blockPage - 1, goToLastSubPage = true)
+            // 预加载未就绪，需网络加载并携带消费偏移
+            val consumed = pendingPrevConsumed ?: 0
+            loadBlock(currentBlock!!.blockPage - 1, goToLastSubPage = true, consumedStartOffset = consumed)
         }
     }
 
@@ -210,7 +223,9 @@ class TextPreviewViewModel : ViewModel() {
         } else if (nextBlock != null) {
             switchToNextBlock()
         } else if (currentBlock != null && currentBlock!!.blockPage < currentBlock!!.totalBlockPages) {
-            loadBlock(currentBlock!!.blockPage + 1, goToFirstSubPage = true)
+            // 预加载未就绪，需网络加载并携带消费偏移
+            val consumed = pendingNextConsumed ?: 0
+            loadBlock(currentBlock!!.blockPage + 1, goToFirstSubPage = true, consumedStartOffset = consumed)
         }
     }
 
@@ -225,11 +240,11 @@ class TextPreviewViewModel : ViewModel() {
                 _showChapterDialogEvent.value = list
 
                 if (currentBlock != null) {
-                    val currentOffset = _currentAbsoluteCharOffset.value ?: currentBlock!!.startChar
-                    rebuildSubPages(currentBlock!!.fullText)
+                    val currentOffset =
+                        _currentAbsoluteCharOffset.value ?: currentBlock!!.startChar
+                    rebuildSubPages(currentBlock!!)
                     currentSubPage = findSubPageForCharOffset(
-                        currentBlock!!.fullText,
-                        currentBlock!!.startChar,
+                        currentBlock!!,
                         currentOffset
                     )
                     showCurrentSubPage()
@@ -251,26 +266,32 @@ class TextPreviewViewModel : ViewModel() {
     private fun loadBlock(
         page: Int,
         goToFirstSubPage: Boolean = false,
-        goToLastSubPage: Boolean = false
+        goToLastSubPage: Boolean = false,
+        consumedStartOffset: Int? = null
     ) {
         _loadingState.value = LoadingState(true, "正在加载...")
         viewModelScope.launch {
             try {
                 val url = buildBlockUrl(page)
                 val json = fetchJson(url)
-                val block = parseBlockResponse(json)
+                var block = parseBlockResponse(json)
+
+                // 应用消费偏移
+                if (consumedStartOffset != null && consumedStartOffset > 0) {
+                    block = block.copy(consumedStartOffset = consumedStartOffset)
+                }
 
                 currentBlock = block
                 ensureChaptersLoaded()
 
                 withContext(Dispatchers.Default) {
-                    rebuildSubPages(block.fullText)
+                    rebuildSubPages(block)
                 }
 
                 val targetOffset = pendingCharOffset
                 pendingCharOffset = null
                 currentSubPage = when {
-                    targetOffset != null -> findSubPageForCharOffset(block.fullText, block.startChar, targetOffset)
+                    targetOffset != null -> findSubPageForCharOffset(block, targetOffset)
                     goToFirstSubPage -> 1
                     goToLastSubPage -> totalSubPages
                     else -> 1
@@ -306,7 +327,14 @@ class TextPreviewViewModel : ViewModel() {
             try {
                 val url = buildBlockUrl(page)
                 val json = fetchJson(url)
-                val block = parseBlockResponse(json)
+                var block = parseBlockResponse(json)
+                // 应用待处理的消费偏移
+                pendingPrevConsumed?.let { consumed ->
+                    if (consumed > 0) {
+                        block = block.copy(consumedStartOffset = consumed)
+                    }
+                    pendingPrevConsumed = null
+                }
                 if (currentBlock?.blockPage == page + 1) prevBlock = block
             } catch (e: Exception) {
                 Log.e("ViewModel", "预加载上一块失败", e)
@@ -323,7 +351,14 @@ class TextPreviewViewModel : ViewModel() {
             try {
                 val url = buildBlockUrl(page)
                 val json = fetchJson(url)
-                val block = parseBlockResponse(json)
+                var block = parseBlockResponse(json)
+                // 应用待处理的消费偏移
+                pendingNextConsumed?.let { consumed ->
+                    if (consumed > 0) {
+                        block = block.copy(consumedStartOffset = consumed)
+                    }
+                    pendingNextConsumed = null
+                }
                 if (currentBlock?.blockPage == page - 1) nextBlock = block
             } catch (e: Exception) {
                 Log.e("ViewModel", "预加载下一块失败", e)
@@ -335,34 +370,28 @@ class TextPreviewViewModel : ViewModel() {
 
     private fun switchToPrevBlock() {
         val block = prevBlock ?: return
+        // 已通过consumedStartOffset标记了被消费的部分，直接作为有效块使用
+        // 注意：prevBlock的consumedStartOffset已经在补全或加载时设置
+        currentBlock = block.copy(consumedStartOffset = 0) // 切换后重置，避免二次消费
         prevBlock = null
-        val fullText = block.fullText
-        val validLength = (fullText.length - prevBlockConsumedOffset).coerceAtLeast(1)
-        val textForPagination = fullText.substring(0, validLength)
-        currentBlock = block.copy(fullText = textForPagination, endChar = block.startChar + validLength)
-        prevBlockConsumedOffset = 0
-        rebuildSubPages(textForPagination)
+        rebuildSubPages(currentBlock!!)
         currentSubPage = totalSubPages.coerceAtLeast(1)
         showCurrentSubPage()
-        if (block.blockPage > 1) preloadPrevBlock(block.blockPage - 1)
+        if (currentBlock!!.blockPage > 1) preloadPrevBlock(currentBlock!!.blockPage - 1)
         nextBlock = null
     }
 
     private fun switchToNextBlock() {
         val block = nextBlock ?: return
+        // nextBlock的consumedStartOffset已在补全或加载时设置
+        currentBlock = block.copy(consumedStartOffset = 0)
         nextBlock = null
-        val consumed = nextBlockConsumedOffset
-        nextBlockConsumedOffset = 0
-        val text = if (consumed > 0 && consumed < block.fullText.length) {
-            block.fullText.substring(consumed)
-        } else {
-            block.fullText
-        }
-        currentBlock = block.copy(fullText = text, startChar = block.startChar + consumed)
-        rebuildSubPages(text)
+        rebuildSubPages(currentBlock!!)
         currentSubPage = 1
         showCurrentSubPage()
-        if (block.blockPage < block.totalBlockPages) preloadNextBlock(block.blockPage + 1)
+        if (currentBlock!!.blockPage < currentBlock!!.totalBlockPages) {
+            preloadNextBlock(currentBlock!!.blockPage + 1)
+        }
         prevBlock = null
     }
 
@@ -390,43 +419,53 @@ class TextPreviewViewModel : ViewModel() {
     }
 
     // ─── 分页（含标题断页） ───
-    private fun rebuildSubPages(fullText: String) {
+    private fun rebuildSubPages(block: BlockData) {
         subPageBoundaries.clear()
-        if (textWidth <= 0 || textPaint == null || fullText.isEmpty()) {
+        if (textWidth <= 0 || textPaint == null || block.fullText.isEmpty()) {
             totalSubPages = 1
             return
         }
-        val layout = buildStaticLayout(fullText)
+        // 考虑到consumedStartOffset，有效文本的起始位置
+        val effectiveText = block.fullText.substring(block.consumedStartOffset)
+        if (effectiveText.isEmpty()) {
+            totalSubPages = 1
+            return
+        }
+        val layout = buildStaticLayout(effectiveText)
         val totalLines = layout.lineCount
         if (totalLines == 0) {
             totalSubPages = 1
             return
         }
         val chapterStartLines = mutableSetOf<Int>()
-        val block = currentBlock
-        if (block != null && cachedChapters != null) {
-            val blockStart = block.startChar
-            val blockEnd = block.endChar
+        // 章节信息仍然基于绝对偏移，需要映射到有效文本的局部行号
+        if (cachedChapters != null) {
+            val effectiveStartChar = block.startChar + block.consumedStartOffset
+            val effectiveEndChar = block.endChar
             for (ch in cachedChapters!!) {
-                if (ch.startCharOffset in blockStart until blockEnd) {
-                    val rel = ch.startCharOffset - blockStart
+                if (ch.startCharOffset in effectiveStartChar until effectiveEndChar) {
+                    val rel = ch.startCharOffset - effectiveStartChar
                     val line = layout.getLineForOffset(rel)
                     chapterStartLines.add(line)
                 }
             }
         }
+
         var startLine = 0
         while (startLine < totalLines) {
             var endLine = minOf(startLine + linesPerPage, totalLines)
+            // 避免标题孤行：如果endLine正好是一个章节起始行，且不是startLine，则回退一行
             if (endLine < totalLines && chapterStartLines.contains(endLine)) {
                 if (endLine > startLine + 1) endLine--
             }
+            // 在[startLine, endLine)之间如果存在章节起始行，则在这一行断开
             for (line in startLine until endLine) {
                 if (chapterStartLines.contains(line) && line != startLine) {
                     endLine = line
                     break
                 }
             }
+            // 避免最后剩一行孤行
             if (endLine < totalLines && totalLines - endLine < 2 && startLine + 1 < endLine) {
                 endLine--
             }
@@ -437,10 +476,12 @@ class TextPreviewViewModel : ViewModel() {
         Log.d("ViewModel", "分页完成: 总行=$totalLines, 子页数=$totalSubPages")
     }
 
-    private fun findSubPageForCharOffset(fullText: String, blockStartChar: Int, absCharOffset: Int): Int {
-        if (fullText.isEmpty() || subPageBoundaries.isEmpty()) return 1
-        val relativeOffset = (absCharOffset - blockStartChar).coerceIn(0, fullText.length)
-        val layout = buildStaticLayout(fullText)
+    private fun findSubPageForCharOffset(block: BlockData, absCharOffset: Int): Int {
+        val effectiveStart = block.startChar + block.consumedStartOffset
+        val effectiveText = block.fullText.substring(block.consumedStartOffset)
+        if (effectiveText.isEmpty() || subPageBoundaries.isEmpty()) return 1
+        val relativeOffset = (absCharOffset - effectiveStart).coerceIn(0, effectiveText.length)
+        val layout = buildStaticLayout(effectiveText)
         val line = layout.getLineForOffset(relativeOffset)
         for ((i, b) in subPageBoundaries.withIndex()) {
             if (line in b.first until b.second) return i + 1
@@ -451,11 +492,8 @@ class TextPreviewViewModel : ViewModel() {
     // ─── 显示当前子页及跨页补全 ───
     private fun showCurrentSubPage() {
         val block = currentBlock ?: return
-        val cacheKey = "${block.blockPage}_$currentSubPage"
-        // 即使缓存命中，也需要重新生成以获取最新偏移（或者缓存也存偏移，但简单起见每次都生成）
         viewModelScope.launch(Dispatchers.Default) {
             val (spannable, offset) = generatePageContent(block, currentSubPage)
-            pageContentCache[cacheKey] = spannable
             _pageContent.postValue(spannable)
             _currentAbsoluteCharOffset.postValue(offset)
             withContext(Dispatchers.Main) {
@@ -465,34 +503,49 @@ class TextPreviewViewModel : ViewModel() {
     }
 
     // 核心方法：生成页面内容并返回绝对偏移
-    private suspend fun generatePageContent(block: BlockData, subPage: Int): Pair<CharSequence, Int> {
-        if (subPageBoundaries.isEmpty()) return Pair(block.fullText, block.startChar)
+    private suspend fun generatePageContent(
+        block: BlockData,
+        subPage: Int
+    ): Pair<CharSequence, Int> {
+        if (subPageBoundaries.isEmpty()) {
+            val text = block.fullText.substring(block.consumedStartOffset)
+            return Pair(text, block.startChar + block.consumedStartOffset)
+        }
         val (startLine, endLine) = subPageBoundaries.getOrElse(subPage - 1) { subPageBoundaries.first() }
-        val layout = buildStaticLayout(block.fullText)
-        val startChar = layout.getLineStart(startLine)
-        val endChar = if (endLine >= layout.lineCount) block.fullText.length else layout.getLineStart(endLine)
-        var pageText = block.fullText.substring(startChar, minOf(endChar, block.fullText.length))
-        var pageAbsoluteStart = block.startChar + startChar
+        val effectiveText = block.fullText.substring(block.consumedStartOffset)
+        val layout = buildStaticLayout(effectiveText)
+        val startCharLocal = layout.getLineStart(startLine)
+        val endCharLocal = if (endLine >= layout.lineCount) effectiveText.length else layout.getLineStart(endLine)
+        var pageText = effectiveText.substring(startCharLocal, minOf(endCharLocal, effectiveText.length))
+        var pageAbsoluteStart = block.startChar + block.consumedStartOffset + startCharLocal
 
         // 第一子页向前补全
         if (subPage == 1 && prevBlock != null && textPaint != null) {
             val currentLines = endLine - startLine
             if (currentLines < linesPerPage) {
                 val needed = linesPerPage - currentLines
-                val prevFull = prevBlock!!.fullText
-                if (prevFull.isNotEmpty()) {
-                    val prevLayout = buildStaticLayout(prevFull)
-                    val totalPrevLines = prevLayout.lineCount
-                    val validLength = (prevFull.length - prevBlockConsumedOffset).coerceAtLeast(1)
+                val pBlock = prevBlock!!
+                val pEffective = pBlock.fullText.substring(pBlock.consumedStartOffset)
+                if (pEffective.isNotEmpty()) {
+                    val pLayout = buildStaticLayout(pEffective)
+                    val totalPrevLines = pLayout.lineCount
                     val endLinePrev = totalPrevLines
                     val startLinePrev = (endLinePrev - needed).coerceAtLeast(0)
                     if (startLinePrev < endLinePrev) {
-                        val startCharPrev = prevLayout.getLineStart(startLinePrev)
-                        val endCharPrev = if (endLinePrev < totalPrevLines) prevLayout.getLineStart(endLinePrev) else prevFull.length
-                        val prevPart = prevFull.substring(startCharPrev, endCharPrev)
+                        val sc = pLayout.getLineStart(startLinePrev)
+                        val ec = if (endLinePrev < totalPrevLines) pLayout.getLineStart(endLinePrev) else pEffective.length
+                        val prevPart = pEffective.substring(sc, ec)
                         pageText = prevPart + "\n" + pageText
-                        pageAbsoluteStart = prevBlock!!.startChar + startCharPrev
-                        prevBlockConsumedOffset = endCharPrev
+                        val consumedAbsoluteEnd = pBlock.startChar + pBlock.consumedStartOffset + ec
+                        // 更新prevBlock的consumedStartOffset（相对于其fullText的原生偏移量）
+                        val newConsumed = pBlock.consumedStartOffset + ec
+                        if (prevBlock != null) {
+                            prevBlock = prevBlock!!.copy(consumedStartOffset = newConsumed)
+                        } else {
+                            // 理论上不会进入这里
+                        }
+                        pendingPrevConsumed = newConsumed // 保存到pending，供后续预加载使用
+                        pageAbsoluteStart = pBlock.startChar + pBlock.consumedStartOffset + sc
                     }
                 }
             }
@@ -503,20 +556,22 @@ class TextPreviewViewModel : ViewModel() {
             val currentLines = endLine - startLine
             if (currentLines < linesPerPage) {
                 val needed = linesPerPage - currentLines
-                val nextFull = nextBlock!!.fullText
-                if (nextFull.isNotEmpty()) {
-                    val nextLayout = buildStaticLayout(nextFull)
-                    val totalNextLines = nextLayout.lineCount
-                    val startLineNext = nextLayout.getLineForOffset(
-                        nextBlockConsumedOffset.coerceIn(0, nextFull.length)
-                    )
+                val nBlock = nextBlock!!
+                val nEffective = nBlock.fullText.substring(nBlock.consumedStartOffset)
+                if (nEffective.isNotEmpty()) {
+                    val nLayout = buildStaticLayout(nEffective)
+                    val totalNextLines = nLayout.lineCount
+                    val startLineNext = 0
                     val endLineNext = minOf(startLineNext + needed, totalNextLines)
                     if (endLineNext > startLineNext) {
-                        val ns = nextLayout.getLineStart(startLineNext)
-                        val ne = if (endLineNext < totalNextLines) nextLayout.getLineStart(endLineNext) else nextFull.length
-                        val nextPart = nextFull.substring(ns, ne)
+                        val ns = nLayout.getLineStart(startLineNext)
+                        val ne = if (endLineNext < totalNextLines) nLayout.getLineStart(endLineNext) else nEffective.length
+                        val nextPart = nEffective.substring(ns, ne)
                         pageText = pageText + "\n" + nextPart
-                        nextBlockConsumedOffset = ne
+                        // 更新nextBlock的consumedStartOffset
+                        val newConsumed = nBlock.consumedStartOffset + ne
+                        nextBlock = nextBlock!!.copy(consumedStartOffset = newConsumed)
+                        pendingNextConsumed = newConsumed
                     }
                 }
             }
@@ -526,7 +581,10 @@ class TextPreviewViewModel : ViewModel() {
         return Pair(spannable, pageAbsoluteStart)
     }
 
-    private fun applyChapterStylesForPage(pageText: String, pageAbsoluteStart: Int): CharSequence {
+    private fun applyChapterStylesForPage(
+        pageText: String,
+        pageAbsoluteStart: Int
+    ): CharSequence {
         val chapters = cachedChapters ?: return pageText
         if (chapters.isEmpty()) return pageText
         val spannable = SpannableString(pageText)
@@ -537,9 +595,18 @@ class TextPreviewViewModel : ViewModel() {
                 val len = minOf(ch.title.length, pageText.length - start)
                 if (len > 0) {
                     val end = start + len
-                    spannable.setSpan(AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER), start, end, SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    spannable.setSpan(RelativeSizeSpan(1.5f), start, end, SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    spannable.setSpan(StyleSpan(android.graphics.Typeface.BOLD), start, end, SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    spannable.setSpan(
+                        AlignmentSpan.Standard(Layout.Alignment.ALIGN_CENTER),
+                        start, end, SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                    spannable.setSpan(
+                        RelativeSizeSpan(1.5f),
+                        start, end, SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                    spannable.setSpan(
+                        StyleSpan(android.graphics.Typeface.BOLD),
+                        start, end, SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
                 }
             }
         }
@@ -548,51 +615,61 @@ class TextPreviewViewModel : ViewModel() {
 
     private fun updatePageInfo() {
         currentBlock?.let { block ->
-            val progress = if (block.totalBlockPages > 0) ((block.blockPage - 1) * 100 / block.totalBlockPages) else 0
+            val progress =
+                if (block.totalBlockPages > 0) ((block.blockPage - 1) * 100 / block.totalBlockPages) else 0
             _pageInfo.value = PageInfo(block.blockPage, block.totalBlockPages, progress)
-            _currentPageState.value = PageState(block.blockPage, currentSubPage, block.totalBlockPages, totalSubPages)
+            _currentPageState.value =
+                PageState(block.blockPage, currentSubPage, block.totalBlockPages, totalSubPages)
         }
     }
 
     // ─── 章节网络请求 ───
-    private suspend fun fetchChaptersFromServer(): List<ChapterInfo> = withContext(Dispatchers.IO) {
-        try {
-            val baseUrl = if (fileUrl.contains("/preview/")) fileUrl.substringBefore("/preview/")
-            else {
-                val parts = fileUrl.split("/api/")
-                if (parts.size > 1) "${parts[0]}/api" else fileUrl.substringBeforeLast("/")
+    private suspend fun fetchChaptersFromServer(): List<ChapterInfo> =
+        withContext(Dispatchers.IO) {
+            try {
+                val baseUrl = if (fileUrl.contains("/preview/")) fileUrl.substringBefore("/preview/")
+                else {
+                    val parts = fileUrl.split("/api/")
+                    if (parts.size > 1) "${parts[0]}/api" else fileUrl.substringBeforeLast("/")
+                }
+                val fileNameFromUrl =
+                    if (fileUrl.contains("/preview/")) fileUrl.substringAfter("/preview/")
+                        .substringBefore("?") else fileName
+                val encoded = URLEncoder.encode(fileNameFromUrl, "UTF-8")
+                val chaptersUrl = "$baseUrl/chapters/$encoded"
+                val request = Request.Builder().url(chaptersUrl)
+                    .addHeader("Accept", "application/json").build()
+                val response = httpClient.newCall(request).execute()
+                if (!response.isSuccessful) return@withContext emptyList()
+                parseChaptersJson(response.body?.string() ?: "")
+            } catch (e: Exception) {
+                Log.e("ViewModel", "章节请求失败", e)
+                emptyList()
             }
-            val fileNameFromUrl = if (fileUrl.contains("/preview/")) fileUrl.substringAfter("/preview/").substringBefore("?")
-            else fileName
-            val encoded = URLEncoder.encode(fileNameFromUrl, "UTF-8")
-            val chaptersUrl = "$baseUrl/chapters/$encoded"
-            val request = Request.Builder().url(chaptersUrl).addHeader("Accept", "application/json").build()
-            val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext emptyList()
-            parseChaptersJson(response.body?.string() ?: "")
-        } catch (e: Exception) {
-            Log.e("ViewModel", "章节请求失败", e)
-            emptyList()
         }
-    }
 
     private fun parseChaptersJson(json: String): List<ChapterInfo> {
         val list = mutableListOf<ChapterInfo>()
         try {
             val obj = JSONObject(json)
-            var arr = obj.optJSONArray("chapters") ?: obj.optJSONObject("data")?.optJSONArray("chapters")
+            var arr = obj.optJSONArray("chapters")
+                ?: obj.optJSONObject("data")?.optJSONArray("chapters")
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val ch = arr.getJSONObject(i)
-                    list.add(ChapterInfo(
-                        title = ch.optString("title", "未知"),
-                        serverPage = ch.optInt("page", 1),
-                        lineNumber = ch.optInt("lineNumber", 0),
-                        startCharOffset = ch.optInt("startCharOffset", 0)
-                    ))
+                    list.add(
+                        ChapterInfo(
+                            title = ch.optString("title", "未知"),
+                            serverPage = ch.optInt("page", 1),
+                            lineNumber = ch.optInt("lineNumber", 0),
+                            startCharOffset = ch.optInt("startCharOffset", 0)
+                        )
+                    )
                 }
             }
-        } catch (e: Exception) { Log.e("ViewModel", "解析章节失败", e) }
+        } catch (e: Exception) {
+            Log.e("ViewModel", "解析章节失败", e)
+        }
         return list
     }
 
@@ -601,19 +678,19 @@ class TextPreviewViewModel : ViewModel() {
         val block = currentBlock ?: run { callback(null); return }
         val nextSubPage = currentSubPage + 1
         if (nextSubPage <= totalSubPages) {
-            val cached = pageContentCache["${block.blockPage}_$nextSubPage"]
+            val cacheKey = "${block.blockPage}_$nextSubPage"
+            val cached = pageContentCache[cacheKey]
             if (cached != null) {
                 callback(cached)
             } else {
                 viewModelScope.launch(Dispatchers.Default) {
                     val (content, _) = generatePageContent(block, nextSubPage)
-                    pageContentCache["${block.blockPage}_$nextSubPage"] = content
+                    pageContentCache[cacheKey] = content
                     callback(content)
                 }
             }
-        } else if (nextBlock != null) {
-            callback(null)
         } else {
+            // 跨块预加载暂不实现，返回null
             callback(null)
         }
     }
