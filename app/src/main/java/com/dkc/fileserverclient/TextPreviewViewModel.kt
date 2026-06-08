@@ -401,7 +401,7 @@ class TextPreviewViewModel : ViewModel() {
         return BlockData(content, currentPage, totalPages, startChar, endChar)
     }
 
-    // ─── 修复后的 rebuildSubPages（防止空页） ───
+    // ─── 分页（保持原有策略，不添加强制行数） ───
     private fun rebuildSubPages(block: BlockData) {
         subPageBoundaries.clear()
         if (textWidth <= 0 || textPaint == null || block.fullText.isEmpty()) {
@@ -437,12 +437,10 @@ class TextPreviewViewModel : ViewModel() {
         while (startLine < totalLines) {
             var endLine = minOf(startLine + linesPerPage, totalLines)
 
-            // 如果 endLine 恰好是标题行且不是 startLine，退一行避免孤行
             if (endLine < totalLines && chapterStartLines.contains(endLine)) {
                 if (endLine > startLine + 1) endLine--
             }
 
-            // 在区间内若有标题行，提早断开
             for (line in startLine until endLine) {
                 if (chapterStartLines.contains(line) && line != startLine) {
                     endLine = line
@@ -450,15 +448,12 @@ class TextPreviewViewModel : ViewModel() {
                 }
             }
 
-            // 避免最后留下极短的尾页
             if (endLine < totalLines && totalLines - endLine < 2 && startLine + 1 < endLine) {
                 endLine--
             }
 
-            // 绝对保证本页至少一行（强制修复空页）
             if (endLine <= startLine) {
                 endLine = minOf(startLine + 1, totalLines)
-                Log.w("ViewModel", "强制修复空页: start=$startLine, end=$endLine, total=$totalLines")
             }
 
             subPageBoundaries.add(Pair(startLine, endLine))
@@ -481,17 +476,46 @@ class TextPreviewViewModel : ViewModel() {
         return 1
     }
 
+    // ─── 核心修改：showCurrentSubPage 内检测并消除全空白页 ───
     private fun showCurrentSubPage() {
         val block = currentBlock ?: return
         viewModelScope.launch(Dispatchers.Default) {
-            val (spannable, offset) = generatePageContent(block, currentSubPage)
-            _pageContent.postValue(spannable)
-            _currentAbsoluteCharOffset.postValue(offset)
+            // 先获取当前页的原始内容，用于判断是否空白
+            val (rawContent, rawOffset) = generatePageContent(block, currentSubPage)
+
+            // 检测：当前页是否全为空白（trim后为空）且不是最后一页？
+            if (rawContent.trim().isEmpty() && currentSubPage < totalSubPages) {
+                // 当前页为空白，将其合并到前一页（把前一页的结束行扩展到当前页的结束行）
+                val prevIdx = currentSubPage - 2
+                val curIdx = currentSubPage - 1
+                val prevBoundary = subPageBoundaries[prevIdx]
+                val curBoundary = subPageBoundaries[curIdx]
+
+                // 合并：前一页结束行 = 当前页结束行
+                subPageBoundaries[prevIdx] = Pair(prevBoundary.first, curBoundary.second)
+                // 移除当前页的边界
+                subPageBoundaries.removeAt(curIdx)
+                totalSubPages = subPageBoundaries.size
+
+                // 当前子页指针回退到前一页
+                currentSubPage = prevIdx + 1
+
+                Log.d("ViewModel", "消除空白页：合并了子页${curIdx+1}到子页${prevIdx+1}")
+
+                // 重新生成合并后的前一页内容并显示
+                val (newContent, newOffset) = generatePageContent(block, currentSubPage)
+                _pageContent.postValue(newContent)
+                _currentAbsoluteCharOffset.postValue(newOffset)
+            } else {
+                // 正常显示
+                _pageContent.postValue(rawContent)
+                _currentAbsoluteCharOffset.postValue(rawOffset)
+            }
             withContext(Dispatchers.Main) { updatePageInfo() }
         }
     }
 
-    // ─── 修复后的 generatePageContent（空内容防护） ───
+    // ─── generatePageContent 保持原样（不负责处理空白页） ───
     private suspend fun generatePageContent(
         block: BlockData,
         subPage: Int
@@ -503,12 +527,14 @@ class TextPreviewViewModel : ViewModel() {
         val (startLine, endLine) = subPageBoundaries.getOrElse(subPage - 1) { subPageBoundaries.first() }
         val effectiveText = block.fullText.substring(block.consumedStartOffset)
         val layout = buildStaticLayout(effectiveText)
+        val totalLines = layout.lineCount
+
         val startCharLocal = layout.getLineStart(startLine)
-        val endCharLocal = if (endLine >= layout.lineCount) effectiveText.length else layout.getLineStart(endLine)
+        val endCharLocal = if (endLine >= totalLines) effectiveText.length else layout.getLineStart(endLine)
         var pageText = effectiveText.substring(startCharLocal, minOf(endCharLocal, effectiveText.length))
         var pageAbsoluteStart = block.startChar + block.consumedStartOffset + startCharLocal
 
-        // 向前补全（保留至少一行给 prevBlock）
+        // 向前补全（从 prevBlock 借）
         if (subPage == 1 && prevBlock != null && textPaint != null) {
             val currentLines = endLine - startLine
             if (currentLines < linesPerPage) {
@@ -538,7 +564,7 @@ class TextPreviewViewModel : ViewModel() {
             }
         }
 
-        // 向后补全（保留至少一行给 nextBlock）
+        // 向后补全（从 nextBlock 借）
         if (subPage == totalSubPages && nextBlock != null && textPaint != null) {
             val currentLines = endLine - startLine
             if (currentLines < linesPerPage) {
@@ -567,9 +593,7 @@ class TextPreviewViewModel : ViewModel() {
             }
         }
 
-        // 最终空页保护：如果仍然生成了空字符串，用单个空格代替
         if (pageText.isEmpty()) {
-            Log.e("ViewModel", "generatePageContent 生成了空页！block=${block.blockPage}, sub=$subPage, startLine=$startLine, endLine=$endLine")
             pageText = " "
             pageAbsoluteStart = block.startChar + block.consumedStartOffset
         }
@@ -603,6 +627,27 @@ class TextPreviewViewModel : ViewModel() {
             val progress = if (block.totalBlockPages > 0) ((block.blockPage - 1) * 100 / block.totalBlockPages) else 0
             _pageInfo.value = PageInfo(block.blockPage, block.totalBlockPages, progress)
             _currentPageState.value = PageState(block.blockPage, currentSubPage, block.totalBlockPages, totalSubPages)
+        }
+    }
+
+    fun peekNextPageContent(callback: (CharSequence?) -> Unit) {
+        val block = currentBlock ?: run { callback(null); return }
+        // 注意：若空白页被消除，totalSubPages可能已更新，这里直接使用最新的边界
+        val nextSubPage = currentSubPage + 1
+        if (nextSubPage <= totalSubPages) {
+            val cacheKey = "${block.blockPage}_$nextSubPage"
+            val cached = pageContentCache[cacheKey]
+            if (cached != null) {
+                callback(cached)
+            } else {
+                viewModelScope.launch(Dispatchers.Default) {
+                    val (content, _) = generatePageContent(block, nextSubPage)
+                    pageContentCache[cacheKey] = content
+                    callback(content)
+                }
+            }
+        } else {
+            callback(null)
         }
     }
 
@@ -644,25 +689,5 @@ class TextPreviewViewModel : ViewModel() {
             }
         } catch (e: Exception) { Log.e("ViewModel", "解析章节失败", e) }
         return list
-    }
-
-    fun peekNextPageContent(callback: (CharSequence?) -> Unit) {
-        val block = currentBlock ?: run { callback(null); return }
-        val nextSubPage = currentSubPage + 1
-        if (nextSubPage <= totalSubPages) {
-            val cacheKey = "${block.blockPage}_$nextSubPage"
-            val cached = pageContentCache[cacheKey]
-            if (cached != null) {
-                callback(cached)
-            } else {
-                viewModelScope.launch(Dispatchers.Default) {
-                    val (content, _) = generatePageContent(block, nextSubPage)
-                    pageContentCache[cacheKey] = content
-                    callback(content)
-                }
-            }
-        } else {
-            callback(null)
-        }
     }
 }

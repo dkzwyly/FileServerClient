@@ -404,7 +404,7 @@ class TextPreviewActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // ========== 章节相关（完整实现） ==========
+    // ========== 章节相关 ==========
     private fun showChapterDialog() {
         statusLabel.isVisible = true
         statusLabel.text = "正在从服务器加载章节..."
@@ -412,15 +412,12 @@ class TextPreviewActivity : AppCompatActivity() {
     }
 
     private fun showChapterList(chapters: List<TextPreviewViewModel.ChapterInfo>) {
-        // 按字符偏移排序，确保顺序正确
         val sortedChapters = chapters.sortedBy { it.startCharOffset }
-        // 根据当前绝对字符偏移找到所在章节索引
         val currentChapterIndex = if (sortedChapters.isNotEmpty()) {
             sortedChapters.indexOfLast { it.startCharOffset <= currentAbsoluteOffset }
                 .takeIf { it != -1 } ?: -1
         } else -1
 
-        // 调试日志：检查偏移量和章节索引
         Log.d("Chapter", "currentAbsoluteOffset=$currentAbsoluteOffset, currentChapterIndex=$currentChapterIndex")
 
         val dialogView = layoutInflater.inflate(R.layout.dialog_chapter_list, null)
@@ -465,7 +462,6 @@ class TextPreviewActivity : AppCompatActivity() {
         dialog.show()
         statusLabel.isVisible = false
 
-        // 等待 ListView 布局完成后滚动到当前章节位置并高亮
         listView.post {
             if (currentChapterIndex >= 0) {
                 listView.setItemChecked(currentChapterIndex, true)
@@ -483,7 +479,7 @@ class TextPreviewActivity : AppCompatActivity() {
         statusLabel.isVisible = false
     }
 
-    // ========== 听书功能（保持不变） ==========
+    // ========== 听书功能 ==========
     private fun showVoiceEngineMenu() {
         PopupMenu(this, voiceMenuButton).apply {
             menu.add("本地 TTS")
@@ -666,7 +662,6 @@ class TextPreviewActivity : AppCompatActivity() {
         viewModel.previousPage()
     }
 
-    // 状态切换
     private fun showLoadingState(message: String? = null) {
         loadingProgress.isVisible = true
         textContentTextView.isVisible = false
@@ -690,7 +685,6 @@ class TextPreviewActivity : AppCompatActivity() {
         statusLabel.isVisible = false
     }
 
-    // 历史记录
     private fun loadReadingHistory() {
         if (readingHistoryFile.exists()) {
             try {
