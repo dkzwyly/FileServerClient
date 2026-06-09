@@ -74,6 +74,9 @@ class TextPreviewActivity : AppCompatActivity() {
     private lateinit var ttsPrefs: SharedPreferences
     private var selectedEnginePackage: String? = null
 
+    // 翻页防抖标志
+    private var isPageChanging = false
+
     private enum class EngineType { LOCAL, CLOUD }
 
     private val serviceConnection = object : ServiceConnection {
@@ -639,27 +642,45 @@ class TextPreviewActivity : AppCompatActivity() {
                 tryStartAutoPlay()
             } else if (content != null && isAutoPlay && currentEngine?.isPlaying() == false) {
                 playCurrentPage()
+            } else if (content != null && isAutoPlay && currentEngine?.isPlaying() == true) {
+                // 内容发生变化（例如合并空白页后刷新），强制停止旧任务并播放新内容
+                currentEngine?.stop()
+                playCurrentPage()
             }
         }
         viewModel.pageContent.observeForever(autoPlayObserver!!)
     }
 
+    // 添加翻页防抖
     private fun manualNextPage() {
-        if (isAutoPlay) {
-            currentEngine?.stop()
-            isAutoPlay = false
+        if (isPageChanging) return
+        isPageChanging = true
+        try {
+            if (isAutoPlay) {
+                currentEngine?.stop()
+                isAutoPlay = false
+            }
+            pendingAutoPlay = false
+            viewModel.nextPage()
+        } finally {
+            // 延时重置，避免连续触发
+            rootLayout.postDelayed({ isPageChanging = false }, 300)
         }
-        pendingAutoPlay = false
-        viewModel.nextPage()
     }
 
     private fun manualPrevPage() {
-        if (isAutoPlay) {
-            currentEngine?.stop()
-            isAutoPlay = false
+        if (isPageChanging) return
+        isPageChanging = true
+        try {
+            if (isAutoPlay) {
+                currentEngine?.stop()
+                isAutoPlay = false
+            }
+            pendingAutoPlay = false
+            viewModel.previousPage()
+        } finally {
+            rootLayout.postDelayed({ isPageChanging = false }, 300)
         }
-        pendingAutoPlay = false
-        viewModel.previousPage()
     }
 
     private fun showLoadingState(message: String? = null) {

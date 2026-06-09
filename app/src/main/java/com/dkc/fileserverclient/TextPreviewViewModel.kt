@@ -402,7 +402,10 @@ class TextPreviewViewModel : ViewModel() {
     }
 
     // ─── 分页（保持原有策略，不添加强制行数） ───
+    // ─── 分页（已加入主动消除空白页） ───
     private fun rebuildSubPages(block: BlockData) {
+        pageContentCache.clear()
+
         subPageBoundaries.clear()
         if (textWidth <= 0 || textPaint == null || block.fullText.isEmpty()) {
             totalSubPages = 1
@@ -459,8 +462,45 @@ class TextPreviewViewModel : ViewModel() {
             subPageBoundaries.add(Pair(startLine, endLine))
             startLine = endLine
         }
+
+        // ─── 主动消除所有空白页（非最后一页） ───
+        var changed = true
+        while (changed) {
+            changed = false
+            var i = 0
+            while (i < subPageBoundaries.size) {
+                // 跳过最后一页（允许最后一页空白）
+                if (i == subPageBoundaries.size - 1) break
+
+                val (s, e) = subPageBoundaries[i]
+                // 获取该页实际文本并 trim
+                val pageText = if (e <= totalLines) {
+                    val startChar = layout.getLineStart(s)
+                    val endChar = if (e >= totalLines) effectiveText.length else layout.getLineStart(e)
+                    effectiveText.substring(startChar, endChar.coerceAtMost(effectiveText.length)).trim()
+                } else ""
+
+                if (pageText.isEmpty() && i > 0) {
+                    // 空白页，合并到前一个非空白页
+                    val prevBoundary = subPageBoundaries[i - 1]
+                    subPageBoundaries[i - 1] = Pair(prevBoundary.first, e)
+                    subPageBoundaries.removeAt(i)
+                    changed = true
+                    // 不增加 i，因为当前索引现在指向下一个元素
+                } else if (pageText.isEmpty() && i == 0 && subPageBoundaries.size > 1) {
+                    // 第一页空白且后面还有页，则将其合并到第二页（将第二页的起始行改为第一页的起始行）
+                    val nextBoundary = subPageBoundaries[1]
+                    subPageBoundaries[1] = Pair(s, nextBoundary.second)
+                    subPageBoundaries.removeAt(0)
+                    changed = true
+                } else {
+                    i++
+                }
+            }
+        }
+
         totalSubPages = subPageBoundaries.size
-        Log.d("ViewModel", "分页完成: 总行=$totalLines, 子页数=$totalSubPages")
+        Log.d("ViewModel", "分页完成: 总行=$totalLines, 子页数=$totalSubPages（已消除空白页）")
     }
 
     private fun findSubPageForCharOffset(block: BlockData, absCharOffset: Int): Int {
@@ -499,6 +539,9 @@ class TextPreviewViewModel : ViewModel() {
 
                 // 当前子页指针回退到前一页
                 currentSubPage = prevIdx + 1
+
+                // 清除缓存，因为页边界已经改变
+                pageContentCache.clear()
 
                 Log.d("ViewModel", "消除空白页：合并了子页${curIdx+1}到子页${prevIdx+1}")
 
@@ -632,7 +675,6 @@ class TextPreviewViewModel : ViewModel() {
 
     fun peekNextPageContent(callback: (CharSequence?) -> Unit) {
         val block = currentBlock ?: run { callback(null); return }
-        // 注意：若空白页被消除，totalSubPages可能已更新，这里直接使用最新的边界
         val nextSubPage = currentSubPage + 1
         if (nextSubPage <= totalSubPages) {
             val cacheKey = "${block.blockPage}_$nextSubPage"
