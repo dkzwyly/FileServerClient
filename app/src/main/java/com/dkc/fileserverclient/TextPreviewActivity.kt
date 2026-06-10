@@ -77,6 +77,9 @@ class TextPreviewActivity : AppCompatActivity() {
     // 翻页防抖标志
     private var isPageChanging = false
 
+    // 记录上次实际播放的页面起始偏移，用于过滤无变化的内容更新
+    private var lastPlayedOffset = -1
+
     private enum class EngineType { LOCAL, CLOUD }
 
     private val serviceConnection = object : ServiceConnection {
@@ -125,6 +128,7 @@ class TextPreviewActivity : AppCompatActivity() {
         loadReadingHistory()
     }
 
+    // ==================== 界面初始化等（无改动） ====================
     private fun enableImmersiveMode() {
         window.decorView.systemUiVisibility = (
                 View.SYSTEM_UI_FLAG_FULLSCREEN
@@ -312,6 +316,7 @@ class TextPreviewActivity : AppCompatActivity() {
         }
     }
 
+    // ==================== 设置对话框（无改动） ====================
     private fun showAppearanceDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_reading_settings, null)
         val seekBarFontSize = dialogView.findViewById<SeekBar>(R.id.seekBarFontSize)
@@ -407,7 +412,7 @@ class TextPreviewActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // ========== 章节相关 ==========
+    // ==================== 章节相关 ====================
     private fun showChapterDialog() {
         statusLabel.isVisible = true
         statusLabel.text = "正在从服务器加载章节..."
@@ -482,7 +487,7 @@ class TextPreviewActivity : AppCompatActivity() {
         statusLabel.isVisible = false
     }
 
-    // ========== 听书功能 ==========
+    // ==================== 听书功能（核心修改在Observer） ====================
     private fun showVoiceEngineMenu() {
         PopupMenu(this, voiceMenuButton).apply {
             menu.add("本地 TTS")
@@ -601,6 +606,9 @@ class TextPreviewActivity : AppCompatActivity() {
         if (utteranceId == lastUtteranceId && engine.isPlaying()) return
 
         lastUtteranceId = utteranceId
+        // 记录本次播放的起始偏移，用于后续过滤
+        lastPlayedOffset = viewModel.currentAbsoluteCharOffset.value ?: 0
+
         engine.play(content.toString(), utteranceId, object : VoiceCallback {
             override fun onStart(utteranceId: String) {
                 runOnUiThread {
@@ -611,7 +619,7 @@ class TextPreviewActivity : AppCompatActivity() {
             override fun onComplete(utteranceId: String) {
                 runOnUiThread {
                     if (isAutoPlay) {
-                        viewModel.nextPage()
+                        viewModel.nextPage()  // 自动翻页，会触发新的pageContent
                     } else {
                         statusLabel.text = "朗读完成"
                     }
@@ -636,22 +644,43 @@ class TextPreviewActivity : AppCompatActivity() {
         }
     }
 
+    // ==================== 核心修改：自动播放观察者 ====================
     private fun setupAutoPlayObserver() {
         autoPlayObserver = Observer { content ->
-            if (content != null && pendingAutoPlay) {
+            if (content == null) return@Observer
+            val currentOffset = viewModel.currentAbsoluteCharOffset.value ?: 0
+
+            if (pendingAutoPlay) {
+                // 等待播放的就绪状态，无条件尝试开启
                 tryStartAutoPlay()
-            } else if (content != null && isAutoPlay && currentEngine?.isPlaying() == false) {
-                playCurrentPage()
-            } else if (content != null && isAutoPlay && currentEngine?.isPlaying() == true) {
-                // 内容发生变化（例如合并空白页后刷新），强制停止旧任务并播放新内容
-                currentEngine?.stop()
-                playCurrentPage()
+                return@Observer
             }
+
+            if (isAutoPlay) {
+                // 预加载触发的重复内容（偏移未变）不打断播放，只更新UI
+                if (currentEngine?.isPlaying() == true && currentOffset == lastPlayedOffset) {
+                    textContentTextView.text = content
+                    return@Observer
+                }
+
+                // 正常链式播放：上一页完成，引擎已停止，新内容到达
+                if (currentEngine?.isPlaying() == false) {
+                    playCurrentPage()
+                } else {
+                    // 如果引擎正在播放，但偏移改变（可能是内容真实变化，如空白页跳过）
+                    // 停止当前并播放新内容
+                    currentEngine?.stop()
+                    playCurrentPage()
+                }
+            }
+
+            // 更新最后处理的偏移
+            lastPlayedOffset = currentOffset
         }
         viewModel.pageContent.observeForever(autoPlayObserver!!)
     }
 
-    // 添加翻页防抖
+    // ==================== 手动翻页（停止自动播放） ====================
     private fun manualNextPage() {
         if (isPageChanging) return
         isPageChanging = true
@@ -663,7 +692,6 @@ class TextPreviewActivity : AppCompatActivity() {
             pendingAutoPlay = false
             viewModel.nextPage()
         } finally {
-            // 延时重置，避免连续触发
             rootLayout.postDelayed({ isPageChanging = false }, 300)
         }
     }
@@ -683,6 +711,7 @@ class TextPreviewActivity : AppCompatActivity() {
         }
     }
 
+    // ==================== 状态UI ====================
     private fun showLoadingState(message: String? = null) {
         loadingProgress.isVisible = true
         textContentTextView.isVisible = false
@@ -706,6 +735,7 @@ class TextPreviewActivity : AppCompatActivity() {
         statusLabel.isVisible = false
     }
 
+    // ==================== 历史记录 ====================
     private fun loadReadingHistory() {
         if (readingHistoryFile.exists()) {
             try {
