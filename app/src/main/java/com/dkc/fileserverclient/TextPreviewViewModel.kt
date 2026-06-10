@@ -24,7 +24,7 @@ import kotlin.math.min
 class TextPreviewViewModel : ViewModel() {
 
     companion object {
-        const val WINDOW_PADDING_PAGES = 1  // 窗口前后至少保留的块数，实际通过行数阈值控制
+        const val WINDOW_PADDING_PAGES = 1
     }
 
     // ── 公开状态 ──
@@ -68,11 +68,16 @@ class TextPreviewViewModel : ViewModel() {
     private val blockCache = mutableMapOf<Int, CachedBlock>()
     private var windowBlocks = listOf<CachedBlock>()
     private var globalLines = listOf<LineInfo>()
+
+    // 章节强制分页后的页面边界（每个元素为 globalLines 中的起始行索引）
+    private var pageBreaks = listOf<Int>()
+
     private var currentPageIndex = 0
     private var totalServerBlocks = 1
 
     // ── 章节数据 ──
     private var cachedChapters: List<ChapterInfo>? = null
+    private var chapterStartOffsetSet = emptySet<Int>()
     private var isLoadingChapters = false
 
     // ── 其他状态 ──
@@ -81,7 +86,6 @@ class TextPreviewViewModel : ViewModel() {
     private var isHistoryRestored = false
     private var restoredBlockPage = 1
 
-    // OkHttp客户端
     private val httpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
 
     // ── 公开数据类 ──
@@ -204,8 +208,8 @@ class TextPreviewViewModel : ViewModel() {
     fun getCurrentPageState(): PageState? {
         if (!isInitialWindowLoaded || windowBlocks.isEmpty()) return null
         val curPageBlock = getBlockPageForCurrentGlobalPosition()
-        val totalSubPages = if (globalLines.isEmpty() || linesPerPage <= 0) 0
-        else (globalLines.size + linesPerPage - 1) / linesPerPage
+        val totalSubPages = if (globalLines.isEmpty() || pageBreaks.isEmpty()) 0
+        else pageBreaks.size
         return PageState(
             blockPage = curPageBlock,
             subPage = currentPageIndex + 1,
@@ -226,7 +230,6 @@ class TextPreviewViewModel : ViewModel() {
         _loadingState.value = LoadingState(true, "加载中...")
         viewModelScope.launch {
             try {
-                // 初始加载范围扩大，保证充足边界
                 val pagesToLoad = ((centerBlockPage - 2)..(centerBlockPage + 2))
                     .filter { it >= 1 }
                     .toSet()
@@ -237,6 +240,7 @@ class TextPreviewViewModel : ViewModel() {
                 }
                 windowBlocks = newBlocks.sortedBy { it.blockPage }
                 rebuildGlobalLines()
+                recalculatePageBreaks()
                 currentPageIndex = if (pendingCharOffset != null) {
                     val idx = findPageForAbsoluteOffset(pendingCharOffset!!)
                     pendingCharOffset = null
@@ -244,7 +248,7 @@ class TextPreviewViewModel : ViewModel() {
                 } else 0
                 isInitialWindowLoaded = true
                 showCurrentPage()
-                checkAndPreload()  // 显示后立即检查预加载
+                checkAndPreload()
                 _loadingState.value = LoadingState(false)
             } catch (e: Exception) {
                 _errorMessage.value = "加载失败: ${e.message}"
@@ -293,32 +297,70 @@ class TextPreviewViewModel : ViewModel() {
         globalLines = lines
     }
 
-    // 核心：智能预加载，基于当前页偏移与窗口边界的行数距离判断
+    // 章节强制分页：保证章节标题在页顶
+    private fun recalculatePageBreaks() {
+        if (globalLines.isEmpty()) {
+            pageBreaks = emptyList()
+            return
+        }
+        val breaks = mutableListOf<Int>()
+        var start = 0
+        while (start < globalLines.size) {
+            var end = min(start + linesPerPage, globalLines.size)
+            // 在当前页范围内（不含第一行）寻找章节标题
+            for (i in (start + 1) until end) {
+                if (chapterStartOffsetSet.contains(globalLines[i].absoluteStartChar)) {
+                    end = i   // 让标题成为下一页第一行
+                    break
+                }
+            }
+            breaks.add(start)
+            start = end
+        }
+        pageBreaks = breaks
+    }
+
+    // 判断某个页面是否为完全空白（不含任何可视字符）
+    private fun isPageBlank(pageIndex: Int): Boolean {
+        if (pageIndex < 0 || pageIndex >= pageBreaks.size) return true
+        val startLine = pageBreaks[pageIndex]
+        val endLine = if (pageIndex + 1 < pageBreaks.size) pageBreaks[pageIndex + 1] else globalLines.size
+        if (startLine >= endLine) return true
+        for (i in startLine until endLine) {
+            val line = globalLines[i]
+            val layout = line.cachedBlock.layout
+            val lineStart = layout.getLineStart(line.lineIndexInBlock)
+            val lineEnd = layout.getLineEnd(line.lineIndexInBlock)
+            val text = line.cachedBlock.fullText.substring(lineStart, lineEnd)
+            if (text.isNotBlank()) return false
+        }
+        return true
+    }
+
+    // 预加载检查，基于实际页面边界
     private fun checkAndPreload() {
         if (!isInitialWindowLoaded || globalLines.isEmpty()) return
-
         val firstBlock = windowBlocks.firstOrNull() ?: return
         val lastBlock = windowBlocks.lastOrNull() ?: return
 
-        val lp = this.linesPerPage
-        val curPageStartLine = currentPageIndex * lp  // 当前页第一行索引
+        val curPageStartLine = pageBreaks.getOrElse(currentPageIndex) { 0 }
+        val curPageEndLine = if (currentPageIndex + 1 < pageBreaks.size)
+            pageBreaks[currentPageIndex + 1] else globalLines.size
 
-        // 检查头部：当前页第一行距离窗口第一行不足一页？
-        if (curPageStartLine < lp && firstBlock.blockPage > 1) {
+        // 头部预加载
+        if (curPageStartLine < linesPerPage && firstBlock.blockPage > 1) {
             val prevPage = firstBlock.blockPage - 1
             if (!blockCache.containsKey(prevPage)) {
                 viewModelScope.launch(Dispatchers.IO) {
                     fetchAndCacheBlock(prevPage)
-                    // 如果窗口头部未变，插入新块并重建全局行表
                     if (windowBlocks.firstOrNull()?.blockPage == firstBlock.blockPage) {
                         withContext(Dispatchers.Main) {
                             windowBlocks = listOf(blockCache[prevPage]!!) + windowBlocks
                             rebuildGlobalLines()
-                            // 头部增加行后，当前页索引需后移以保持偏移不变
+                            recalculatePageBreaks()
                             val offset = _currentAbsoluteCharOffset.value ?: 0
                             currentPageIndex = findPageForAbsoluteOffset(offset)
                             showCurrentPage()
-                            // 扩展后再次检查，可能还需要继续预加载
                             checkAndPreload()
                         }
                     }
@@ -326,10 +368,9 @@ class TextPreviewViewModel : ViewModel() {
             }
         }
 
-        // 检查尾部：当前页最后一行距离窗口最后一行不足一页？
-        val lastLineIdx = min((currentPageIndex + 1) * lp, globalLines.size) - 1
-        val distanceToEnd = globalLines.size - lastLineIdx
-        if (distanceToEnd < lp && lastBlock.blockPage < totalServerBlocks) {
+        // 尾部预加载
+        val distanceToEnd = globalLines.size - curPageEndLine
+        if (distanceToEnd < linesPerPage && lastBlock.blockPage < totalServerBlocks) {
             val nextPage = lastBlock.blockPage + 1
             if (!blockCache.containsKey(nextPage)) {
                 viewModelScope.launch(Dispatchers.IO) {
@@ -338,7 +379,7 @@ class TextPreviewViewModel : ViewModel() {
                         withContext(Dispatchers.Main) {
                             windowBlocks = windowBlocks + blockCache[nextPage]!!
                             rebuildGlobalLines()
-                            // 尾部增长不影响当前页索引，直接刷新显示即可
+                            recalculatePageBreaks()
                             showCurrentPage()
                             checkAndPreload()
                         }
@@ -348,14 +389,14 @@ class TextPreviewViewModel : ViewModel() {
         }
     }
 
-    // 滑动窗口方法变为轻量级，优先使用已预加载的块
     private suspend fun slideWindowForward(nextBlockPage: Int) {
         val existing = blockCache[nextBlockPage]
         if (existing != null) {
             windowBlocks = windowBlocks.drop(1) + existing
             rebuildGlobalLines()
+            recalculatePageBreaks()
             val targetPage = findPageForAbsoluteOffset(_currentAbsoluteCharOffset.value ?: 0)
-            currentPageIndex = (targetPage + 1).coerceAtMost((globalLines.size + linesPerPage - 1) / linesPerPage - 1)
+            currentPageIndex = min(targetPage + 1, pageBreaks.size - 1)
             showCurrentPage()
             checkAndPreload()
         } else {
@@ -364,9 +405,10 @@ class TextPreviewViewModel : ViewModel() {
                 val newBlock = fetchAndCacheBlock(nextBlockPage)
                 windowBlocks = windowBlocks.drop(1) + newBlock
                 rebuildGlobalLines()
-                val lastReadOffset = _currentAbsoluteCharOffset.value ?: 0
-                val targetPage = findPageForAbsoluteOffset(lastReadOffset)
-                currentPageIndex = (targetPage + 1).coerceAtMost((globalLines.size + linesPerPage - 1) / linesPerPage - 1)
+                recalculatePageBreaks()
+                val offset = _currentAbsoluteCharOffset.value ?: 0
+                val targetPage = findPageForAbsoluteOffset(offset)
+                currentPageIndex = min(targetPage + 1, pageBreaks.size - 1)
                 showCurrentPage()
                 checkAndPreload()
             } catch (e: Exception) {
@@ -382,9 +424,10 @@ class TextPreviewViewModel : ViewModel() {
         if (existing != null) {
             windowBlocks = listOf(existing) + windowBlocks.dropLast(1)
             rebuildGlobalLines()
-            val lastReadOffset = _currentAbsoluteCharOffset.value ?: 0
-            val targetPage = findPageForAbsoluteOffset(lastReadOffset)
-            currentPageIndex = (targetPage - 1).coerceAtLeast(0)
+            recalculatePageBreaks()
+            val offset = _currentAbsoluteCharOffset.value ?: 0
+            val targetPage = findPageForAbsoluteOffset(offset)
+            currentPageIndex = maxOf(targetPage - 1, 0)
             showCurrentPage()
             checkAndPreload()
         } else {
@@ -393,9 +436,10 @@ class TextPreviewViewModel : ViewModel() {
                 val newBlock = fetchAndCacheBlock(prevBlockPage)
                 windowBlocks = listOf(newBlock) + windowBlocks.dropLast(1)
                 rebuildGlobalLines()
-                val lastReadOffset = _currentAbsoluteCharOffset.value ?: 0
-                val targetPage = findPageForAbsoluteOffset(lastReadOffset)
-                currentPageIndex = (targetPage - 1).coerceAtLeast(0)
+                recalculatePageBreaks()
+                val offset = _currentAbsoluteCharOffset.value ?: 0
+                val targetPage = findPageForAbsoluteOffset(offset)
+                currentPageIndex = maxOf(targetPage - 1, 0)
                 showCurrentPage()
                 checkAndPreload()
             } catch (e: Exception) {
@@ -442,11 +486,29 @@ class TextPreviewViewModel : ViewModel() {
         return windowBlocks.firstOrNull()?.blockPage ?: 1
     }
 
+    // 基于章节分页的页面查找
     private fun findPageForAbsoluteOffset(absoluteOffset: Int): Int {
-        if (globalLines.isEmpty()) return 0
+        if (globalLines.isEmpty() || pageBreaks.isEmpty()) return 0
+        val lineIdx = findLineForAbsoluteOffset(absoluteOffset)
+        var low = 0
+        var high = pageBreaks.size - 1
+        while (low <= high) {
+            val mid = (low + high) / 2
+            if (lineIdx < pageBreaks[mid]) {
+                high = mid - 1
+            } else if (mid + 1 < pageBreaks.size && lineIdx >= pageBreaks[mid + 1]) {
+                low = mid + 1
+            } else {
+                return mid
+            }
+        }
+        return 0
+    }
+
+    private fun findLineForAbsoluteOffset(absoluteOffset: Int): Int {
         var low = 0
         var high = globalLines.size - 1
-        var targetLine = 0
+        var target = 0
         while (low <= high) {
             val mid = (low + high) / 2
             val lineStart = globalLines[mid].absoluteStartChar
@@ -460,41 +522,47 @@ class TextPreviewViewModel : ViewModel() {
             } else if (absoluteOffset < lineStart) {
                 high = mid - 1
             } else {
-                targetLine = mid
+                target = mid
                 break
             }
         }
-        if (low > high) targetLine = low.coerceIn(0, globalLines.size - 1)
-        return targetLine / linesPerPage
+        if (low > high) target = low.coerceIn(0, globalLines.size - 1)
+        return target
     }
 
-    // ── 显示当前页 ──
+    // ── 显示当前页（自动跳过空白页） ──
     private fun showCurrentPage() {
-        if (!isInitialWindowLoaded || globalLines.isEmpty()) return
-        val content = buildPageContent(currentPageIndex)
-        _pageContent.value = content
-        val firstLineIdx = currentPageIndex * linesPerPage
-        if (firstLineIdx < globalLines.size) {
-            _currentAbsoluteCharOffset.value = globalLines[firstLineIdx].absoluteStartChar
+        if (!isInitialWindowLoaded || globalLines.isEmpty() || pageBreaks.isEmpty()) return
+
+        // 如果当前页是空白页，自动向前或向后寻找第一个非空页
+        while (currentPageIndex in 0 until pageBreaks.size && isPageBlank(currentPageIndex)) {
+            // 优先向后找
+            val nextNonBlank = (currentPageIndex + 1 until pageBreaks.size).firstOrNull { !isPageBlank(it) }
+            if (nextNonBlank != null) {
+                currentPageIndex = nextNonBlank
+            } else {
+                // 后面没有非空页，尝试向前找
+                val prevNonBlank = (currentPageIndex - 1 downTo 0).firstOrNull { !isPageBlank(it) }
+                if (prevNonBlank != null) {
+                    currentPageIndex = prevNonBlank
+                } else {
+                    // 所有页都空白，放弃跳过
+                    break
+                }
+            }
         }
+
+        val startLine = pageBreaks[currentPageIndex]
+        val endLine = if (currentPageIndex + 1 < pageBreaks.size) pageBreaks[currentPageIndex + 1] else globalLines.size
+        val content = buildPageContent(startLine, endLine)
+        _pageContent.value = content
+        _currentAbsoluteCharOffset.value = globalLines[startLine].absoluteStartChar
         updatePageInfo()
-        checkAndPreload()  // 每次显示后自动触发预加载检查
+        checkAndPreload()
     }
 
-    private fun buildPageContent(pageIndex: Int): CharSequence {
-        val startLine = pageIndex * linesPerPage
-        val endLine = min(startLine + linesPerPage, globalLines.size)
+    private fun buildPageContent(startLine: Int, endLine: Int): CharSequence {
         if (startLine >= globalLines.size) return ""
-        val firstBlock = globalLines[startLine].cachedBlock
-        val layout = firstBlock.layout
-        val blockStartChar = layout.getLineStart(globalLines[startLine].lineIndexInBlock)
-        val lastLineInfo = globalLines[endLine - 1]
-        val lastLayout = lastLineInfo.cachedBlock.layout
-        val blockEndChar = if (lastLineInfo.lineIndexInBlock + 1 < lastLayout.lineCount) {
-            lastLayout.getLineStart(lastLineInfo.lineIndexInBlock + 1)
-        } else {
-            lastLineInfo.cachedBlock.fullText.length
-        }
         val pageStartAbs = globalLines[startLine].absoluteStartChar
         val pageEndAbs = if (endLine < globalLines.size) globalLines[endLine].absoluteStartChar
         else {
@@ -538,22 +606,26 @@ class TextPreviewViewModel : ViewModel() {
         val curBlockPage = getBlockPageForCurrentGlobalPosition()
         val progress = if (totalServerBlocks > 0) ((curBlockPage - 1) * 100 / totalServerBlocks) else 0
         _pageInfo.value = PageInfo(curBlockPage, totalServerBlocks, progress)
-        val totalSubPages = if (globalLines.isEmpty() || linesPerPage <= 0) 0
-        else (globalLines.size + linesPerPage - 1) / linesPerPage
+        val totalSubPages = pageBreaks.size
         _currentPageState.value = PageState(curBlockPage, currentPageIndex + 1, totalServerBlocks, totalSubPages)
     }
 
     private fun getBlockPageForCurrentGlobalPosition(): Int {
-        if (globalLines.isEmpty()) return windowBlocks.firstOrNull()?.blockPage ?: 1
-        val firstLineOfPage = globalLines.getOrElse(currentPageIndex * linesPerPage) { globalLines.first() }
+        if (globalLines.isEmpty() || pageBreaks.isEmpty()) return windowBlocks.firstOrNull()?.blockPage ?: 1
+        val startLine = pageBreaks[currentPageIndex]
+        val firstLineOfPage = globalLines.getOrElse(startLine) { globalLines.first() }
         return firstLineOfPage.cachedBlock.blockPage
     }
 
-    // ── 翻页操作 ──
+    // ── 翻页操作（自动跳过空白页） ──
     fun previousPage() {
-        if (!isInitialWindowLoaded || globalLines.isEmpty()) return
-        if (currentPageIndex > 0) {
-            currentPageIndex--
+        if (!isInitialWindowLoaded || pageBreaks.isEmpty()) return
+        var target = currentPageIndex - 1
+        while (target >= 0 && isPageBlank(target)) {
+            target--
+        }
+        if (target >= 0) {
+            currentPageIndex = target
             showCurrentPage()
         } else {
             val firstBlock = windowBlocks.first()
@@ -567,10 +639,13 @@ class TextPreviewViewModel : ViewModel() {
     }
 
     fun nextPage() {
-        if (!isInitialWindowLoaded || globalLines.isEmpty()) return
-        val totalPages = (globalLines.size + linesPerPage - 1) / linesPerPage
-        if (currentPageIndex < totalPages - 1) {
-            currentPageIndex++
+        if (!isInitialWindowLoaded || pageBreaks.isEmpty()) return
+        var target = currentPageIndex + 1
+        while (target < pageBreaks.size && isPageBlank(target)) {
+            target++
+        }
+        if (target < pageBreaks.size) {
+            currentPageIndex = target
             showCurrentPage()
         } else {
             val lastBlock = windowBlocks.last()
@@ -591,9 +666,11 @@ class TextPreviewViewModel : ViewModel() {
             try {
                 val list = withContext(Dispatchers.IO) { fetchChaptersFromServer() }
                 cachedChapters = list.sortedBy { it.startCharOffset }
+                chapterStartOffsetSet = list.map { it.startCharOffset }.toSet()
                 _chapters.value = list
                 _showChapterDialogEvent.value = list
                 if (isInitialWindowLoaded) {
+                    recalculatePageBreaks()
                     showCurrentPage()
                 }
             } catch (e: Exception) {
@@ -609,14 +686,19 @@ class TextPreviewViewModel : ViewModel() {
     }
 
     fun peekNextPageContent(callback: (CharSequence?) -> Unit) {
-        if (!isInitialWindowLoaded || globalLines.isEmpty()) {
+        if (!isInitialWindowLoaded || pageBreaks.isEmpty()) {
             callback(null)
             return
         }
-        val totalPages = (globalLines.size + linesPerPage - 1) / linesPerPage
-        val nextPageIndex = currentPageIndex + 1
-        if (nextPageIndex < totalPages) {
-            val content = buildPageContent(nextPageIndex)
+        // 跳过可能的空白页来预览下一页
+        var nextIdx = currentPageIndex + 1
+        while (nextIdx < pageBreaks.size && isPageBlank(nextIdx)) {
+            nextIdx++
+        }
+        if (nextIdx < pageBreaks.size) {
+            val startLine = pageBreaks[nextIdx]
+            val endLine = if (nextIdx + 1 < pageBreaks.size) pageBreaks[nextIdx + 1] else globalLines.size
+            val content = buildPageContent(startLine, endLine)
             callback(content)
         } else {
             callback(null)
@@ -703,16 +785,19 @@ class TextPreviewViewModel : ViewModel() {
             windowBlocks = blockCache.values
                 .filter { it.blockPage in windowBlocks.map { blk -> blk.blockPage } }
                 .sortedBy { it.blockPage }
-            if (windowBlocks.isNotEmpty()) rebuildGlobalLines()
+            if (windowBlocks.isNotEmpty()) {
+                rebuildGlobalLines()
+                recalculatePageBreaks()
+            }
         }
     }
 
     private fun rebuildWindowAndShow() {
         val savedOffset = _currentAbsoluteCharOffset.value ?: 0
         rebuildGlobalLines()
+        recalculatePageBreaks()
         currentPageIndex = findPageForAbsoluteOffset(savedOffset)
         showCurrentPage()
-        // 字体变化后窗口可能不够，需要检查预加载
         checkAndPreload()
     }
 }
