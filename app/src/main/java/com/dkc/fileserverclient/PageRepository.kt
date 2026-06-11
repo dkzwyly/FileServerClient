@@ -92,10 +92,8 @@ class PageRepository private constructor(private val appContext: Context) {
     private var chapterStartOffsetSet = emptySet<Int>()
     private var isLoadingChapters = false
 
-    // 加载任务映射：页号 -> Job
-    private var loadingJobs = mutableMapOf<Int, Job>()
-    // 防止 adjustWindow / updateCurrentPage 循环调用
-    private var isAdjusting = false
+    // 用于取消正在进行的加载任务（键为 blockPage）
+    private val loadingJobs = mutableMapOf<Int, Job>()
 
     private var readingHistoryFile: File? = null
     private var historySaveJob: Job? = null
@@ -232,7 +230,6 @@ class PageRepository private constructor(private val appContext: Context) {
         chapterStartOffsetSet = emptySet()
         loadingJobs.values.forEach { it.cancel() }
         loadingJobs.clear()
-        isAdjusting = false
 
         val historyDir = File(appContext.filesDir, "reading_history")
         if (!historyDir.exists()) historyDir.mkdirs()
@@ -365,66 +362,75 @@ class PageRepository private constructor(private val appContext: Context) {
         return target
     }
 
-    // ── 核心窗口调整（无递归） ──
+    // ── 窗口管理 ──
     private suspend fun adjustWindow() {
-        if (isAdjusting) return
-        isAdjusting = true
-        try {
-            val currentBlock = _pageContent.value?.state?.blockPage ?: return
-            val minBlock = (currentBlock - WINDOW_HALF).coerceAtLeast(1)
-            val maxBlock = minBlock + WINDOW_SIZE - 1
-            val idealRange = (minBlock..maxBlock).toSet()
+        val currentBlock = _pageContent.value?.state?.blockPage ?: return
+        val minBlock = (currentBlock - WINDOW_HALF).coerceAtLeast(1)
+        val maxBlock = minBlock + WINDOW_SIZE - 1
+        val idealRange = (minBlock..maxBlock).toSet()
 
-            val existingPages = windowBlocks.map { it.blockPage }.toSet()
-            val toRemove = existingPages - idealRange
-            val toAdd = idealRange - existingPages
+        val existingPages = windowBlocks.map { it.blockPage }.toSet()
+        val toRemove = existingPages - idealRange
+        val toAdd = idealRange - existingPages
 
-            // 取消窗口外正在进行的加载
-            val cancelKeys = loadingJobs.keys.filter { it !in idealRange }
-            cancelKeys.forEach { loadingJobs[it]?.cancel(); loadingJobs.remove(it) }
+        // 取消不再需要的加载任务
+        loadingJobs.keys.filter { it !in idealRange }.forEach { loadingJobs[it]?.cancel(); loadingJobs.remove(it) }
 
-            if (toRemove.isNotEmpty()) {
-                windowBlocks = windowBlocks.filter { it.blockPage !in toRemove }
-                toRemove.forEach { blockCache.remove(it) }
-            }
+        if (toRemove.isNotEmpty()) {
+            windowBlocks = windowBlocks.filter { it.blockPage !in toRemove }
+            toRemove.forEach { blockCache.remove(it) }
+        }
 
-            if (toAdd.isNotEmpty()) {
-                val jobs = toAdd.map { page ->
-                    page to scope.async {
-                        try {
-                            fetchAndCacheBlock(page)
-                            page
-                        } catch (e: Exception) {
-                            Log.e(TAG, "预加载块 $page 失败: ${e.message}")
-                            null
-                        }
+        if (toAdd.isNotEmpty()) {
+            val jobs = toAdd.map { page ->
+                page to scope.async {
+                    try {
+                        fetchAndCacheBlock(page)
+                        page
+                    } catch (e: Exception) {
+                        Log.e(TAG, "预加载块 $page 失败: ${e.message}")
+                        null
                     }
                 }
-                jobs.forEach { (page, job) ->
-                    loadingJobs[page] = job
-                    job.invokeOnCompletion { loadingJobs.remove(page) }
-                }
-
-                val results = jobs.map { (_, job) -> job.await() }
-                val newBlocks = results.filterNotNull().mapNotNull { blockCache[it] }
-                windowBlocks = (windowBlocks + newBlocks).distinctBy { it.blockPage }.sortedBy { it.blockPage }
             }
-
-            if (toRemove.isNotEmpty() || toAdd.isNotEmpty()) {
-                rebuildGlobalLines()
-                recalculatePageBreaks()
-                val currentOffset = _pageContent.value?.state?.absoluteCharOffset ?: return
-                currentPageIndex = findPageForAbsoluteOffset(currentOffset)
-                // 直接更新页面，但不再触发窗口调整（isAdjusting 仍为 true）
-                updateCurrentPageInternal()
+            jobs.forEach { (page, job) ->
+                loadingJobs[page] = job
+                job.invokeOnCompletion { loadingJobs.remove(page) }
             }
-        } finally {
-            isAdjusting = false
+            val results = jobs.map { (_, job) -> job.await() }
+            val newBlocks = results.filterNotNull().mapNotNull { blockCache[it] }
+            windowBlocks = (windowBlocks + newBlocks).distinctBy { it.blockPage }.sortedBy { it.blockPage }
+        }
+
+        if (toRemove.isNotEmpty() || toAdd.isNotEmpty()) {
+            rebuildGlobalLines()
+            recalculatePageBreaks()
+            val currentOffset = _pageContent.value?.state?.absoluteCharOffset ?: return
+            currentPageIndex = findPageForAbsoluteOffset(currentOffset)
+            refreshPageDisplay()
         }
     }
 
-    // 内部刷新页面，不触发 adjustWindow
-    private fun updateCurrentPageInternal() {
+    // ── 页面更新与主动预加载 ──
+    private fun updateCurrentPage() {
+        while (currentPageIndex in pageBreaks.indices && isPageBlank(currentPageIndex)) {
+            val next = (currentPageIndex + 1 until pageBreaks.size).firstOrNull { !isPageBlank(it) }
+            if (next != null) currentPageIndex = next else break
+        }
+        val state = buildCurrentPageState() ?: return
+        val content = buildPageContentForState(state)
+        _pageContent.value = PageUIData(content, state)
+        saveHistory()
+
+        // 主动预加载：当前块内进度过半时，立即加载下一个块
+        triggerMidBlockPreload(state)
+
+        // 定期窗口维护（异步）
+        scope.launch { adjustWindow() }
+    }
+
+    private fun refreshPageDisplay() {
+        // adjustWindow 专用，不重复触发预加载
         while (currentPageIndex in pageBreaks.indices && isPageBlank(currentPageIndex)) {
             val next = (currentPageIndex + 1 until pageBreaks.size).firstOrNull { !isPageBlank(it) }
             if (next != null) currentPageIndex = next else break
@@ -435,14 +441,29 @@ class PageRepository private constructor(private val appContext: Context) {
         saveHistory()
     }
 
-    // 公开的更新页面，会触发窗口调整
-    private fun updateCurrentPage() {
-        updateCurrentPageInternal()
-        if (!isAdjusting) {
-            scope.launch { adjustWindow() }
+    /**
+     * 如果当前块不是最后一个块，且阅读进度已超过该块的一半，
+     * 则立即异步请求下一个服务器块（如果尚未缓存）。
+     */
+    private fun triggerMidBlockPreload(state: PageState) {
+        val currentBlock = windowBlocks.firstOrNull { it.blockPage == state.blockPage } ?: return
+        if (state.blockPage >= totalServerBlocks) return   // 已是最后一块
+        val nextPage = state.blockPage + 1
+        if (blockCache.containsKey(nextPage) || loadingJobs.containsKey(nextPage)) return
+
+        val progressInBlock = (state.absoluteCharOffset - currentBlock.startCharAbs).toFloat() /
+                currentBlock.fullText.length.coerceAtLeast(1)
+        if (progressInBlock >= 0.5f) {
+            Log.d(TAG, "块内进度 ${(progressInBlock * 100).toInt()}%，预加载块 $nextPage")
+            scope.launch {
+                fetchAndCacheBlock(nextPage)
+                // 新块加入窗口
+                adjustWindow()
+            }
         }
     }
 
+    // ── 页面构建辅助 ──
     private fun buildCurrentPageState(): PageState? {
         if (globalLines.isEmpty() || pageBreaks.isEmpty()) return null
         val startLine = pageBreaks[currentPageIndex]
@@ -501,6 +522,7 @@ class PageRepository private constructor(private val appContext: Context) {
         windowBlocks = windowBlocks.mapNotNull { blockCache[it.blockPage] }
     }
 
+    // ── 网络与存储工具 ──
     private fun buildBlockUrl(page: Int) =
         "${fileUrl}${if (fileUrl.contains("?")) "&" else "?"}page=$page"
 
