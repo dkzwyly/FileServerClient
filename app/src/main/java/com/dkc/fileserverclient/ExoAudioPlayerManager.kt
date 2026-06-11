@@ -1,8 +1,8 @@
-// ExoAudioPlayerManager.kt
 package com.dkc.fileserverclient
 
 import android.content.Context
 import android.os.Handler
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -76,6 +76,9 @@ class ExoAudioPlayerManager(
             .setSeekForwardIncrementMs(5000)
             .build()
 
+        // 🔧 修复锁屏播放卡顿：保持 CPU 唤醒（网络模式）
+        exoPlayer?.setWakeMode(C.WAKE_MODE_NETWORK)
+
         setupPlayerListeners()
         updateState(PlaybackState.IDLE, null)
     }
@@ -136,12 +139,9 @@ class ExoAudioPlayerManager(
         if (audioVisualizerHelper != null) return
         if (exoPlayer == null) return
 
-        // 必须在主线程执行
         handler?.post {
-            // 检查播放器是否处于 READY 状态
             if (exoPlayer?.playbackState != Player.STATE_READY) {
                 Log.d("ExoAudioPlayerManager", "Player not ready, will retry later")
-                // 延迟重试（最多重试 5 次，每次间隔 300ms）
                 if (retryVisualizerCount < 5) {
                     retryVisualizerCount++
                     handler?.postDelayed({ startVisualizer() }, 300)
@@ -152,7 +152,6 @@ class ExoAudioPlayerManager(
                 return@post
             }
 
-            // 播放器已 READY，再延迟 500ms 启动 Visualizer
             handler?.postDelayed({
                 try {
                     if (audioVisualizerHelper != null) return@postDelayed
@@ -177,7 +176,7 @@ class ExoAudioPlayerManager(
                     visualizerFailed = true
                     audioVisualizerHelper = null
                 }
-            }, 500) // 延迟 500 毫秒
+            }, 500)
         }
     }
 
@@ -469,7 +468,7 @@ class ExoAudioPlayerManager(
         currentPosition = position
         currentDuration = duration
         notifyProgressUpdate(position, duration)
-        if (currentState == PlaybackState.PLAYING) {
+        if (currentState == PlaybackState.PLAYING && progressListeners.isNotEmpty()) {
             handler?.postDelayed(updateProgressRunnable, 1000)
         }
     }

@@ -95,40 +95,48 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             return
         }
 
-        // 初始化后台服务管理器
-        audioBackgroundManager = AudioBackgroundManager(getApplication())
-        audioBackgroundManager.addPlaybackListener(this)
-        audioBackgroundManager.addProgressListener(this)
+        // 初始化后台服务管理器（如果尚未初始化）
+        if (!::audioBackgroundManager.isInitialized) {
+            audioBackgroundManager = AudioBackgroundManager(getApplication())
+            audioBackgroundManager.addPlaybackListener(this)
+            audioBackgroundManager.addProgressListener(this)
+            // 频谱监听器将在 onActivityResume 中添加，避免后台高频更新
+        }
 
-        // ========== 新增：添加频谱监听 ==========
-        audioBackgroundManager.addSpectrumListener(spectrumListener)
-        // =====================================
-
-        // 初始化歌词管理器
-        lyricsManager = LyricsManager(getApplication(), handler, scope)
-        lyricsManager.setListener(this)
+        // 初始化歌词管理器（若未初始化）
+        if (!::lyricsManager.isInitialized) {
+            lyricsManager = LyricsManager(getApplication(), handler, scope)
+            lyricsManager.setListener(this)
+        }
 
         // 初始化元数据管理器
-        metadataManager = SongMetadataManager(getApplication(), FileServerService(getApplication()))
+        if (!::metadataManager.isInitialized) {
+            metadataManager = SongMetadataManager(getApplication(), FileServerService(getApplication()))
+        }
 
         // 保存播放数据
         currentTrack = track
         playlist = tracks ?: listOf(track)
         currentIndex = index.coerceIn(0, playlist.size - 1)
 
-        // 启动后台服务（如果尚未运行则启动，并传递播放列表）
-        audioBackgroundManager.startService(track, ArrayList(playlist), currentIndex)
-
-        // 应用播放模式（重复/随机）
-        applyPlayMode(currentPlayMode)
-
-        // 更新界面信息
-        updateTrackInfo(track)
-        loadCoverAndMetadata()
-        lyricsManager.loadLyrics(serverUrl, songPath, track.name)
-
-        // 绑定服务以接收实时状态（如果已绑定则忽略）
-        audioBackgroundManager.bindService()
+        // 检查服务是否已在运行且播放同一首歌，若是则仅绑定同步状态，避免重置播放
+        if (audioBackgroundManager.isServiceRunning() &&
+            audioBackgroundManager.getCurrentTrack()?.url == track.url) {
+            // 服务已在运行，仅同步UI状态
+            applyPlayMode(currentPlayMode)
+            updateTrackInfo(track)
+            loadCoverAndMetadata()
+            lyricsManager.loadLyrics(serverUrl, songPath, track.name)
+            refreshPositionImmediately()
+        } else {
+            // 启动或更新服务
+            audioBackgroundManager.startService(track, ArrayList(playlist), currentIndex)
+            applyPlayMode(currentPlayMode)
+            updateTrackInfo(track)
+            loadCoverAndMetadata()
+            lyricsManager.loadLyrics(serverUrl, songPath, track.name)
+            audioBackgroundManager.bindService()
+        }
     }
 
     private fun applyPlayMode(mode: Int) {
@@ -197,8 +205,8 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
     }
+
     fun updateIntent(intent: Intent) {
-        // 获取新的歌曲信息
         val newTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
         } else {
@@ -210,42 +218,32 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val newPlayMode = intent.getIntExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
         val newServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
 
-        // 如果歌曲没有变化（通过 path 比较），只更新播放模式并刷新进度
         if (newTrack.path == songPath && currentTrack?.path == songPath) {
             if (currentPlayMode != newPlayMode) {
                 currentPlayMode = newPlayMode
                 applyPlayMode(currentPlayMode)
             }
-            // 确保从服务同步最新进度和状态
             refreshPositionImmediately()
             return
         }
 
-        // 歌曲变化，需要完整更新
         currentTrack = newTrack
         currentIndex = newIndex.coerceIn(0, playlist.size - 1)
         currentPlayMode = newPlayMode
         songPath = newTrack.path
         serverUrl = newServerUrl
 
-        // 更新界面显示
         updateTrackInfo(newTrack)
-
-        // 重新加载元数据和封面
         loadCoverAndMetadata()
-
-        // 重新加载歌词
         lyricsManager.loadLyrics(serverUrl, songPath, newTrack.name)
-
-        // 应用播放模式
         applyPlayMode(currentPlayMode)
 
-        // 如果后台服务当前播放的不是这首歌，则切换播放
         if (audioBackgroundManager.getCurrentTrack()?.path != songPath) {
             audioBackgroundManager.startService(newTrack, ArrayList(playlist), currentIndex)
         }
     }
-    // ---------- 播放控制（全部委托给后台服务） ----------
+
+    // ---------- 播放控制 ----------
     fun togglePlayback() {
         audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
     }
@@ -348,26 +346,33 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun onActivityPause() {
-        // 不需要额外操作，服务继续后台播放
+        // 移除频谱监听器以停止后台高频更新，节省电量和CPU
+        if (::audioBackgroundManager.isInitialized) {
+            audioBackgroundManager.removeSpectrumListener(spectrumListener)
+        }
     }
 
     fun onActivityResume() {
-        // 重新绑定服务并立即同步最新状态
-        audioBackgroundManager.bindService()
+        // 重新绑定并添加频谱监听器
+        if (::audioBackgroundManager.isInitialized) {
+            audioBackgroundManager.bindService()
+            audioBackgroundManager.addSpectrumListener(spectrumListener)
+        }
         refreshPositionImmediately()
     }
 
     fun release() {
-        audioBackgroundManager.removePlaybackListener(this)
-        audioBackgroundManager.removeProgressListener(this)
-        // 移除频谱监听
-        audioBackgroundManager.removeSpectrumListener(spectrumListener)
-        audioBackgroundManager.unbindService()
+        if (::audioBackgroundManager.isInitialized) {
+            audioBackgroundManager.removePlaybackListener(this)
+            audioBackgroundManager.removeProgressListener(this)
+            audioBackgroundManager.removeSpectrumListener(spectrumListener)
+            audioBackgroundManager.unbindService()
+        }
         scope.cancel()
     }
 
-    /** 立即从后台服务同步进度，避免从 0 跳变 */
     fun refreshPositionImmediately() {
+        if (!::audioBackgroundManager.isInitialized) return
         val status = audioBackgroundManager.getPlaybackStatus()
         if (status != null && status.duration > 0) {
             latestPosition = status.position
@@ -442,12 +447,10 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         nextLyricsLine.postValue("")
     }
 
-    // 为 LyricsManager 提供时间和播放状态（从缓存或服务获取）
     override fun getCurrentTime(): Long = latestPosition
     override fun isPlaying(): Boolean = isPlaying.value ?: false
 
     override fun onCleared() {
-        // 确保移除所有监听器，防止内存泄漏
         if (::audioBackgroundManager.isInitialized) {
             audioBackgroundManager.removePlaybackListener(this)
             audioBackgroundManager.removeProgressListener(this)

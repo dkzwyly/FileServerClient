@@ -48,7 +48,6 @@ class AudioPlayerActivity : AppCompatActivity() {
     private lateinit var lyricsSettingsButton: Button
     private var currentCoverPath: String? = null
 
-    // 新增：用于监听服务关闭的广播接收器
     private val closeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "AUDIO_SERVICE_CLOSED") {
@@ -67,7 +66,6 @@ class AudioPlayerActivity : AppCompatActivity() {
         setupClickListeners()
         observeViewModel()
 
-        // 注册服务关闭广播
         val filter = IntentFilter("AUDIO_SERVICE_CLOSED")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(closeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -314,13 +312,11 @@ class AudioPlayerActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.onActivityResume()
-        viewModel.refreshPositionImmediately()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         viewModel.release()
-        // 注销广播接收器，防止内存泄漏
         try {
             unregisterReceiver(closeReceiver)
         } catch (e: IllegalArgumentException) {
