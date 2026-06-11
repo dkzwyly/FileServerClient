@@ -15,12 +15,9 @@ import android.os.Build
 import android.os.IBinder
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.text.TextPaint
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
-import okhttp3.OkHttpClient
-import java.io.*
 import java.util.Locale
 
 class AudiobookService : Service(), TextToSpeech.OnInitListener {
@@ -30,15 +27,15 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         const val NOTIFICATION_ID = 1001
         const val TAG = "AudiobookService"
         const val PREF_TTS_ENGINE = "tts_engine_package"
-        const val PREF_READING_PARAMS = "reading_params"
         const val ACTION_STOP_SERVICE = "com.dkc.fileserverclient.action.STOP_SERVICE"
     }
+
+    private lateinit var repository: PageRepository
 
     // TTS
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
     private var isSpeaking = false
-    private var currentUtteranceId = ""
     private var speechRate = 1.0f
 
     // 音频焦点
@@ -46,36 +43,24 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var hasAudioFocus = false
 
-    // 分页管理器
-    private lateinit var paginationManager: TextPaginationManager
-    private var httpClient: OkHttpClient? = null
-
     // 自动播放状态
     private var isAutoPlay = false
     private var pendingAutoPlay = false
 
-    // 文件信息
+    // 文件信息（用于通知传递）
     private var fileName = ""
     private var fileUrl = ""
     private var filePath = ""
 
-    // 显示参数
-    private var textWidth = 0
-    private lateinit var textPaint: TextPaint
-    private var lineSpacingExtra = 0f
-    private var lineSpacingMultiplier = 1f
-    private var linesPerPage = 20
+    // SharedPreferences
+    private lateinit var readingPrefs: SharedPreferences
 
-    private lateinit var prefs: SharedPreferences
-    private var readingHistoryFile: File? = null
-    private var pendingHistory: Pair<Int, Int>? = null
+    // 协程
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var pageFlowJob: Job? = null
 
-    var paginationCallback: TextPaginationManager.Callback? = null
-
-    private val binder = LocalBinder()
     inner class LocalBinder : Binder() {
         fun getService(): AudiobookService = this@AudiobookService
-        fun getPaginationManager(): TextPaginationManager = paginationManager
     }
 
     override fun onCreate() {
@@ -83,25 +68,27 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "Service onCreate")
         createNotificationChannel()
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-        prefs = getSharedPreferences(PREF_READING_PARAMS, MODE_PRIVATE)
+        repository = PageRepository.getInstance(this)
 
-        textWidth = prefs.getInt("text_width", 600)
-        val savedFontSize = prefs.getFloat("font_size", 40f)
-        textPaint = TextPaint().apply { textSize = savedFontSize }
-        lineSpacingExtra = prefs.getFloat("line_spacing_extra", 0f)
-        lineSpacingMultiplier = prefs.getFloat("line_spacing_multiplier", 1f)
-        linesPerPage = prefs.getInt("lines_per_page", 20)
+        // ★ 读取保存的语速
+        readingPrefs = getSharedPreferences("reading_prefs", MODE_PRIVATE)
+        speechRate = readingPrefs.getFloat("tts_speed", 1.0f)
 
-        try {
-            httpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
-        } catch (e: Exception) {
-            httpClient = OkHttpClient()
+        // 收集页面内容，自动播放
+        pageFlowJob = serviceScope.launch {
+            repository.pageContentFlow.collect { uiData ->
+                uiData?.let {
+                    updateNotification(it.content.toString())
+                    if (isAutoPlay && isTtsReady) {
+                        speakContent(it.content)
+                    }
+                }
+            }
         }
 
-        paginationManager = TextPaginationManager(httpClient!!)
-        paginationManager.setCallback(internalPaginationCallback)
-
-        val enginePackage = getSharedPreferences("tts_prefs", MODE_PRIVATE).getString(PREF_TTS_ENGINE, null)
+        // 初始化 TTS
+        val ttsPrefs = getSharedPreferences("tts_prefs", MODE_PRIVATE)
+        val enginePackage = ttsPrefs.getString(PREF_TTS_ENGINE, null)
         tts = if (enginePackage.isNullOrEmpty()) {
             TextToSpeech(this, this)
         } else {
@@ -110,73 +97,50 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand, action=${intent?.action}")
         if (intent?.action == ACTION_STOP_SERVICE) {
-            Log.d(TAG, "收到停止通知，停止服务")
             stopSelf()
             return START_NOT_STICKY
         }
-        // 不再处理文件信息，统一由 setupFile 负责
         return START_STICKY
     }
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onBind(intent: Intent?): IBinder = LocalBinder()
 
     override fun onDestroy() {
         Log.d(TAG, "Service onDestroy")
-        saveReadingProgress()
+        serviceScope.cancel()
         stopSelfForeground()
         tts?.stop()
         tts?.shutdown()
         tts = null
-        paginationManager.release()
         super.onDestroy()
     }
 
-    /** 外部调用，传递文件信息并触发初始化 */
+    // ── 公开方法（供 Activity 调用） ──
     fun setupFile(fileName: String, fileUrl: String, filePath: String) {
-        Log.d(TAG, "setupFile: $fileName, url=$fileUrl")
-        if (fileName != this.fileName || !paginationManager.isInitialized) {
-            resetForNewFile(fileName, fileUrl, filePath)
-        }
+        this.fileName = fileName
+        this.fileUrl = fileUrl
+        this.filePath = filePath
+        repository.setupFile(fileName, fileUrl, filePath)
     }
 
-    fun updateDisplayParams(width: Int, paint: Paint, extra: Float, multiplier: Float, linesPerPage: Int) {
-        textWidth = width
-        textPaint = TextPaint(paint)
-        lineSpacingExtra = extra
-        lineSpacingMultiplier = multiplier
-        this.linesPerPage = linesPerPage.coerceAtLeast(2)
-        prefs.edit()
-            .putInt("text_width", textWidth)
-            .putFloat("font_size", textPaint.textSize)
-            .putFloat("line_spacing_extra", lineSpacingExtra)
-            .putFloat("line_spacing_multiplier", lineSpacingMultiplier)
-            .putInt("lines_per_page", this.linesPerPage)
-            .apply()
-        if (paginationManager.isInitialized) {
-            paginationManager.updateDisplayParams(width, paint, extra, multiplier, this.linesPerPage)
-        } else {
-            initPaginationIfNeeded()
-        }
+    fun updateDisplayParams(width: Int, paint: Paint, extra: Float, multiplier: Float, lines: Int) {
+        repository.updateDisplayParams(width, paint, extra, multiplier, lines)
     }
-
-    fun nextPage() = paginationManager.nextPage()
-    fun previousPage() = paginationManager.previousPage()
-    fun loadChapters() = paginationManager.loadChapters()
-    fun jumpToChapter(chapter: TextPaginationManager.ChapterInfo) = paginationManager.jumpToChapter(chapter)
-    fun getCurrentPageState(): TextPaginationManager.PageState? = paginationManager.getCurrentPageState()
-    fun getCurrentPageContent(): String = paginationManager.getCurrentPageContent()
 
     fun startAutoPlay() {
         isAutoPlay = true
         pendingAutoPlay = false
-        if (!isSpeaking) playCurrentPage()
+        if (!isSpeaking) {
+            repository.pageContentFlow.value?.let { speakContent(it.content) }
+        }
     }
+
     fun stopAutoPlay() {
         isAutoPlay = false
         pause()
     }
+
     fun isAutoPlaying(): Boolean = isAutoPlay
 
     fun pause() {
@@ -186,6 +150,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         stopForegroundAndKeepService()
         updateNotification("已暂停")
     }
+
     fun stop() {
         tts?.stop()
         isSpeaking = false
@@ -193,10 +158,14 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         abandonAudioFocus()
         stopSelfForeground()
     }
+
     fun setSpeechRate(rate: Float) {
         speechRate = rate.coerceIn(0.5f, 2.0f)
         tts?.setSpeechRate(speechRate)
+        // ★ 持久化语速
+        readingPrefs.edit().putFloat("tts_speed", speechRate).apply()
     }
+
     fun isPlaying(): Boolean = isSpeaking
     fun isReady(): Boolean = isTtsReady
 
@@ -211,90 +180,34 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // ── 内部 ──
-    private fun resetForNewFile(newFileName: String, newFileUrl: String, newFilePath: String) {
-        Log.d(TAG, "重置分页管理器，加载新文件: $newFileName")
-        fileName = newFileName
-        fileUrl = newFileUrl
-        filePath = newFilePath
-        val historyDir = File(filesDir, "reading_history")
-        if (!historyDir.exists()) historyDir.mkdirs()
-        val safeName = fileName.replace("[^a-zA-Z0-9]".toRegex(), "_")
-        readingHistoryFile = File(historyDir, "history_${safeName}.dat")
-        paginationManager.resetForNewFile()
-        initPaginationIfNeeded()
-    }
-
-    private fun initPaginationIfNeeded() {
-        Log.d(TAG, "initPaginationIfNeeded: initialized=${paginationManager.isInitialized}, fileName='$fileName', width=$textWidth")
-        if (!paginationManager.isInitialized && fileName.isNotEmpty() && textWidth > 0) {
-            val history = readReadingHistory()
-            if (history != null && history.fileName == fileName) {
-                pendingHistory = Pair(history.blockPage, history.absoluteCharOffset)
-            } else {
-                pendingHistory = null
-            }
-            paginationManager.init(fileName, fileUrl, filePath, textWidth, textPaint, lineSpacingExtra, lineSpacingMultiplier, linesPerPage)
-        }
-    }
-
-    private fun playCurrentPage() {
-        val content = getCurrentPageContent()
-        if (content.isBlank()) return
-        if (!isTtsReady) {
-            pendingAutoPlay = true
-            return
-        }
-        requestAudioFocus()
-        startForegroundIfNeeded()
-        val state = getCurrentPageState()
-        val utteranceId = "page_${state?.blockPage}_${state?.subPage}_${System.currentTimeMillis()}"
-        tts?.speak(content, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
-    }
-
-    private val internalPaginationCallback = object : TextPaginationManager.Callback {
-        override fun onPageContentChanged(content: CharSequence, state: TextPaginationManager.PageState) {
-            if (pendingHistory != null) {
-                val (block, offset) = pendingHistory!!
-                pendingHistory = null
-                paginationManager.restorePosition(block, offset)
-                return
-            }
-            updateNotification(content.toString())
-            saveReadingProgress(state)
-            paginationCallback?.onPageContentChanged(content, state)
-            if (isAutoPlay && !isSpeaking) playCurrentPage()
-        }
-        override fun onError(message: String) { paginationCallback?.onError(message) }
-        override fun onLoading(loading: Boolean, message: String?) { paginationCallback?.onLoading(loading, message) }
-        override fun onChaptersReady(chapters: List<TextPaginationManager.ChapterInfo>) {
-            paginationCallback?.onChaptersReady(chapters)
-        }
-    }
-
+    // ── TTS 初始化回调 ──
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             var res = tts?.setLanguage(Locale.CHINESE) ?: TextToSpeech.LANG_MISSING_DATA
             if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
                 res = tts?.setLanguage(Locale.getDefault()) ?: TextToSpeech.LANG_MISSING_DATA
                 if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    paginationCallback?.onError("TTS不支持中文")
+                    Log.e(TAG, "TTS不支持中文")
                     return
                 }
             }
-            tts?.setSpeechRate(speechRate)
+            tts?.setSpeechRate(speechRate)   // 应用已保存的语速
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
-                    currentUtteranceId = utteranceId ?: ""
                     isSpeaking = true
                 }
+
                 override fun onDone(utteranceId: String?) {
                     isSpeaking = false
-                    if (isAutoPlay) nextPage()
+                    if (isAutoPlay) {
+                        serviceScope.launch {
+                            repository.nextPage()
+                        }
+                    }
                 }
+
                 override fun onError(utteranceId: String?) {
                     isSpeaking = false
-                    paginationCallback?.onError("朗读出错")
                 }
             })
             isTtsReady = true
@@ -303,10 +216,11 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                 startAutoPlay()
             }
         } else {
-            paginationCallback?.onError("TTS初始化失败")
+            Log.e(TAG, "TTS初始化失败")
         }
     }
 
+    // ── 音频焦点 ──
     private fun requestAudioFocus() {
         if (hasAudioFocus) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -339,28 +253,31 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         hasAudioFocus = false
     }
 
+    // ── 前台通知（携带文件参数） ──
     private fun startForegroundIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val stopIntent = Intent(this, AudiobookService::class.java).apply {
                 action = ACTION_STOP_SERVICE
             }
             val stopPendingIntent = PendingIntent.getService(
-                this, 1, stopIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val openIntent = Intent(this, TextPreviewActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+                // ★ 添加文件信息，确保从通知进入时能正确加载
+                putExtra("FILE_NAME", fileName)
+                putExtra("FILE_URL", fileUrl)
+                putExtra("FILE_PATH", filePath)
             }
             val openPendingIntent = PendingIntent.getActivity(
-                this, 0, openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("正在听书")
                 .setContentText("加载中...")
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setContentIntent(openPendingIntent)
-                .setDeleteIntent(stopPendingIntent)   // 滑动删除时停止服务
+                .setDeleteIntent(stopPendingIntent)
                 .build()
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -371,15 +288,17 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             action = ACTION_STOP_SERVICE
         }
         val stopPendingIntent = PendingIntent.getService(
-            this, 1, stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val openIntent = Intent(this, TextPreviewActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            // ★ 同样携带文件信息
+            putExtra("FILE_NAME", fileName)
+            putExtra("FILE_URL", fileUrl)
+            putExtra("FILE_PATH", filePath)
         }
         val openPendingIntent = PendingIntent.getActivity(
-            this, 0, openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(if (isSpeaking) "正在听书" else "听书暂停")
@@ -409,9 +328,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID,
-                "听书播放",
-                NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID, "听书播放", NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "朗读文本时的控制器"
                 setSound(null, null)
@@ -421,32 +338,11 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun saveReadingProgress(state: TextPaginationManager.PageState? = null) {
-        val s = state ?: paginationManager.getCurrentPageState() ?: return
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                readingHistoryFile?.let {
-                    ObjectOutputStream(FileOutputStream(it)).use { out ->
-                        out.writeObject(ReadingHistory(fileName, fileUrl, s.blockPage, s.absoluteCharOffset, System.currentTimeMillis()))
-                    }
-                }
-            } catch (e: Exception) { Log.e(TAG, "保存进度失败", e) }
-        }
-    }
-
-    private fun readReadingHistory(): ReadingHistory? {
-        return try {
-            readingHistoryFile?.takeIf { it.exists() }?.let {
-                ObjectInputStream(FileInputStream(it)).use { it.readObject() as? ReadingHistory }
-            }
-        } catch (e: Exception) { null }
+    // ── 内部朗读 ──
+    private fun speakContent(content: CharSequence) {
+        requestAudioFocus()
+        startForegroundIfNeeded()
+        val utteranceId = "page_${System.currentTimeMillis()}"
+        tts?.speak(content.toString(), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 }
-
-data class ReadingHistory(
-    val fileName: String,
-    val fileUrl: String,
-    val blockPage: Int,
-    val absoluteCharOffset: Int,
-    val timestamp: Long
-) : Serializable
