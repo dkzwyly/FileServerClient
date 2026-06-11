@@ -23,7 +23,8 @@ class PageRepository private constructor(private val appContext: Context) {
 
     companion object {
         private const val TAG = "PageRepository"
-        private const val WINDOW_PADDING = 2
+        private const val WINDOW_SIZE = 5
+        private const val WINDOW_HALF = 2
 
         @Volatile
         private var INSTANCE: PageRepository? = null
@@ -35,11 +36,7 @@ class PageRepository private constructor(private val appContext: Context) {
     }
 
     // ── 公开状态流 ──
-    data class PageUIData(
-        val content: CharSequence,
-        val state: PageState
-    )
-
+    data class PageUIData(val content: CharSequence, val state: PageState)
     data class PageState(
         val blockPage: Int,
         val subPage: Int,
@@ -47,14 +44,12 @@ class PageRepository private constructor(private val appContext: Context) {
         val totalSubPages: Int,
         val absoluteCharOffset: Int
     )
-
     data class ChapterInfo(
         val title: String,
         val serverPage: Int,
         val lineNumber: Int,
         val startCharOffset: Int
     )
-
     data class LoadingState(val isLoading: Boolean, val message: String? = null)
 
     private val _pageContent = MutableStateFlow<PageUIData?>(null)
@@ -97,6 +92,11 @@ class PageRepository private constructor(private val appContext: Context) {
     private var chapterStartOffsetSet = emptySet<Int>()
     private var isLoadingChapters = false
 
+    // 加载任务映射：页号 -> Job
+    private var loadingJobs = mutableMapOf<Int, Job>()
+    // 防止 adjustWindow / updateCurrentPage 循环调用
+    private var isAdjusting = false
+
     private var readingHistoryFile: File? = null
     private var historySaveJob: Job? = null
 
@@ -107,13 +107,11 @@ class PageRepository private constructor(private val appContext: Context) {
         val startCharAbs: Int,
         val layout: StaticLayout
     )
-
     private data class LineInfo(
         val cachedBlock: CachedBlock,
         val lineIndexInBlock: Int,
         val absoluteStartChar: Int
     )
-
     private data class BlockData(
         val fullText: String,
         val blockPage: Int,
@@ -124,9 +122,7 @@ class PageRepository private constructor(private val appContext: Context) {
 
     // ── 公开 API ──
     fun setupFile(name: String, url: String, path: String) {
-        if (fileName != name) {
-            resetForNewFile(name, url, path)
-        }
+        if (fileName != name) resetForNewFile(name, url, path)
     }
 
     fun updateDisplayParams(width: Int, paint: Paint, extra: Float, multiplier: Float, lines: Int) {
@@ -144,6 +140,7 @@ class PageRepository private constructor(private val appContext: Context) {
                 rebuildGlobalLines()
                 recalculatePageBreaks()
                 updateCurrentPage()
+                adjustWindow()
             }
         } else if (windowBlocks.isEmpty() && fileName.isNotEmpty()) {
             initialize()
@@ -157,11 +154,6 @@ class PageRepository private constructor(private val appContext: Context) {
         if (target < pageBreaks.size) {
             currentPageIndex = target
             updateCurrentPage()
-        } else {
-            val last = windowBlocks.lastOrNull() ?: return
-            if (last.blockPage < totalServerBlocks) {
-                slideWindowForward(last.blockPage + 1)
-            }
         }
     }
 
@@ -172,11 +164,6 @@ class PageRepository private constructor(private val appContext: Context) {
         if (target >= 0) {
             currentPageIndex = target
             updateCurrentPage()
-        } else {
-            val first = windowBlocks.firstOrNull() ?: return
-            if (first.blockPage > 1) {
-                slideWindowBackward(first.blockPage - 1)
-            }
         }
     }
 
@@ -201,7 +188,7 @@ class PageRepository private constructor(private val appContext: Context) {
                 cachedChapters = list.sortedBy { it.startCharOffset }
                 chapterStartOffsetSet = list.map { it.startCharOffset }.toSet()
                 _chapters.value = list
-                _chaptersLoadedEvent.emit(Unit)   // ★ 发射事件
+                _chaptersLoadedEvent.emit(Unit)
                 if (isInitialized()) {
                     recalculatePageBreaks()
                     updateCurrentPage()
@@ -223,6 +210,8 @@ class PageRepository private constructor(private val appContext: Context) {
     fun getCurrentPageState(): PageState? = _pageContent.value?.state
 
     fun release() {
+        loadingJobs.values.forEach { it.cancel() }
+        loadingJobs.clear()
         scope.cancel()
     }
 
@@ -241,6 +230,9 @@ class PageRepository private constructor(private val appContext: Context) {
         totalServerBlocks = 1
         cachedChapters = null
         chapterStartOffsetSet = emptySet()
+        loadingJobs.values.forEach { it.cancel() }
+        loadingJobs.clear()
+        isAdjusting = false
 
         val historyDir = File(appContext.filesDir, "reading_history")
         if (!historyDir.exists()) historyDir.mkdirs()
@@ -262,20 +254,17 @@ class PageRepository private constructor(private val appContext: Context) {
     private suspend fun loadWindow(centerBlockPage: Int, targetOffset: Int? = null) {
         _loadingState.value = LoadingState(true, "加载中...")
         try {
-            val pages = ((centerBlockPage - WINDOW_PADDING)..(centerBlockPage + WINDOW_PADDING))
-                .filter { it >= 1 }.toSet()
-            val blocks = pages.map { page ->
-                withContext(Dispatchers.IO) {
-                    async { blockCache[page] ?: fetchAndCacheBlock(page) }
-                }
-            }.awaitAll()
-            windowBlocks = blocks.sortedBy { it.blockPage }
+            val pagesToLoad = ((centerBlockPage - WINDOW_HALF).coerceAtLeast(1) ..
+                    (centerBlockPage + WINDOW_HALF)).filter { it >= 1 }
+            pagesToLoad.forEach { page ->
+                if (!blockCache.containsKey(page)) fetchAndCacheBlock(page)
+            }
+            windowBlocks = pagesToLoad.mapNotNull { blockCache[it] }.sortedBy { it.blockPage }
             rebuildGlobalLines()
             recalculatePageBreaks()
             currentPageIndex = targetOffset?.let { findPageForAbsoluteOffset(it) } ?: 0
             updateCurrentPage()
-            checkAndPreload()
-            saveHistory()
+            adjustWindow()
         } catch (e: Exception) {
             _errorEvents.emit("加载失败: ${e.message}")
         } finally {
@@ -291,7 +280,6 @@ class PageRepository private constructor(private val appContext: Context) {
         val layout = withContext(Dispatchers.Default) { buildStaticLayout(data.fullText) }
         val block = CachedBlock(data.blockPage, data.fullText, data.startChar, layout)
         blockCache[page] = block
-        trimCache()
         return block
     }
 
@@ -313,18 +301,14 @@ class PageRepository private constructor(private val appContext: Context) {
     }
 
     private fun recalculatePageBreaks() {
-        if (globalLines.isEmpty()) {
-            pageBreaks = emptyList()
-            return
-        }
+        if (globalLines.isEmpty()) { pageBreaks = emptyList(); return }
         val breaks = mutableListOf<Int>()
         var start = 0
         while (start < globalLines.size) {
             var end = min(start + linesPerPage, globalLines.size)
             for (i in (start + 1) until end) {
                 if (chapterStartOffsetSet.contains(globalLines[i].absoluteStartChar)) {
-                    end = i
-                    break
+                    end = i; break
                 }
             }
             breaks.add(start)
@@ -352,8 +336,7 @@ class PageRepository private constructor(private val appContext: Context) {
     private fun findPageForAbsoluteOffset(offset: Int): Int {
         if (globalLines.isEmpty() || pageBreaks.isEmpty()) return 0
         val lineIdx = findLineForAbsoluteOffset(offset)
-        var low = 0
-        var high = pageBreaks.size - 1
+        var low = 0; var high = pageBreaks.size - 1
         while (low <= high) {
             val mid = (low + high) / 2
             when {
@@ -366,9 +349,7 @@ class PageRepository private constructor(private val appContext: Context) {
     }
 
     private fun findLineForAbsoluteOffset(offset: Int): Int {
-        var low = 0
-        var high = globalLines.size - 1
-        var target = 0
+        var low = 0; var high = globalLines.size - 1; var target = 0
         while (low <= high) {
             val mid = (low + high) / 2
             val start = globalLines[mid].absoluteStartChar
@@ -377,44 +358,73 @@ class PageRepository private constructor(private val appContext: Context) {
             when {
                 offset >= end -> low = mid + 1
                 offset < start -> high = mid - 1
-                else -> {
-                    target = mid
-                    break
-                }
+                else -> { target = mid; break }
             }
         }
         if (low > high) target = low.coerceIn(0, globalLines.size - 1)
         return target
     }
 
-    private suspend fun slideWindowForward(nextPage: Int) {
-        val newBlock = blockCache[nextPage] ?: fetchAndCacheBlock(nextPage)
-        windowBlocks = windowBlocks.drop(1) + newBlock
-        rebuildGlobalLines()
-        recalculatePageBreaks()
-        currentPageIndex = min(
-            findPageForAbsoluteOffset(_pageContent.value?.state?.absoluteCharOffset ?: 0) + 1,
-            pageBreaks.size - 1
-        )
-        updateCurrentPage()
-        checkAndPreload()
+    // ── 核心窗口调整（无递归） ──
+    private suspend fun adjustWindow() {
+        if (isAdjusting) return
+        isAdjusting = true
+        try {
+            val currentBlock = _pageContent.value?.state?.blockPage ?: return
+            val minBlock = (currentBlock - WINDOW_HALF).coerceAtLeast(1)
+            val maxBlock = minBlock + WINDOW_SIZE - 1
+            val idealRange = (minBlock..maxBlock).toSet()
+
+            val existingPages = windowBlocks.map { it.blockPage }.toSet()
+            val toRemove = existingPages - idealRange
+            val toAdd = idealRange - existingPages
+
+            // 取消窗口外正在进行的加载
+            val cancelKeys = loadingJobs.keys.filter { it !in idealRange }
+            cancelKeys.forEach { loadingJobs[it]?.cancel(); loadingJobs.remove(it) }
+
+            if (toRemove.isNotEmpty()) {
+                windowBlocks = windowBlocks.filter { it.blockPage !in toRemove }
+                toRemove.forEach { blockCache.remove(it) }
+            }
+
+            if (toAdd.isNotEmpty()) {
+                val jobs = toAdd.map { page ->
+                    page to scope.async {
+                        try {
+                            fetchAndCacheBlock(page)
+                            page
+                        } catch (e: Exception) {
+                            Log.e(TAG, "预加载块 $page 失败: ${e.message}")
+                            null
+                        }
+                    }
+                }
+                jobs.forEach { (page, job) ->
+                    loadingJobs[page] = job
+                    job.invokeOnCompletion { loadingJobs.remove(page) }
+                }
+
+                val results = jobs.map { (_, job) -> job.await() }
+                val newBlocks = results.filterNotNull().mapNotNull { blockCache[it] }
+                windowBlocks = (windowBlocks + newBlocks).distinctBy { it.blockPage }.sortedBy { it.blockPage }
+            }
+
+            if (toRemove.isNotEmpty() || toAdd.isNotEmpty()) {
+                rebuildGlobalLines()
+                recalculatePageBreaks()
+                val currentOffset = _pageContent.value?.state?.absoluteCharOffset ?: return
+                currentPageIndex = findPageForAbsoluteOffset(currentOffset)
+                // 直接更新页面，但不再触发窗口调整（isAdjusting 仍为 true）
+                updateCurrentPageInternal()
+            }
+        } finally {
+            isAdjusting = false
+        }
     }
 
-    private suspend fun slideWindowBackward(prevPage: Int) {
-        val newBlock = blockCache[prevPage] ?: fetchAndCacheBlock(prevPage)
-        windowBlocks = listOf(newBlock) + windowBlocks.dropLast(1)
-        rebuildGlobalLines()
-        recalculatePageBreaks()
-        currentPageIndex = maxOf(
-            findPageForAbsoluteOffset(_pageContent.value?.state?.absoluteCharOffset ?: 0) - 1,
-            0
-        )
-        updateCurrentPage()
-        checkAndPreload()
-    }
-
-    private fun updateCurrentPage() {
-        if (!isInitialized()) return
+    // 内部刷新页面，不触发 adjustWindow
+    private fun updateCurrentPageInternal() {
         while (currentPageIndex in pageBreaks.indices && isPageBlank(currentPageIndex)) {
             val next = (currentPageIndex + 1 until pageBreaks.size).firstOrNull { !isPageBlank(it) }
             if (next != null) currentPageIndex = next else break
@@ -423,6 +433,14 @@ class PageRepository private constructor(private val appContext: Context) {
         val content = buildPageContentForState(state)
         _pageContent.value = PageUIData(content, state)
         saveHistory()
+    }
+
+    // 公开的更新页面，会触发窗口调整
+    private fun updateCurrentPage() {
+        updateCurrentPageInternal()
+        if (!isAdjusting) {
+            scope.launch { adjustWindow() }
+        }
     }
 
     private fun buildCurrentPageState(): PageState? {
@@ -473,47 +491,6 @@ class PageRepository private constructor(private val appContext: Context) {
         return spannable
     }
 
-    private suspend fun checkAndPreload() {
-        if (!isInitialized()) return
-        val first = windowBlocks.firstOrNull() ?: return
-        val last = windowBlocks.lastOrNull() ?: return
-        val curStart = pageBreaks.getOrElse(currentPageIndex) { 0 }
-        val curEnd = if (currentPageIndex + 1 < pageBreaks.size) pageBreaks[currentPageIndex + 1] else globalLines.size
-
-        if (curStart < linesPerPage && first.blockPage > 1) {
-            val prev = first.blockPage - 1
-            if (!blockCache.containsKey(prev)) {
-                fetchAndCacheBlock(prev)
-                if (windowBlocks.firstOrNull()?.blockPage == first.blockPage) {
-                    withContext(Dispatchers.Main) {
-                        windowBlocks = listOf(blockCache[prev]!!) + windowBlocks
-                        rebuildGlobalLines()
-                        recalculatePageBreaks()
-                        val off = _pageContent.value?.state?.absoluteCharOffset ?: 0
-                        currentPageIndex = findPageForAbsoluteOffset(off)
-                        updateCurrentPage()
-                    }
-                }
-            }
-        }
-
-        val dist = globalLines.size - curEnd
-        if (dist < linesPerPage && last.blockPage < totalServerBlocks) {
-            val next = last.blockPage + 1
-            if (!blockCache.containsKey(next)) {
-                fetchAndCacheBlock(next)
-                if (windowBlocks.lastOrNull()?.blockPage == last.blockPage) {
-                    withContext(Dispatchers.Main) {
-                        windowBlocks = windowBlocks + blockCache[next]!!
-                        rebuildGlobalLines()
-                        recalculatePageBreaks()
-                        updateCurrentPage()
-                    }
-                }
-            }
-        }
-    }
-
     private fun invalidateAllLayouts() {
         if (!::textPaint.isInitialized) return
         val blocks = blockCache.values.toList()
@@ -522,20 +499,9 @@ class PageRepository private constructor(private val appContext: Context) {
             blockCache[b.blockPage] = b.copy(layout = buildStaticLayout(b.fullText))
         }
         windowBlocks = windowBlocks.mapNotNull { blockCache[it.blockPage] }
-        if (windowBlocks.isNotEmpty()) {
-            rebuildGlobalLines()
-            recalculatePageBreaks()
-        }
     }
 
-    private fun trimCache() {
-        if (windowBlocks.isEmpty()) return
-        val min = windowBlocks.minOf { it.blockPage } - WINDOW_PADDING
-        val max = windowBlocks.maxOf { it.blockPage } + WINDOW_PADDING
-        blockCache.keys.filter { it < min || it > max }.forEach { blockCache.remove(it) }
-    }
-
-    private fun buildBlockUrl(page: Int): String =
+    private fun buildBlockUrl(page: Int) =
         "${fileUrl}${if (fileUrl.contains("?")) "&" else "?"}page=$page"
 
     private suspend fun fetchJson(url: String) = withContext(Dispatchers.IO) {
@@ -595,9 +561,7 @@ class PageRepository private constructor(private val appContext: Context) {
             readingHistoryFile?.takeIf { it.exists() }?.let {
                 ObjectInputStream(FileInputStream(it)).use { it.readObject() as? ReadingHistory }
             }
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 }
 
