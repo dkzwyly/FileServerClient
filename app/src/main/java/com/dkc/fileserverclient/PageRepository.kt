@@ -11,11 +11,7 @@ import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.util.Log
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -70,8 +66,11 @@ class PageRepository private constructor(private val appContext: Context) {
     private val _chapters = MutableStateFlow<List<ChapterInfo>>(emptyList())
     val chaptersFlow: StateFlow<List<ChapterInfo>> = _chapters.asStateFlow()
 
+    private val _chaptersLoadedEvent = MutableSharedFlow<Unit>()
+    val chaptersLoadedEvent: SharedFlow<Unit> = _chaptersLoadedEvent.asSharedFlow()
+
     private val _errorEvents = MutableSharedFlow<String>()
-    val errorEvents = _errorEvents.asSharedFlow()
+    val errorEvents: SharedFlow<String> = _errorEvents.asSharedFlow()
 
     // ── 内部状态 ──
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -96,6 +95,7 @@ class PageRepository private constructor(private val appContext: Context) {
 
     private var cachedChapters: List<ChapterInfo>? = null
     private var chapterStartOffsetSet = emptySet<Int>()
+    private var isLoadingChapters = false
 
     private var readingHistoryFile: File? = null
     private var historySaveJob: Job? = null
@@ -193,18 +193,23 @@ class PageRepository private constructor(private val appContext: Context) {
     }
 
     fun loadChapters() {
+        if (isLoadingChapters) return
+        isLoadingChapters = true
         scope.launch {
             try {
                 val list = fetchChaptersFromServer()
                 cachedChapters = list.sortedBy { it.startCharOffset }
                 chapterStartOffsetSet = list.map { it.startCharOffset }.toSet()
                 _chapters.value = list
+                _chaptersLoadedEvent.emit(Unit)   // ★ 发射事件
                 if (isInitialized()) {
                     recalculatePageBreaks()
                     updateCurrentPage()
                 }
             } catch (e: Exception) {
                 _errorEvents.emit("章节加载失败: ${e.message}")
+            } finally {
+                isLoadingChapters = false
             }
         }
     }
@@ -280,7 +285,6 @@ class PageRepository private constructor(private val appContext: Context) {
 
     private suspend fun fetchAndCacheBlock(page: Int): CachedBlock {
         val url = buildBlockUrl(page)
-        Log.d(TAG, "请求: $url")
         val json = withContext(Dispatchers.IO) { fetchJson(url) }
         val data = parseBlockResponse(json)
         totalServerBlocks = data.totalBlockPages
@@ -570,11 +574,10 @@ class PageRepository private constructor(private val appContext: Context) {
         return list
     }
 
-    // ── 历史持久化（异步，防抖） ──
     private fun saveHistory() {
         historySaveJob?.cancel()
         historySaveJob = scope.launch(Dispatchers.IO) {
-            delay(300) // 防抖
+            delay(300)
             try {
                 readingHistoryFile?.let { file ->
                     val state = _pageContent.value?.state ?: return@launch

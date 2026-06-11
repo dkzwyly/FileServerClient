@@ -47,7 +47,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     private var isAutoPlay = false
     private var pendingAutoPlay = false
 
-    // 文件信息（用于通知传递）
+    // 文件信息
     private var fileName = ""
     private var fileUrl = ""
     private var filePath = ""
@@ -70,7 +70,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         repository = PageRepository.getInstance(this)
 
-        // ★ 读取保存的语速
+        // 读取保存的语速
         readingPrefs = getSharedPreferences("reading_prefs", MODE_PRIVATE)
         speechRate = readingPrefs.getFloat("tts_speed", 1.0f)
 
@@ -116,7 +116,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
     }
 
-    // ── 公开方法（供 Activity 调用） ──
+    // ── 公开方法 ──
     fun setupFile(fileName: String, fileUrl: String, filePath: String) {
         this.fileName = fileName
         this.fileUrl = fileUrl
@@ -162,7 +162,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     fun setSpeechRate(rate: Float) {
         speechRate = rate.coerceIn(0.5f, 2.0f)
         tts?.setSpeechRate(speechRate)
-        // ★ 持久化语速
         readingPrefs.edit().putFloat("tts_speed", speechRate).apply()
     }
 
@@ -191,7 +190,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                     return
                 }
             }
-            tts?.setSpeechRate(speechRate)   // 应用已保存的语速
+            tts?.setSpeechRate(speechRate)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
                     isSpeaking = true
@@ -253,7 +252,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         hasAudioFocus = false
     }
 
-    // ── 前台通知（携带文件参数） ──
+    // ── 前台通知 ──
     private fun startForegroundIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val stopIntent = Intent(this, AudiobookService::class.java).apply {
@@ -264,7 +263,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             )
             val openIntent = Intent(this, TextPreviewActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-                // ★ 添加文件信息，确保从通知进入时能正确加载
                 putExtra("FILE_NAME", fileName)
                 putExtra("FILE_URL", fileUrl)
                 putExtra("FILE_PATH", filePath)
@@ -292,7 +290,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         )
         val openIntent = Intent(this, TextPreviewActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            // ★ 同样携带文件信息
             putExtra("FILE_NAME", fileName)
             putExtra("FILE_URL", fileUrl)
             putExtra("FILE_PATH", filePath)
@@ -338,7 +335,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // ── 内部朗读 ──
     private fun speakContent(content: CharSequence) {
         requestAudioFocus()
         startForegroundIfNeeded()

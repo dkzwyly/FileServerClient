@@ -8,7 +8,6 @@ import android.content.SharedPreferences
 import android.graphics.Color
 import android.os.Bundle
 import android.os.IBinder
-import android.util.Log
 import android.view.*
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
@@ -52,9 +51,6 @@ class TextPreviewActivity : AppCompatActivity() {
     private val minClickInterval = 200L
 
     private lateinit var repository: PageRepository
-
-    // 用于章节请求的同步标志
-    private var isWaitingForChapters = false
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -100,10 +96,9 @@ class TextPreviewActivity : AppCompatActivity() {
                 }
             }
             launch {
-                repository.chaptersFlow.collect { chapters ->
-                    // 仅在主动请求章节时弹出对话框
-                    if (chapters.isNotEmpty() && isWaitingForChapters) {
-                        isWaitingForChapters = false
+                repository.chaptersLoadedEvent.collect {
+                    val chapters = repository.chaptersFlow.value
+                    if (chapters.isNotEmpty()) {
                         showChapterList(chapters)
                         statusLabel.isVisible = false
                     }
@@ -111,12 +106,7 @@ class TextPreviewActivity : AppCompatActivity() {
             }
             launch {
                 repository.errorEvents.collect { msg ->
-                    // 如果正在等待章节，则取消等待并提示错误
-                    if (isWaitingForChapters) {
-                        isWaitingForChapters = false
-                        statusLabel.isVisible = false
-                        Toast.makeText(this@TextPreviewActivity, msg, Toast.LENGTH_SHORT).show()
-                    }
+                    Toast.makeText(this@TextPreviewActivity, msg, Toast.LENGTH_SHORT).show()
                     showErrorState(msg)
                 }
             }
@@ -158,7 +148,6 @@ class TextPreviewActivity : AppCompatActivity() {
             width, textContentTextView.paint,
             textContentTextView.lineSpacingExtra, textContentTextView.lineSpacingMultiplier, lines
         )
-        // 通知 Service 同步（如果需要）
         audiobookService?.updateDisplayParams(
             width, textContentTextView.paint,
             textContentTextView.lineSpacingExtra, textContentTextView.lineSpacingMultiplier, lines
@@ -307,7 +296,6 @@ class TextPreviewActivity : AppCompatActivity() {
     private fun showChapterDialog() {
         statusLabel.isVisible = true
         statusLabel.text = "正在加载章节..."
-        isWaitingForChapters = true
         repository.loadChapters()
     }
 
