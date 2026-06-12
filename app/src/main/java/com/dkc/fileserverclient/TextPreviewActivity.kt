@@ -55,6 +55,8 @@ class TextPreviewActivity : AppCompatActivity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             audiobookService = (service as AudiobookService.LocalBinder).getService()
+            // 同步文件信息到服务，确保通知携带正确 URL
+            audiobookService?.setupFile(currentFileName, currentFileUrl, currentFilePath)
             if (isLayoutReady) updateServiceDisplayParams()
             if (isAutoPlay) audiobookService?.startAutoPlay()
         }
@@ -131,6 +133,20 @@ class TextPreviewActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    // ★ 关键修复：从通知返回时正确处理 Intent
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // 重新提取文件信息（使用最新数据）
+        currentFileName = intent?.getStringExtra("FILE_NAME") ?: currentFileName
+        currentFileUrl = intent?.getStringExtra("FILE_URL") ?: currentFileUrl
+        currentFilePath = intent?.getStringExtra("FILE_PATH") ?: currentFilePath
+        // 重置数据源
+        repository.setupFile(currentFileName, currentFileUrl, currentFilePath)
+        // 同步到服务，确保通知正确
+        audiobookService?.setupFile(currentFileName, currentFileUrl, currentFilePath)
     }
 
     override fun onDestroy() {
