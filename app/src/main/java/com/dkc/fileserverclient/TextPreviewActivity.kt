@@ -35,7 +35,6 @@ class TextPreviewActivity : AppCompatActivity() {
     private var audiobookService: AudiobookService? = null
     private var isBound = false
     private var isLayoutReady = false
-    private var isAutoPlay = false
 
     private lateinit var currentFileName: String
     private lateinit var currentFileUrl: String
@@ -55,12 +54,16 @@ class TextPreviewActivity : AppCompatActivity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             audiobookService = (service as AudiobookService.LocalBinder).getService()
-            // 同步文件信息到服务，确保通知携带正确 URL
-            audiobookService?.setupFile(currentFileName, currentFileUrl, currentFilePath)
+            // 如果 Service 已经持有文件，则不再重新初始化，避免触发页面重载
+            val svcFileUrl = audiobookService?.getFileUrl()
+            if (svcFileUrl.isNullOrEmpty() || svcFileUrl != currentFileUrl) {
+                // 首次或文件不同才 setup
+                repository.setupFile(currentFileName, currentFileUrl, currentFilePath)
+                audiobookService?.setupFile(currentFileName, currentFileUrl, currentFilePath)
+            }
             if (isLayoutReady) updateServiceDisplayParams()
-            if (isAutoPlay) audiobookService?.startAutoPlay()
+            updatePlayStateUI()
         }
-
         override fun onServiceDisconnected(name: ComponentName?) {
             audiobookService = null
         }
@@ -81,7 +84,6 @@ class TextPreviewActivity : AppCompatActivity() {
 
         repository = PageRepository.getInstance(applicationContext)
 
-        // 收集状态流
         lifecycleScope.launch {
             launch {
                 repository.pageContentFlow.collect { uiData ->
@@ -93,8 +95,7 @@ class TextPreviewActivity : AppCompatActivity() {
             }
             launch {
                 repository.loadingStateFlow.collect { state ->
-                    if (state.isLoading) showLoadingState(state.message)
-                    else showContentState()
+                    if (state.isLoading) showLoadingState(state.message) else showContentState()
                 }
             }
             launch {
@@ -114,16 +115,12 @@ class TextPreviewActivity : AppCompatActivity() {
             }
         }
 
-        // 初始化文件
-        repository.setupFile(currentFileName, currentFileUrl, currentFilePath)
-
-        // 绑定 Service
+        // 如果 Service 未在运行，才主动初始化文件（否则由 Service 连接后决定）
         val serviceIntent = Intent(this, AudiobookService::class.java)
         startService(serviceIntent)
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
         isBound = true
 
-        // 监听布局完成以传递显示参数
         rootLayout.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
                 if (!isLayoutReady && textContentTextView.height > 0) {
@@ -135,18 +132,22 @@ class TextPreviewActivity : AppCompatActivity() {
         })
     }
 
-    // ★ 关键修复：从通知返回时正确处理 Intent
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // 重新提取文件信息（使用最新数据）
         currentFileName = intent?.getStringExtra("FILE_NAME") ?: currentFileName
         currentFileUrl = intent?.getStringExtra("FILE_URL") ?: currentFileUrl
         currentFilePath = intent?.getStringExtra("FILE_PATH") ?: currentFilePath
-        // 重置数据源
-        repository.setupFile(currentFileName, currentFileUrl, currentFilePath)
-        // 同步到服务，确保通知正确
-        audiobookService?.setupFile(currentFileName, currentFileUrl, currentFilePath)
+        // 仅当文件变化或 Service 未持有文件时才重新加载
+        if (audiobookService?.getFileUrl() != currentFileUrl) {
+            repository.setupFile(currentFileName, currentFileUrl, currentFilePath)
+            audiobookService?.setupFile(currentFileName, currentFileUrl, currentFilePath)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updatePlayStateUI()
     }
 
     override fun onDestroy() {
@@ -185,9 +186,7 @@ class TextPreviewActivity : AppCompatActivity() {
         if (lineHeight <= 0) return 20
         val maxPossible = (maxHeight / lineHeight).toInt() + 2
         val testLines = List(maxPossible) { "T" }.joinToString("\n")
-        var low = 1
-        var high = maxPossible
-        var best = 1
+        var low = 1; var high = maxPossible; var best = 1
         while (low <= high) {
             val mid = (low + high) / 2
             val text = testLines.lines().take(mid).joinToString("\n")
@@ -196,12 +195,7 @@ class TextPreviewActivity : AppCompatActivity() {
                 .setLineSpacing(tv.lineSpacingExtra, tv.lineSpacingMultiplier)
                 .setIncludePad(true)
                 .build()
-            if (layout.height <= maxHeight) {
-                best = mid
-                low = mid + 1
-            } else {
-                high = mid - 1
-            }
+            if (layout.height <= maxHeight) { best = mid; low = mid + 1 } else { high = mid - 1 }
         }
         return best.coerceAtLeast(2)
     }
@@ -251,19 +245,26 @@ class TextPreviewActivity : AppCompatActivity() {
     }
 
     private fun manualNextPage() {
-        if (isAutoPlay) {
-            isAutoPlay = false
+        if (audiobookService?.isAutoPlaying() == true) {
             audiobookService?.stopAutoPlay()
+            updatePlayStateUI()
         }
         lifecycleScope.launch { repository.nextPage() }
     }
 
     private fun manualPrevPage() {
-        if (isAutoPlay) {
-            isAutoPlay = false
+        if (audiobookService?.isAutoPlaying() == true) {
             audiobookService?.stopAutoPlay()
+            updatePlayStateUI()
         }
         lifecycleScope.launch { repository.previousPage() }
+    }
+
+    private fun updatePlayStateUI() {
+        val isPlaying = audiobookService?.isAutoPlaying() ?: false
+        voiceMenuButton.setImageResource(
+            if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+        )
     }
 
     private fun showVoiceMenu() {
@@ -274,12 +275,12 @@ class TextPreviewActivity : AppCompatActivity() {
             setOnMenuItemClickListener {
                 when (it.title) {
                     "开始自动朗读" -> {
-                        isAutoPlay = true
                         audiobookService?.startAutoPlay()
+                        updatePlayStateUI()
                     }
                     "停止朗读" -> {
-                        isAutoPlay = false
                         audiobookService?.stopAutoPlay()
+                        updatePlayStateUI()
                     }
                     "选择TTS引擎" -> showEngineSelectionDialog()
                 }
@@ -383,22 +384,18 @@ class TextPreviewActivity : AppCompatActivity() {
 
         btnW.setOnClickListener { currentBackgroundColor = Color.WHITE; rootLayout.setBackgroundColor(Color.WHITE) }
         btnC.setOnClickListener {
-            currentBackgroundColor = Color.parseColor("#FAF0D7")
-            rootLayout.setBackgroundColor(currentBackgroundColor)
+            currentBackgroundColor = Color.parseColor("#FAF0D7"); rootLayout.setBackgroundColor(currentBackgroundColor)
         }
         btnG.setOnClickListener {
-            currentBackgroundColor = Color.parseColor("#C8E6C9")
-            rootLayout.setBackgroundColor(currentBackgroundColor)
+            currentBackgroundColor = Color.parseColor("#C8E6C9"); rootLayout.setBackgroundColor(currentBackgroundColor)
         }
         btnB.setOnClickListener { currentBackgroundColor = Color.DKGRAY; rootLayout.setBackgroundColor(currentBackgroundColor) }
 
         val dialog = AlertDialog.Builder(this).setView(dialogView).setCancelable(false).create()
         cancelBtn.setOnClickListener {
-            currentFontSize = origFont
-            currentBackgroundColor = origBg
+            currentFontSize = origFont; currentBackgroundColor = origBg
             audiobookService?.setSpeechRate(origSpeed)
-            applyAppearance()
-            updateServiceDisplayParams()
+            applyAppearance(); updateServiceDisplayParams()
             dialog.dismiss()
         }
         applyBtn.setOnClickListener {
@@ -440,25 +437,17 @@ class TextPreviewActivity : AppCompatActivity() {
     }
 
     private fun showLoadingState(msg: String?) {
-        loadingProgress.isVisible = true
-        textContentTextView.isVisible = false
-        errorTextView.isVisible = false
-        statusLabel.isVisible = true
-        statusLabel.text = msg ?: "加载中..."
+        loadingProgress.isVisible = true; textContentTextView.isVisible = false; errorTextView.isVisible = false
+        statusLabel.isVisible = true; statusLabel.text = msg ?: "加载中..."
     }
 
     private fun showContentState() {
-        loadingProgress.isVisible = false
-        textContentTextView.isVisible = true
-        errorTextView.isVisible = false
+        loadingProgress.isVisible = false; textContentTextView.isVisible = true; errorTextView.isVisible = false
         statusLabel.isVisible = false
     }
 
     private fun showErrorState(msg: String) {
-        loadingProgress.isVisible = false
-        textContentTextView.isVisible = false
-        errorTextView.isVisible = true
-        errorTextView.text = msg
-        statusLabel.isVisible = false
+        loadingProgress.isVisible = false; textContentTextView.isVisible = false; errorTextView.isVisible = true
+        errorTextView.text = msg; statusLabel.isVisible = false
     }
 }
