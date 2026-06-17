@@ -101,9 +101,11 @@ class TextPreviewActivity : AppCompatActivity() {
             launch {
                 repository.chaptersLoadedEvent.collect {
                     val chapters = repository.chaptersFlow.value
+                    statusLabel.isVisible = false           // 无论有无章节，都要隐藏加载提示
                     if (chapters.isNotEmpty()) {
                         showChapterList(chapters)
-                        statusLabel.isVisible = false
+                    } else {
+                        Toast.makeText(this@TextPreviewActivity, "暂无可用章节", Toast.LENGTH_SHORT).show()
                     }
                 }
             }

@@ -63,6 +63,9 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     // WakeLock
     private var wakeLock: PowerManager.WakeLock? = null
 
+    // 新增：记录上一次实际朗读的纯文本内容，用于去重
+    private var lastSpokenContent: String? = null
+
     inner class LocalBinder : Binder() {
         fun getService(): AudiobookService = this@AudiobookService
     }
@@ -82,12 +85,13 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         readingPrefs = getSharedPreferences("reading_prefs", MODE_PRIVATE)
         speechRate = readingPrefs.getFloat("tts_speed", 1.0f)
 
-        // 监听页面内容，自动播放
+        // 监听页面内容，自动播放（新增去重逻辑）
         pageFlowJob = serviceScope.launch {
             repository.pageContentFlow.collect { uiData ->
                 uiData?.let {
                     updateNotification(it.content.toString())
-                    if (isAutoPlay && isTtsReady) {
+                    // 只有自动播放、TTS就绪、且内容与上次朗读不同时才触发朗读
+                    if (isAutoPlay && isTtsReady && lastSpokenContent != it.content.toString()) {
                         speakContent(it.content)
                     }
                 }
@@ -141,6 +145,8 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     fun startAutoPlay() {
         wasPlayingBeforeFocusLoss = false
         isAutoPlay = true
+        // 手动开始时强制清空已读缓存，确保立即朗读当前页
+        lastSpokenContent = null
         if (!isSpeaking) {
             repository.pageContentFlow.value?.let { speakContent(it.content) }
         }
@@ -164,6 +170,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         abandonAudioFocus()
         stopForegroundAndKeepService()
         updateNotification("已暂停")
+        // 不清空 lastSpokenContent，保持去重状态
     }
 
     fun stop() {
@@ -377,6 +384,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         requestAudioFocus()
         startForegroundIfNeeded()
         val utteranceId = "page_${System.currentTimeMillis()}"
+        lastSpokenContent = content.toString()   // 记录实际朗读内容
         tts?.speak(content.toString(), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 }
