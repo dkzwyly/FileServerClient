@@ -47,6 +47,11 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         const val EXTRA_PLAYLIST = "extra_playlist"
         const val EXTRA_START_INDEX = "extra_start_index"
 
+        // 🔥 新增：播放模式常量（与 PlaylistDetailActivity 保持一致）
+        const val MODE_LIST = 0
+        const val MODE_SINGLE = 1
+        const val MODE_RANDOM = 2
+
         fun startService(context: Context, track: AudioTrack? = null, playlist: ArrayList<AudioTrack>? = null, startIndex: Int = 0) {
             val intent = Intent(context, AudioPlaybackService::class.java).apply {
                 if (track != null) putExtra(EXTRA_TRACK, track)
@@ -159,12 +164,10 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                     audioPlayerManager.stop()
                     stopForeground(true)
                     isForeground = false
-                    // 发送显式广播，确保 Activity 收到
                     val closeIntent = Intent("AUDIO_SERVICE_CLOSED").apply {
                         setPackage(packageName)
                     }
                     sendBroadcast(closeIntent)
-                    // 延迟停止服务，保证广播发送
                     handler.postDelayed({
                         stopSelf()
                     }, 100)
@@ -182,11 +185,9 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
                     val enabled = intent.getBooleanExtra(EXTRA_SHUFFLE_ENABLED, false)
                     audioPlayerManager.setShuffleEnabled(enabled)
                 }
-                // ✅ 添加 else 分支，保证 when 完备
                 else -> {}
             }
         }
-        // 返回 START_NOT_STICKY 防止服务被系统重启
         return START_NOT_STICKY
     }
 
@@ -267,6 +268,13 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
         val playlist = audioPlayerManager.getPlaylist()
         val currentIndex = audioPlayerManager.getCurrentIndex()
 
+        // 🔥 根据当前播放状态计算模式
+        val currentMode = when {
+            status.shuffleEnabled -> MODE_RANDOM
+            status.repeatMode == RepeatMode.ONE -> MODE_SINGLE
+            else -> MODE_LIST
+        }
+
         val contentIntent = Intent(this, AudioPlayerActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("AUDIO_TRACK", track)
@@ -278,6 +286,8 @@ class AudioPlaybackService : Service(), AudioPlaybackListener, AudioProgressList
             putExtra("FILE_NAME", track?.name ?: "音频播放")
             putExtra("FILE_TYPE", "audio")
             track?.let { putExtra("FILE_PATH", it.path) }
+            // 🔥 新增：传递当前播放模式
+            putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, currentMode)
         }
 
         val contentPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
