@@ -269,9 +269,26 @@ class PageRepository private constructor(private val appContext: Context) {
         }
     }
 
+    // 带重试的网络请求
+    private suspend fun fetchJsonWithRetry(url: String, maxRetries: Int = 3): String {
+        var lastException: Exception? = null
+        repeat(maxRetries) { attempt ->
+            try {
+                return fetchJson(url)
+            } catch (e: Exception) {
+                lastException = e
+                Log.w(TAG, "fetchJson 失败 (第 ${attempt + 1} 次), url=$url", e)
+                if (attempt < maxRetries - 1) {
+                    delay(1000L * (attempt + 1)) // 1s, 2s 退避
+                }
+            }
+        }
+        throw lastException ?: Exception("网络请求失败")
+    }
+
     private suspend fun fetchAndCacheBlock(page: Int): CachedBlock {
         val url = buildBlockUrl(page)
-        val json = withContext(Dispatchers.IO) { fetchJson(url) }
+        val json = fetchJsonWithRetry(url)   // 使用带重试的方法
         val data = parseBlockResponse(json)
         totalServerBlocks = data.totalBlockPages
         val layout = withContext(Dispatchers.Default) { buildStaticLayout(data.fullText) }
@@ -373,7 +390,6 @@ class PageRepository private constructor(private val appContext: Context) {
         val toRemove = existingPages - idealRange
         val toAdd = idealRange - existingPages
 
-        // 取消不再需要的加载任务
         loadingJobs.keys.filter { it !in idealRange }.forEach { loadingJobs[it]?.cancel(); loadingJobs.remove(it) }
 
         if (toRemove.isNotEmpty()) {
@@ -411,7 +427,6 @@ class PageRepository private constructor(private val appContext: Context) {
         }
     }
 
-    // ── 页面更新与主动预加载 ──
     private fun updateCurrentPage() {
         while (currentPageIndex in pageBreaks.indices && isPageBlank(currentPageIndex)) {
             val next = (currentPageIndex + 1 until pageBreaks.size).firstOrNull { !isPageBlank(it) }
@@ -422,15 +437,11 @@ class PageRepository private constructor(private val appContext: Context) {
         _pageContent.value = PageUIData(content, state)
         saveHistory()
 
-        // 主动预加载：当前块内进度过半时，立即加载下一个块
         triggerMidBlockPreload(state)
-
-        // 定期窗口维护（异步）
         scope.launch { adjustWindow() }
     }
 
     private fun refreshPageDisplay() {
-        // adjustWindow 专用，不重复触发预加载
         while (currentPageIndex in pageBreaks.indices && isPageBlank(currentPageIndex)) {
             val next = (currentPageIndex + 1 until pageBreaks.size).firstOrNull { !isPageBlank(it) }
             if (next != null) currentPageIndex = next else break
@@ -441,13 +452,9 @@ class PageRepository private constructor(private val appContext: Context) {
         saveHistory()
     }
 
-    /**
-     * 如果当前块不是最后一个块，且阅读进度已超过该块的一半，
-     * 则立即异步请求下一个服务器块（如果尚未缓存）。
-     */
     private fun triggerMidBlockPreload(state: PageState) {
         val currentBlock = windowBlocks.firstOrNull { it.blockPage == state.blockPage } ?: return
-        if (state.blockPage >= totalServerBlocks) return   // 已是最后一块
+        if (state.blockPage >= totalServerBlocks) return
         val nextPage = state.blockPage + 1
         if (blockCache.containsKey(nextPage) || loadingJobs.containsKey(nextPage)) return
 
@@ -457,13 +464,11 @@ class PageRepository private constructor(private val appContext: Context) {
             Log.d(TAG, "块内进度 ${(progressInBlock * 100).toInt()}%，预加载块 $nextPage")
             scope.launch {
                 fetchAndCacheBlock(nextPage)
-                // 新块加入窗口
                 adjustWindow()
             }
         }
     }
 
-    // ── 页面构建辅助 ──
     private fun buildCurrentPageState(): PageState? {
         if (globalLines.isEmpty() || pageBreaks.isEmpty()) return null
         val startLine = pageBreaks[currentPageIndex]

@@ -85,7 +85,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         readingPrefs = getSharedPreferences("reading_prefs", MODE_PRIVATE)
         speechRate = readingPrefs.getFloat("tts_speed", 1.0f)
 
-        // 监听页面内容，自动播放（新增去重逻辑）
+        // 监听页面内容，自动播放（带去重）
         pageFlowJob = serviceScope.launch {
             repository.pageContentFlow.collect { uiData ->
                 uiData?.let {
@@ -216,18 +216,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                     isSpeaking = false
                     if (isAutoPlay) {
                         serviceScope.launch {
-                            try {
-                                repository.nextPage()
-                            } catch (e: Exception) {
-                                Log.e(TAG, "自动翻页失败，重试一次", e)
-                                delay(500)
-                                try {
-                                    repository.nextPage()
-                                } catch (e2: Exception) {
-                                    Log.e(TAG, "重试失败，停止自动播放")
-                                    stopAutoPlay()
-                                }
-                            }
+                            autoNextPageWithRetry()
                         }
                     }
                 }
@@ -239,6 +228,28 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             }
         } else {
             Log.e(TAG, "TTS初始化失败")
+        }
+    }
+
+    // ── 智能翻页重试机制 ──
+    private suspend fun autoNextPageWithRetry(retryCount: Int = 0) {
+        if (!isAutoPlay) return
+        try {
+            repository.nextPage()
+        } catch (e: Exception) {
+            Log.e(TAG, "自动翻页失败 (重试 $retryCount/5)", e)
+            if (retryCount < 5) {
+                delay(1000L * (retryCount + 1))
+                autoNextPageWithRetry(retryCount + 1)
+            } else {
+                Log.e(TAG, "翻页连续失败，暂停等待网络恢复...")
+                pause()
+                updateNotification("网络异常，等待恢复...")
+                delay(30_000)
+                if (isAutoPlay) {
+                    startAutoPlay()   // 内部清空 lastSpokenContent 并重新朗读当前页
+                }
+            }
         }
     }
 
