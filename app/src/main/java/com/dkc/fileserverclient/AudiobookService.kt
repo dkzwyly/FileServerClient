@@ -6,16 +6,23 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.ServiceInfo
 import android.graphics.Paint
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkRequest
 import android.os.*
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 
 class AudiobookService : Service(), TextToSpeech.OnInitListener {
@@ -26,45 +33,56 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         const val TAG = "AudiobookService"
         const val PREF_TTS_ENGINE = "tts_engine_package"
         const val ACTION_STOP_SERVICE = "com.dkc.fileserverclient.action.STOP_SERVICE"
+        const val DUCK_VOLUME = 0.2f
+        const val FULL_VOLUME = 1.0f
+
+        private const val RETRY_BASE_DELAY = 2000L
+        private const val RETRY_MAX_DELAY = 30000L
+        private var retryDelay = RETRY_BASE_DELAY
     }
 
     private lateinit var repository: PageRepository
 
-    // TTS
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
     private var isSpeaking = false
     private var speechRate = 1.0f
 
-    // 音频焦点
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: AudioFocusRequest? = null
     private var hasAudioFocus = false
 
-    // 自动播放状态
     private var isAutoPlay = false
     private var wasPlayingBeforeFocusLoss = false
 
-    // 文件信息
     private var fileName = ""
     private var fileUrl = ""
     private var filePath = ""
 
-    // 防止 Activity 重复初始化
     private var isFileSetupDone = false
 
-    // SharedPreferences
     private lateinit var readingPrefs: SharedPreferences
 
-    // 协程
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var pageFlowJob: Job? = null
 
-    // WakeLock
     private var wakeLock: PowerManager.WakeLock? = null
+    private var lastSpokenOffset: Int = -1
 
-    // 新增：记录上一次实际朗读的纯文本内容，用于去重
-    private var lastSpokenContent: String? = null
+    private lateinit var connectivityManager: ConnectivityManager
+
+    // 新增：标记网络回调是否已注册
+    private var networkCallbackRegistered = false
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            if (isAutoPlay && !isSpeaking) {
+                serviceScope.launch { autoNextPage() }
+            }
+        }
+    }
+
+    private val nextPageMutex = Mutex()
 
     inner class LocalBinder : Binder() {
         fun getService(): AudiobookService = this@AudiobookService
@@ -76,29 +94,23 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         createNotificationChannel()
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         repository = PageRepository.getInstance(this)
+        connectivityManager = getSystemService(ConnectivityManager::class.java)
 
-        // 获取 WakeLock，防止 CPU 休眠
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AudiobookService::WakeLock")
-        wakeLock?.acquire(10 * 60 * 1000L) // 10分钟超时，避免永久持有
 
         readingPrefs = getSharedPreferences("reading_prefs", MODE_PRIVATE)
         speechRate = readingPrefs.getFloat("tts_speed", 1.0f)
 
-        // 监听页面内容，自动播放（带去重）
         pageFlowJob = serviceScope.launch {
             repository.pageContentFlow.collect { uiData ->
                 uiData?.let {
                     updateNotification(it.content.toString())
-                    // 只有自动播放、TTS就绪、且内容与上次朗读不同时才触发朗读
-                    if (isAutoPlay && isTtsReady && lastSpokenContent != it.content.toString()) {
-                        speakContent(it.content)
-                    }
+                    lastSpokenOffset = it.state.absoluteCharOffset
                 }
             }
         }
 
-        // TTS 初始化
         val ttsPrefs = getSharedPreferences("tts_prefs", MODE_PRIVATE)
         val enginePackage = ttsPrefs.getString(PREF_TTS_ENGINE, null)
         tts = if (enginePackage.isNullOrEmpty()) TextToSpeech(this, this)
@@ -118,17 +130,20 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         Log.d(TAG, "Service onDestroy")
         serviceScope.cancel()
-        stopSelfForeground()
+        stopForegroundAndKeepService()
         tts?.stop()
         tts?.shutdown()
         tts = null
-        wakeLock?.let { if (it.isHeld) it.release() }
+        releaseWakeLock()
+        // 注销网络回调（如果已注册）
+        try {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+            networkCallbackRegistered = false
+        } catch (_: Exception) {}
         super.onDestroy()
     }
 
     // ── 公开方法 ──
-
-    /** 初始化文件，如果已经初始化过则忽略，避免重复加载 */
     fun setupFile(fileName: String, fileUrl: String, filePath: String) {
         if (isFileSetupDone && this.fileName == fileName) return
         this.fileName = fileName
@@ -145,21 +160,60 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     fun startAutoPlay() {
         wasPlayingBeforeFocusLoss = false
         isAutoPlay = true
-        // 手动开始时强制清空已读缓存，确保立即朗读当前页
-        lastSpokenContent = null
-        if (!isSpeaking) {
-            repository.pageContentFlow.value?.let { speakContent(it.content) }
+        // 不再立刻注册网络回调，而是等朗读真正开始后再延迟注册
+
+        val state = repository.getCurrentPageState()
+        if (state != null) {
+            lastSpokenOffset = state.absoluteCharOffset
+            val content = repository.getCurrentPageContent()
+            if (content.isNotEmpty()) {
+                speakContent(content)
+                // 延迟注册，确保 TTS 已经开始播放（避免同步触发翻页）
+                Handler(Looper.getMainLooper()).post {
+                    registerNetworkCallbackIfNeeded()
+                }
+            }
+        } else {
+            serviceScope.launch {
+                repository.pageContentFlow.first { it != null }?.let {
+                    lastSpokenOffset = it.state.absoluteCharOffset
+                    speakContent(it.content.toString())
+                    Handler(Looper.getMainLooper()).post {
+                        registerNetworkCallbackIfNeeded()
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 注册网络回调（仅当未注册且处于自动播放模式时）
+     */
+    private fun registerNetworkCallbackIfNeeded() {
+        if (!networkCallbackRegistered && isAutoPlay) {
+            try {
+                connectivityManager.registerNetworkCallback(
+                    NetworkRequest.Builder().build(), networkCallback
+                )
+                networkCallbackRegistered = true
+            } catch (e: Exception) {
+                Log.e(TAG, "注册网络回调失败", e)
+            }
         }
     }
 
     fun stopAutoPlay() {
         wasPlayingBeforeFocusLoss = false
         isAutoPlay = false
+        // 注销网络回调并重置标志
+        try {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+            networkCallbackRegistered = false
+        } catch (_: Exception) {}
         pause()
     }
 
     fun isAutoPlaying(): Boolean = isAutoPlay
-
     fun getFileName(): String = fileName
     fun getFileUrl(): String = fileUrl
     fun getFilePath(): String = filePath
@@ -169,16 +223,22 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         isSpeaking = false
         abandonAudioFocus()
         stopForegroundAndKeepService()
+        releaseWakeLock()
         updateNotification("已暂停")
-        // 不清空 lastSpokenContent，保持去重状态
     }
 
     fun stop() {
         tts?.stop()
         isSpeaking = false
         isAutoPlay = false
+        try {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+            networkCallbackRegistered = false
+        } catch (_: Exception) {}
         abandonAudioFocus()
-        stopSelfForeground()
+        stopForegroundAndKeepService()
+        releaseWakeLock()
+        stopSelf()
     }
 
     fun setSpeechRate(rate: Float) {
@@ -211,44 +271,64 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             }
             tts?.setSpeechRate(speechRate)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) { isSpeaking = true }
+                override fun onStart(utteranceId: String?) {
+                    isSpeaking = true
+                }
                 override fun onDone(utteranceId: String?) {
                     isSpeaking = false
                     if (isAutoPlay) {
+                        serviceScope.launch { autoNextPage() }
+                    } else {
+                        releaseWakeLock()
+                    }
+                }
+                override fun onError(utteranceId: String?) {
+                    isSpeaking = false
+                    releaseWakeLock()
+                    if (isAutoPlay) {
                         serviceScope.launch {
-                            autoNextPageWithRetry()
+                            delay(500)
+                            autoNextPage()
                         }
                     }
                 }
-                override fun onError(utteranceId: String?) { isSpeaking = false }
             })
             isTtsReady = true
             if (isAutoPlay && !isSpeaking) {
-                repository.pageContentFlow.value?.let { speakContent(it.content) }
+                val content = repository.getCurrentPageContent()
+                if (content.isNotEmpty()) {
+                    val state = repository.getCurrentPageState()
+                    if (state != null) lastSpokenOffset = state.absoluteCharOffset
+                    speakContent(content)
+                }
             }
         } else {
             Log.e(TAG, "TTS初始化失败")
         }
     }
 
-    // ── 智能翻页重试机制 ──
-    private suspend fun autoNextPageWithRetry(retryCount: Int = 0) {
-        if (!isAutoPlay) return
+    // ── 翻页逻辑（显式返回类型，互斥保护） ──
+    private suspend fun autoNextPage(): Unit = nextPageMutex.withLock {
+        if (!isAutoPlay) return@withLock
         try {
             repository.nextPage()
-        } catch (e: Exception) {
-            Log.e(TAG, "自动翻页失败 (重试 $retryCount/5)", e)
-            if (retryCount < 5) {
-                delay(1000L * (retryCount + 1))
-                autoNextPageWithRetry(retryCount + 1)
+            val content = repository.getCurrentPageContent()
+            val state = repository.getCurrentPageState()
+            if (content.isNotEmpty() && state != null) {
+                lastSpokenOffset = state.absoluteCharOffset
+                speakContent(content)
+                retryDelay = RETRY_BASE_DELAY
             } else {
-                Log.e(TAG, "翻页连续失败，暂停等待网络恢复...")
-                pause()
-                updateNotification("网络异常，等待恢复...")
-                delay(30_000)
-                if (isAutoPlay) {
-                    startAutoPlay()   // 内部清空 lastSpokenContent 并重新朗读当前页
-                }
+                isAutoPlay = false
+                stop()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "自动翻页失败，${retryDelay}ms后重试", e)
+            updateNotification("网络临时中断，重试中…")
+            delay(retryDelay)
+            retryDelay = (retryDelay * 2).coerceAtMost(RETRY_MAX_DELAY)
+            if (isAutoPlay) {
+                autoNextPage()
             }
         }
     }
@@ -268,19 +348,13 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                             stopAutoPlay()
                             abandonAudioFocus()
                         }
-                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                            wasPlayingBeforeFocusLoss = isAutoPlay
-                            pause()
-                        }
+                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
                         AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                             wasPlayingBeforeFocusLoss = isAutoPlay
-                            pause()
+                            adjustTtsVolume(DUCK_VOLUME)
                         }
                         AudioManager.AUDIOFOCUS_GAIN -> {
-                            if (wasPlayingBeforeFocusLoss) {
-                                wasPlayingBeforeFocusLoss = false
-                                startAutoPlay()
-                            }
+                            adjustTtsVolume(FULL_VOLUME)
                         }
                     }
                 }
@@ -295,19 +369,13 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                             stopAutoPlay()
                             abandonAudioFocus()
                         }
-                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                            wasPlayingBeforeFocusLoss = isAutoPlay
-                            pause()
-                        }
+                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
                         AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                             wasPlayingBeforeFocusLoss = isAutoPlay
-                            pause()
+                            adjustTtsVolume(DUCK_VOLUME)
                         }
                         AudioManager.AUDIOFOCUS_GAIN -> {
-                            if (wasPlayingBeforeFocusLoss) {
-                                wasPlayingBeforeFocusLoss = false
-                                startAutoPlay()
-                            }
+                            adjustTtsVolume(FULL_VOLUME)
                         }
                     }
                 },
@@ -315,6 +383,14 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
             ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         }
+    }
+
+    private fun adjustTtsVolume(volume: Float) {
+        audioManager?.setStreamVolume(
+            AudioManager.STREAM_MUSIC,
+            (audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 0 * volume).toInt(),
+            0
+        )
     }
 
     private fun abandonAudioFocus() {
@@ -330,23 +406,29 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
 
     // ── 前台通知 ──
     private fun startForegroundIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val stopIntent = Intent(this, AudiobookService::class.java).apply { action = ACTION_STOP_SERVICE }
-            val stopPendingIntent = PendingIntent.getService(this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            val openIntent = Intent(this, TextPreviewActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra("FILE_NAME", fileName)
-                putExtra("FILE_URL", fileUrl)
-                putExtra("FILE_PATH", filePath)
-            }
-            val openPendingIntent = PendingIntent.getActivity(this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("正在听书")
-                .setContentText("加载中...")
-                .setSmallIcon(android.R.drawable.ic_media_play)
-                .setContentIntent(openPendingIntent)
-                .setDeleteIntent(stopPendingIntent)
-                .build()
+        val stopIntent = Intent(this, AudiobookService::class.java).apply { action = ACTION_STOP_SERVICE }
+        val stopPendingIntent = PendingIntent.getService(this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val openIntent = Intent(this, TextPreviewActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("FILE_NAME", fileName)
+            putExtra("FILE_URL", fileUrl)
+            putExtra("FILE_PATH", filePath)
+        }
+        val openPendingIntent = PendingIntent.getActivity(this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("正在听书")
+            .setContentText("加载中...")
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentIntent(openPendingIntent)
+            .setDeleteIntent(stopPendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        } else {
             startForeground(NOTIFICATION_ID, notification)
         }
     }
@@ -362,11 +444,19 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         }
         val openPendingIntent = PendingIntent.getActivity(this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(if (isSpeaking) "正在听书" else "听书暂停")
+            .setContentTitle(
+                if (isAutoPlay) {
+                    if (isSpeaking) "正在听书" else "等待恢复"
+                } else {
+                    "听书暂停"
+                }
+            )
             .setContentText(content.take(50))
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(openPendingIntent)
             .setDeleteIntent(stopPendingIntent)
+            .setOngoing(isAutoPlay)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
         getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification)
     }
@@ -374,11 +464,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     private fun stopForegroundAndKeepService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_DETACH)
         else @Suppress("DEPRECATION") stopForeground(true)
-    }
-
-    private fun stopSelfForeground() {
-        stopForegroundAndKeepService()
-        stopSelf()
     }
 
     private fun createNotificationChannel() {
@@ -391,11 +476,24 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun speakContent(content: CharSequence) {
+    private fun speakContent(content: String) {
         requestAudioFocus()
-        startForegroundIfNeeded()
+        acquireWakeLock()
+        if (isAutoPlay) {
+            startForegroundIfNeeded()
+        }
         val utteranceId = "page_${System.currentTimeMillis()}"
-        lastSpokenContent = content.toString()   // 记录实际朗读内容
-        tts?.speak(content.toString(), TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        tts?.speak(content, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+    }
+
+    private fun acquireWakeLock() {
+        wakeLock?.let {
+            if (it.isHeld) it.release()
+            it.acquire(10 * 60 * 1000L)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
     }
 }

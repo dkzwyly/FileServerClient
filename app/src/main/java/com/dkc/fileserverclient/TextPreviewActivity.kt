@@ -54,10 +54,8 @@ class TextPreviewActivity : AppCompatActivity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             audiobookService = (service as AudiobookService.LocalBinder).getService()
-            // 如果 Service 已经持有文件，则不再重新初始化，避免触发页面重载
             val svcFileUrl = audiobookService?.getFileUrl()
             if (svcFileUrl.isNullOrEmpty() || svcFileUrl != currentFileUrl) {
-                // 首次或文件不同才 setup
                 repository.setupFile(currentFileName, currentFileUrl, currentFilePath)
                 audiobookService?.setupFile(currentFileName, currentFileUrl, currentFilePath)
             }
@@ -101,7 +99,7 @@ class TextPreviewActivity : AppCompatActivity() {
             launch {
                 repository.chaptersLoadedEvent.collect {
                     val chapters = repository.chaptersFlow.value
-                    statusLabel.isVisible = false           // 无论有无章节，都要隐藏加载提示
+                    statusLabel.isVisible = false
                     if (chapters.isNotEmpty()) {
                         showChapterList(chapters)
                     } else {
@@ -117,7 +115,6 @@ class TextPreviewActivity : AppCompatActivity() {
             }
         }
 
-        // 如果 Service 未在运行，才主动初始化文件（否则由 Service 连接后决定）
         val serviceIntent = Intent(this, AudiobookService::class.java)
         startService(serviceIntent)
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -140,7 +137,6 @@ class TextPreviewActivity : AppCompatActivity() {
         currentFileName = intent?.getStringExtra("FILE_NAME") ?: currentFileName
         currentFileUrl = intent?.getStringExtra("FILE_URL") ?: currentFileUrl
         currentFilePath = intent?.getStringExtra("FILE_PATH") ?: currentFilePath
-        // 仅当文件变化或 Service 未持有文件时才重新加载
         if (audiobookService?.getFileUrl() != currentFileUrl) {
             repository.setupFile(currentFileName, currentFileUrl, currentFilePath)
             audiobookService?.setupFile(currentFileName, currentFileUrl, currentFilePath)

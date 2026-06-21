@@ -92,7 +92,6 @@ class PageRepository private constructor(private val appContext: Context) {
     private var chapterStartOffsetSet = emptySet<Int>()
     private var isLoadingChapters = false
 
-    // 用于取消正在进行的加载任务（键为 blockPage）
     private val loadingJobs = mutableMapOf<Int, Job>()
 
     private var readingHistoryFile: File? = null
@@ -173,6 +172,28 @@ class PageRepository private constructor(private val appContext: Context) {
         loadWindow(centerBlockPage = blockPage, targetOffset = absoluteOffset)
     }
 
+    /**
+     * 安全跳转到指定绝对偏移（会触发窗口加载，确保偏移所在块在缓存中）
+     */
+    suspend fun goToOffset(absoluteOffset: Int) {
+        if (!isInitialized()) return
+        // 如果当前窗口已包含该偏移，直接计算页码
+        val lineIdx = findLineForAbsoluteOffset(absoluteOffset)
+        if (lineIdx in globalLines.indices) {
+            currentPageIndex = findPageForAbsoluteOffset(absoluteOffset)
+            updateCurrentPage()
+            return
+        }
+        // 否则需要加载包含该偏移的窗口
+        val blockPage = estimateBlockPageForOffset(absoluteOffset)
+        loadWindow(centerBlockPage = blockPage, targetOffset = absoluteOffset)
+    }
+
+    private suspend fun estimateBlockPageForOffset(offset: Int): Int {
+        // 粗略估算：假设平均每块 5000 字符
+        return (offset / 5000) + 1
+    }
+
     suspend fun jumpToChapter(chapter: ChapterInfo) {
         restorePosition(chapter.serverPage, chapter.startCharOffset)
     }
@@ -187,8 +208,12 @@ class PageRepository private constructor(private val appContext: Context) {
                 chapterStartOffsetSet = list.map { it.startCharOffset }.toSet()
                 _chapters.value = list
                 _chaptersLoadedEvent.emit(Unit)
+                // 章节加载后重新分页，但保留当前页位置
                 if (isInitialized()) {
+                    val currentOffset = _pageContent.value?.state?.absoluteCharOffset ?: 0
                     recalculatePageBreaks()
+                    // 定位回原偏移
+                    currentPageIndex = findPageForAbsoluteOffset(currentOffset)
                     updateCurrentPage()
                 }
             } catch (e: Exception) {
@@ -269,7 +294,6 @@ class PageRepository private constructor(private val appContext: Context) {
         }
     }
 
-    // 带重试的网络请求
     private suspend fun fetchJsonWithRetry(url: String, maxRetries: Int = 3): String {
         var lastException: Exception? = null
         repeat(maxRetries) { attempt ->
@@ -279,7 +303,7 @@ class PageRepository private constructor(private val appContext: Context) {
                 lastException = e
                 Log.w(TAG, "fetchJson 失败 (第 ${attempt + 1} 次), url=$url", e)
                 if (attempt < maxRetries - 1) {
-                    delay(1000L * (attempt + 1)) // 1s, 2s 退避
+                    delay(1000L * (attempt + 1))
                 }
             }
         }
@@ -288,7 +312,7 @@ class PageRepository private constructor(private val appContext: Context) {
 
     private suspend fun fetchAndCacheBlock(page: Int): CachedBlock {
         val url = buildBlockUrl(page)
-        val json = fetchJsonWithRetry(url)   // 使用带重试的方法
+        val json = fetchJsonWithRetry(url)
         val data = parseBlockResponse(json)
         totalServerBlocks = data.totalBlockPages
         val layout = withContext(Dispatchers.Default) { buildStaticLayout(data.fullText) }
@@ -379,7 +403,6 @@ class PageRepository private constructor(private val appContext: Context) {
         return target
     }
 
-    // ── 窗口管理 ──
     private suspend fun adjustWindow() {
         val currentBlock = _pageContent.value?.state?.blockPage ?: return
         val minBlock = (currentBlock - WINDOW_HALF).coerceAtLeast(1)
@@ -527,7 +550,6 @@ class PageRepository private constructor(private val appContext: Context) {
         windowBlocks = windowBlocks.mapNotNull { blockCache[it.blockPage] }
     }
 
-    // ── 网络与存储工具 ──
     private fun buildBlockUrl(page: Int) =
         "${fileUrl}${if (fileUrl.contains("?")) "&" else "?"}page=$page"
 
