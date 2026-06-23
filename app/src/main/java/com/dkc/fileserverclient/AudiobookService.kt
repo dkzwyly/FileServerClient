@@ -14,9 +14,13 @@ import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
+import android.net.Uri
 import android.os.*
+import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
@@ -73,6 +77,9 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
 
     private var networkCallbackRegistered = false
 
+    // MediaSession 相关
+    private lateinit var mediaSession: MediaSessionCompat
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             Log.d(TAG, "网络可用，绑定到 $network")
@@ -104,9 +111,17 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             connectivityManager.activeNetwork?.let {
-                Log.d(TAG, "初始化绑定活动网络 $it")
                 repository.setNetwork(it)
             }
+        }
+
+        // 初始化 MediaSession
+        mediaSession = MediaSessionCompat(this, "AudiobookService").apply {
+            setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
+            setPlaybackState(PlaybackStateCompat.Builder()
+                .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or PlaybackStateCompat.ACTION_STOP)
+                .build())
+            isActive = true
         }
 
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
@@ -132,10 +147,46 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
+        requestBatteryOptimizationIfNeeded()
+
         val ttsPrefs = getSharedPreferences("tts_prefs", MODE_PRIVATE)
         val enginePackage = ttsPrefs.getString(PREF_TTS_ENGINE, null)
         tts = if (enginePackage.isNullOrEmpty()) TextToSpeech(this, this)
         else TextToSpeech(this, this, enginePackage)
+
+        // 恢复自动播放状态
+        isAutoPlay = readingPrefs.getBoolean("is_auto_play", false)
+        if (isAutoPlay) {
+            if (isTtsReady) {
+                startPlaybackIfReady()
+            }
+        }
+    }
+
+    private fun requestBatteryOptimizationIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    })
+                } catch (_: Exception) { }
+            }
+        }
+    }
+
+    private fun startPlaybackIfReady() {
+        val content = repository.getCurrentPageContent()
+        if (content.isNotEmpty()) {
+            val state = repository.getCurrentPageState()
+            if (state != null) lastSpokenOffset = state.absoluteCharOffset
+            speakContent(content)
+            Handler(Looper.getMainLooper()).post {
+                registerNetworkCallbackIfNeeded()
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -151,6 +202,8 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         Log.d(TAG, "Service onDestroy")
         serviceScope.cancel()
+        mediaSession.isActive = false
+        mediaSession.release()
         stopForegroundAndKeepService()
         tts?.stop()
         tts?.shutdown()
@@ -178,8 +231,10 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun startAutoPlay() {
+        readingPrefs.edit().putBoolean("is_auto_play", true).apply()
         wasPlayingBeforeFocusLoss = false
         isAutoPlay = true
+        updateMediaSessionState(PlaybackStateCompat.STATE_PLAYING)
 
         val state = repository.getCurrentPageState()
         if (state != null) {
@@ -205,7 +260,8 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                 } else {
                     isAutoPlay = false
                     updateNotification("内容加载超时")
-                    stopForegroundAndKeepService()
+                    updateMediaSessionState(PlaybackStateCompat.STATE_PAUSED)
+                    readingPrefs.edit().putBoolean("is_auto_play", false).apply()
                 }
             }
         }
@@ -226,6 +282,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun stopAutoPlay() {
+        readingPrefs.edit().putBoolean("is_auto_play", false).apply()
         wasPlayingBeforeFocusLoss = false
         isAutoPlay = false
         try {
@@ -233,6 +290,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             networkCallbackRegistered = false
         } catch (_: Exception) {}
         pause()
+        updateMediaSessionState(PlaybackStateCompat.STATE_PAUSED)
     }
 
     fun isAutoPlaying(): Boolean = isAutoPlay
@@ -244,12 +302,13 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         tts?.stop()
         isSpeaking = false
         abandonAudioFocus()
-        stopForegroundAndKeepService()
         releaseWakeLock()
         updateNotification("已暂停")
+        updateMediaSessionState(PlaybackStateCompat.STATE_PAUSED)
     }
 
     fun stop() {
+        readingPrefs.edit().putBoolean("is_auto_play", false).apply()
         tts?.stop()
         isSpeaking = false
         isAutoPlay = false
@@ -258,8 +317,9 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             networkCallbackRegistered = false
         } catch (_: Exception) {}
         abandonAudioFocus()
-        stopForegroundAndKeepService()
         releaseWakeLock()
+        updateMediaSessionState(PlaybackStateCompat.STATE_STOPPED)
+        stopForegroundAndKeepService()
         stopSelf()
     }
 
@@ -294,6 +354,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
                     isSpeaking = true
+                    updateMediaSessionState(PlaybackStateCompat.STATE_PLAYING)
                 }
                 override fun onDone(utteranceId: String?) {
                     isSpeaking = false
@@ -301,11 +362,13 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                         serviceScope.launch { autoNextPage() }
                     } else {
                         releaseWakeLock()
+                        updateMediaSessionState(PlaybackStateCompat.STATE_PAUSED)
                     }
                 }
                 override fun onError(utteranceId: String?) {
                     isSpeaking = false
                     releaseWakeLock()
+                    updateMediaSessionState(PlaybackStateCompat.STATE_ERROR)
                     if (isAutoPlay) {
                         serviceScope.launch {
                             delay(500)
@@ -316,16 +379,18 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             })
             isTtsReady = true
             if (isAutoPlay && !isSpeaking) {
-                val content = repository.getCurrentPageContent()
-                if (content.isNotEmpty()) {
-                    val state = repository.getCurrentPageState()
-                    if (state != null) lastSpokenOffset = state.absoluteCharOffset
-                    speakContent(content)
-                }
+                startPlaybackIfReady()
             }
         } else {
             Log.e(TAG, "TTS初始化失败")
         }
+    }
+
+    private fun updateMediaSessionState(state: Int) {
+        mediaSession.setPlaybackState(PlaybackStateCompat.Builder()
+            .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1.0f)
+            .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or PlaybackStateCompat.ACTION_STOP)
+            .build())
     }
 
     private suspend fun autoNextPage(): Unit = nextPageMutex.withLock {
@@ -424,26 +489,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startForegroundIfNeeded() {
-        val stopIntent = Intent(this, AudiobookService::class.java).apply { action = ACTION_STOP_SERVICE }
-        val stopPendingIntent = PendingIntent.getService(this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val openIntent = Intent(this, TextPreviewActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra("FILE_NAME", fileName)
-            putExtra("FILE_URL", fileUrl)
-            putExtra("FILE_PATH", filePath)
-        }
-        val openPendingIntent = PendingIntent.getActivity(this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("正在听书")
-            .setContentText("加载中...")
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentIntent(openPendingIntent)
-            .setDeleteIntent(stopPendingIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-
+        val notification = buildNotification("正在听书", "加载中...", true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         } else {
@@ -452,32 +498,42 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun updateNotification(content: String) {
-        val stopIntent = Intent(this, AudiobookService::class.java).apply { action = ACTION_STOP_SERVICE }
-        val stopPendingIntent = PendingIntent.getService(this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val title = when {
+            !isAutoPlay -> "听书暂停"
+            isSpeaking -> "正在听书"
+            else -> "等待恢复"
+        }
+        val notification = buildNotification(title, content.take(50).toString(), isAutoPlay)
+        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun buildNotification(title: String, content: String, ongoing: Boolean) =
+        NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentIntent(getOpenPendingIntent())
+            .setDeleteIntent(getStopPendingIntent())
+            .setOngoing(ongoing)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
+                .setMediaSession(mediaSession.sessionToken)
+                .setShowActionsInCompactView(0))
+            .build()
+
+    private fun getOpenPendingIntent(): PendingIntent {
         val openIntent = Intent(this, TextPreviewActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("FILE_NAME", fileName)
             putExtra("FILE_URL", fileUrl)
             putExtra("FILE_PATH", filePath)
         }
-        val openPendingIntent = PendingIntent.getActivity(this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return PendingIntent.getActivity(this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    }
 
-        val title = when {
-            !isAutoPlay -> "听书暂停"
-            isSpeaking -> "正在听书"
-            else -> "等待恢复"
-        }
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(title)
-            .setContentText(content.take(50))
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentIntent(openPendingIntent)
-            .setDeleteIntent(stopPendingIntent)
-            .setOngoing(isAutoPlay)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification)
+    private fun getStopPendingIntent(): PendingIntent {
+        val stopIntent = Intent(this, AudiobookService::class.java).apply { action = ACTION_STOP_SERVICE }
+        return PendingIntent.getService(this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
     private fun stopForegroundAndKeepService() {
@@ -487,7 +543,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "听书播放", NotificationManager.IMPORTANCE_LOW).apply {
+            val channel = NotificationChannel(CHANNEL_ID, "听书播放", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = "朗读文本时的控制器"
                 setSound(null, null)
             }
