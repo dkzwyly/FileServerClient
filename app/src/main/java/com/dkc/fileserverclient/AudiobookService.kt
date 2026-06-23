@@ -71,14 +71,20 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
 
     private lateinit var connectivityManager: ConnectivityManager
 
-    // 新增：标记网络回调是否已注册
     private var networkCallbackRegistered = false
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            Log.d(TAG, "网络可用，绑定到 $network")
+            repository.setNetwork(network)
             if (isAutoPlay && !isSpeaking) {
                 serviceScope.launch { autoNextPage() }
             }
+        }
+
+        override fun onLost(network: Network) {
+            Log.d(TAG, "网络丢失 $network，解绑")
+            repository.setNetwork(null)
         }
     }
 
@@ -96,6 +102,13 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         repository = PageRepository.getInstance(this)
         connectivityManager = getSystemService(ConnectivityManager::class.java)
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            connectivityManager.activeNetwork?.let {
+                Log.d(TAG, "初始化绑定活动网络 $it")
+                repository.setNetwork(it)
+            }
+        }
+
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AudiobookService::WakeLock")
 
@@ -107,6 +120,14 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                 uiData?.let {
                     updateNotification(it.content.toString())
                     lastSpokenOffset = it.state.absoluteCharOffset
+                }
+            }
+        }
+
+        serviceScope.launch {
+            repository.errorEvents.collect { msg ->
+                if (isAutoPlay) {
+                    updateNotification("错误: ${msg.take(30)}")
                 }
             }
         }
@@ -135,15 +156,14 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         tts?.shutdown()
         tts = null
         releaseWakeLock()
-        // 注销网络回调（如果已注册）
         try {
             connectivityManager.unregisterNetworkCallback(networkCallback)
             networkCallbackRegistered = false
         } catch (_: Exception) {}
+        repository.setNetwork(null)
         super.onDestroy()
     }
 
-    // ── 公开方法 ──
     fun setupFile(fileName: String, fileUrl: String, filePath: String) {
         if (isFileSetupDone && this.fileName == fileName) return
         this.fileName = fileName
@@ -160,7 +180,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     fun startAutoPlay() {
         wasPlayingBeforeFocusLoss = false
         isAutoPlay = true
-        // 不再立刻注册网络回调，而是等朗读真正开始后再延迟注册
 
         val state = repository.getCurrentPageState()
         if (state != null) {
@@ -168,27 +187,30 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             val content = repository.getCurrentPageContent()
             if (content.isNotEmpty()) {
                 speakContent(content)
-                // 延迟注册，确保 TTS 已经开始播放（避免同步触发翻页）
                 Handler(Looper.getMainLooper()).post {
                     registerNetworkCallbackIfNeeded()
                 }
             }
         } else {
             serviceScope.launch {
-                repository.pageContentFlow.first { it != null }?.let {
-                    lastSpokenOffset = it.state.absoluteCharOffset
-                    speakContent(it.content.toString())
+                val timeout = withTimeoutOrNull(10_000L) {
+                    repository.pageContentFlow.first { it != null }
+                }
+                if (timeout != null) {
+                    lastSpokenOffset = timeout.state.absoluteCharOffset
+                    speakContent(timeout.content.toString())
                     Handler(Looper.getMainLooper()).post {
                         registerNetworkCallbackIfNeeded()
                     }
+                } else {
+                    isAutoPlay = false
+                    updateNotification("内容加载超时")
+                    stopForegroundAndKeepService()
                 }
             }
         }
     }
 
-    /**
-     * 注册网络回调（仅当未注册且处于自动播放模式时）
-     */
     private fun registerNetworkCallbackIfNeeded() {
         if (!networkCallbackRegistered && isAutoPlay) {
             try {
@@ -196,6 +218,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
                     NetworkRequest.Builder().build(), networkCallback
                 )
                 networkCallbackRegistered = true
+                Log.d(TAG, "网络回调已注册")
             } catch (e: Exception) {
                 Log.e(TAG, "注册网络回调失败", e)
             }
@@ -205,7 +228,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
     fun stopAutoPlay() {
         wasPlayingBeforeFocusLoss = false
         isAutoPlay = false
-        // 注销网络回调并重置标志
         try {
             connectivityManager.unregisterNetworkCallback(networkCallback)
             networkCallbackRegistered = false
@@ -258,7 +280,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         else TextToSpeech(this, this, enginePackage)
     }
 
-    // ── TTS 初始化回调 ──
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             var res = tts?.setLanguage(Locale.CHINESE) ?: TextToSpeech.LANG_MISSING_DATA
@@ -307,7 +328,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // ── 翻页逻辑（显式返回类型，互斥保护） ──
     private suspend fun autoNextPage(): Unit = nextPageMutex.withLock {
         if (!isAutoPlay) return@withLock
         try {
@@ -324,7 +344,7 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             }
         } catch (e: Exception) {
             Log.e(TAG, "自动翻页失败，${retryDelay}ms后重试", e)
-            updateNotification("网络临时中断，重试中…")
+            updateNotification("网络中断，重试中…")
             delay(retryDelay)
             retryDelay = (retryDelay * 2).coerceAtMost(RETRY_MAX_DELAY)
             if (isAutoPlay) {
@@ -333,7 +353,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // ── 音频焦点 ──
     private fun requestAudioFocus() {
         if (hasAudioFocus) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -404,7 +423,6 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         hasAudioFocus = false
     }
 
-    // ── 前台通知 ──
     private fun startForegroundIfNeeded() {
         val stopIntent = Intent(this, AudiobookService::class.java).apply { action = ACTION_STOP_SERVICE }
         val stopPendingIntent = PendingIntent.getService(this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -443,14 +461,15 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             putExtra("FILE_PATH", filePath)
         }
         val openPendingIntent = PendingIntent.getActivity(this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val title = when {
+            !isAutoPlay -> "听书暂停"
+            isSpeaking -> "正在听书"
+            else -> "等待恢复"
+        }
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(
-                if (isAutoPlay) {
-                    if (isSpeaking) "正在听书" else "等待恢复"
-                } else {
-                    "听书暂停"
-                }
-            )
+            .setContentTitle(title)
             .setContentText(content.take(50))
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(openPendingIntent)

@@ -2,6 +2,8 @@ package com.dkc.fileserverclient
 
 import android.content.Context
 import android.graphics.Paint
+import android.net.Network
+import android.os.Build
 import android.text.Layout
 import android.text.SpannableString
 import android.text.StaticLayout
@@ -12,10 +14,12 @@ import android.text.style.StyleSpan
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.*
+import java.net.InetAddress
 import java.net.URLEncoder
 import kotlin.math.min
 
@@ -35,7 +39,6 @@ class PageRepository private constructor(private val appContext: Context) {
             }
     }
 
-    // ── 公开状态流 ──
     data class PageUIData(val content: CharSequence, val state: PageState)
     data class PageState(
         val blockPage: Int,
@@ -67,7 +70,6 @@ class PageRepository private constructor(private val appContext: Context) {
     private val _errorEvents = MutableSharedFlow<String>()
     val errorEvents: SharedFlow<String> = _errorEvents.asSharedFlow()
 
-    // ── 内部状态 ──
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var httpClient: OkHttpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
 
@@ -97,7 +99,49 @@ class PageRepository private constructor(private val appContext: Context) {
     private var readingHistoryFile: File? = null
     private var historySaveJob: Job? = null
 
-    // ── 私有数据结构 ──
+    // ── 网络绑定 ──
+    @Volatile
+    private var currentNetwork: Network? = null
+
+    @Volatile
+    private var boundHttpClient: OkHttpClient? = null
+
+    fun setNetwork(network: Network?) {
+        // Android 6.0 (API 23) 及以下不支持绑定 socket 到指定网络，强行绑定会抛出 EPERM
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return
+        }
+        synchronized(this) {
+            if (currentNetwork == network) return
+            currentNetwork = network
+            boundHttpClient = if (network != null) {
+                try {
+                    buildNetworkBoundClient(network)
+                } catch (e: Exception) {
+                    Log.e(TAG, "构建网络绑定客户端失败，回退到默认客户端", e)
+                    null
+                }
+            } else {
+                null
+            }
+        }
+    }
+
+    private fun buildNetworkBoundClient(network: Network): OkHttpClient {
+        return UnsafeHttpClient.createUnsafeOkHttpClient().newBuilder()
+            .socketFactory(network.socketFactory)
+            .dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    return network.getAllByName(hostname).toList()
+                }
+            })
+            .build()
+    }
+
+    private fun getEffectiveHttpClient(): OkHttpClient {
+        return boundHttpClient ?: UnsafeHttpClient.createUnsafeOkHttpClient()
+    }
+
     private data class CachedBlock(
         val blockPage: Int,
         val fullText: String,
@@ -117,7 +161,6 @@ class PageRepository private constructor(private val appContext: Context) {
         val endChar: Int
     )
 
-    // ── 公开 API ──
     fun setupFile(name: String, url: String, path: String) {
         if (fileName != name) resetForNewFile(name, url, path)
     }
@@ -172,25 +215,19 @@ class PageRepository private constructor(private val appContext: Context) {
         loadWindow(centerBlockPage = blockPage, targetOffset = absoluteOffset)
     }
 
-    /**
-     * 安全跳转到指定绝对偏移（会触发窗口加载，确保偏移所在块在缓存中）
-     */
     suspend fun goToOffset(absoluteOffset: Int) {
         if (!isInitialized()) return
-        // 如果当前窗口已包含该偏移，直接计算页码
         val lineIdx = findLineForAbsoluteOffset(absoluteOffset)
         if (lineIdx in globalLines.indices) {
             currentPageIndex = findPageForAbsoluteOffset(absoluteOffset)
             updateCurrentPage()
             return
         }
-        // 否则需要加载包含该偏移的窗口
         val blockPage = estimateBlockPageForOffset(absoluteOffset)
         loadWindow(centerBlockPage = blockPage, targetOffset = absoluteOffset)
     }
 
     private suspend fun estimateBlockPageForOffset(offset: Int): Int {
-        // 粗略估算：假设平均每块 5000 字符
         return (offset / 5000) + 1
     }
 
@@ -208,11 +245,9 @@ class PageRepository private constructor(private val appContext: Context) {
                 chapterStartOffsetSet = list.map { it.startCharOffset }.toSet()
                 _chapters.value = list
                 _chaptersLoadedEvent.emit(Unit)
-                // 章节加载后重新分页，但保留当前页位置
                 if (isInitialized()) {
                     val currentOffset = _pageContent.value?.state?.absoluteCharOffset ?: 0
                     recalculatePageBreaks()
-                    // 定位回原偏移
                     currentPageIndex = findPageForAbsoluteOffset(currentOffset)
                     updateCurrentPage()
                 }
@@ -238,7 +273,6 @@ class PageRepository private constructor(private val appContext: Context) {
         scope.cancel()
     }
 
-    // ── 内部初始化 ──
     private fun isInitialized() = windowBlocks.isNotEmpty() && globalLines.isNotEmpty()
 
     private fun resetForNewFile(name: String, url: String, path: String) {
@@ -278,9 +312,24 @@ class PageRepository private constructor(private val appContext: Context) {
         try {
             val pagesToLoad = ((centerBlockPage - WINDOW_HALF).coerceAtLeast(1) ..
                     (centerBlockPage + WINDOW_HALF)).filter { it >= 1 }
-            pagesToLoad.forEach { page ->
-                if (!blockCache.containsKey(page)) fetchAndCacheBlock(page)
+
+            coroutineScope {
+                pagesToLoad
+                    .filter { !blockCache.containsKey(it) }
+                    .map { page ->
+                        async {
+                            try {
+                                fetchAndCacheBlock(page)
+                                page
+                            } catch (e: Exception) {
+                                Log.e(TAG, "加载块 $page 失败: ${e.message}")
+                                null
+                            }
+                        }
+                    }
+                    .forEach { it.await() }
             }
+
             windowBlocks = pagesToLoad.mapNotNull { blockCache[it] }.sortedBy { it.blockPage }
             rebuildGlobalLines()
             recalculatePageBreaks()
@@ -554,9 +603,14 @@ class PageRepository private constructor(private val appContext: Context) {
         "${fileUrl}${if (fileUrl.contains("?")) "&" else "?"}page=$page"
 
     private suspend fun fetchJson(url: String) = withContext(Dispatchers.IO) {
-        val resp = httpClient.newCall(Request.Builder().url(url).build()).execute()
-        if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
-        resp.body?.string() ?: throw Exception("空响应")
+        try {
+            val client = getEffectiveHttpClient()
+            val resp = client.newCall(Request.Builder().url(url).build()).execute()
+            if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
+            resp.body?.string() ?: throw Exception("空响应")
+        } catch (e: IOException) {
+            throw Exception("网络请求异常: ${e.message}")
+        }
     }
 
     private fun parseBlockResponse(json: String): BlockData {
