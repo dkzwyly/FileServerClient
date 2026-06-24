@@ -1,4 +1,3 @@
-@file:OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.dkc.fileserverclient
 
 import android.content.ComponentName
@@ -25,6 +24,7 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.*
 
+@OptIn(androidx.media3.common.util.UnstableApi::class)
 class AudioLibraryActivity : AppCompatActivity() {
 
     private lateinit var audioRecyclerView: RecyclerView
@@ -77,6 +77,9 @@ class AudioLibraryActivity : AppCompatActivity() {
     )
     private var currentAnimationIndex = 0
 
+    // 新增：标记音频列表是否已加载完成
+    private var audioDataLoaded = false
+
     private enum class TabType { PLAYLISTS, SONGS }
 
     companion object {
@@ -114,14 +117,14 @@ class AudioLibraryActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        // 连接到 Media3 的 MusicService
         val sessionToken = SessionToken(this, ComponentName(this, MusicService::class.java))
         controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
         controllerFuture?.addListener({
             try {
                 mediaController = controllerFuture?.get()
                 mediaController?.addListener(mediaControllerListener)
-                updatePlayingFromController()
+                // 连接成功后，尝试高亮当前播放曲目（如果数据已加载）
+                tryHighlightCurrentTrack()
             } catch (e: Exception) {
                 Log.e(TAG, "连接 MusicService 失败", e)
             }
@@ -130,7 +133,6 @@ class AudioLibraryActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        // 释放 MediaController
         mediaController?.removeListener(mediaControllerListener)
         controllerFuture?.let { MediaController.releaseFuture(it) }
         mediaController = null
@@ -145,7 +147,7 @@ class AudioLibraryActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         loadPlaylists()
-        // 刷新当前播放状态
+        // 尝试刷新当前播放状态（如果尚未就绪也没关系，tryHighlightCurrentTrack 会在就绪时补上）
         updatePlayingFromController()
     }
 
@@ -434,6 +436,8 @@ class AudioLibraryActivity : AppCompatActivity() {
     // ==================== 加载音频与歌单 ====================
 
     private fun loadAudios() {
+        // 重置数据就绪标志
+        audioDataLoaded = false
         coroutineScope.launch {
             statusText.text = "正在加载音频..."
             try {
@@ -474,8 +478,9 @@ class AudioLibraryActivity : AppCompatActivity() {
                 audioAdapter.updateData(filteredAudioTracks)
                 statusText.text = if (audioTracks.isEmpty()) "没有找到音频文件" else "共找到 ${audioTracks.size} 个音频文件"
 
-                // 重新高亮当前播放
-                updatePlayingFromController()
+                // 数据加载完成，设置标志位并尝试高亮
+                audioDataLoaded = true
+                tryHighlightCurrentTrack()
             } catch (e: Exception) {
                 statusText.text = "加载失败: ${e.message}"
                 Log.e(TAG, "加载音频异常", e)
@@ -493,6 +498,17 @@ class AudioLibraryActivity : AppCompatActivity() {
         if (playlistList.isEmpty()) statusText.text = "暂无歌单，点击右下角按钮创建"
         else statusText.text = "共 ${playlistList.size} 个歌单"
         playlistAdapter.updateData(playlistList)
+    }
+
+    // ==================== 新增：统一的高亮检查入口 ====================
+    /**
+     * 当 MediaController 连接完成 **且** 音频列表加载完成后，自动定位到当前播放曲目。
+     * 此方法可以在两个异步操作完成时被安全调用，内部保证只有两者都就绪时才执行。
+     */
+    private fun tryHighlightCurrentTrack() {
+        if (mediaController != null && audioDataLoaded) {
+            updatePlayingFromController()
+        }
     }
 
     // ==================== 播放操作 ====================
