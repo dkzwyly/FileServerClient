@@ -4,9 +4,7 @@ package com.dkc.fileserverclient
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
 import android.os.Bundle
-import android.os.IBinder
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
@@ -17,9 +15,14 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.*
 
 class AudioLibraryActivity : AppCompatActivity() {
@@ -60,55 +63,19 @@ class AudioLibraryActivity : AppCompatActivity() {
 
     private var currentPlayMode: Int = PlaylistDetailActivity.MODE_LIST
 
-    private var playbackService: AudioPlaybackService? = null
-    private var isBound = false
+    // Media3 控制器
+    private var mediaController: MediaController? = null
+    private var controllerFuture: ListenableFuture<MediaController>? = null
 
-    // 两种风格：静态蓝（索引0）、扫光（索引1）
+    // 当前播放曲目 mediaId，用于高亮
+    private var currentPlayingMediaId: String? = null
+
+    // 两种风格动画
     private val animations = listOf(
-        StaticBackgroundAnimation(),   // 索引0
-        ShineAnimationSimple()        // 索引1
+        StaticBackgroundAnimation(),
+        ShineAnimationSimple()
     )
     private var currentAnimationIndex = 0
-
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            playbackService = (service as AudioPlaybackService.AudioServiceBinder).getService()
-            playbackService?.addPlaybackListener(playbackListener)
-            val currentTrack = playbackService?.getCurrentTrack()
-            audioAdapter.setCurrentlyPlaying(currentTrack?.id)
-            currentTrack?.let {
-                val position = audioAdapter.getPositionByTrackId(it.id)
-                if (position != -1 && currentTab == TabType.SONGS) {
-                    scrollToCenter(position)
-                }
-            }
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            playbackService?.removePlaybackListener(playbackListener)
-            playbackService = null
-            isBound = false
-        }
-    }
-
-    private val playbackListener = object : AudioPlaybackListener {
-        override fun onTrackChanged(track: AudioTrack, index: Int) {
-            runOnUiThread {
-                audioAdapter.setCurrentlyPlaying(track.id)
-                if (currentTab == TabType.SONGS) {
-                    val position = audioAdapter.getPositionByTrackId(track.id)
-                    if (position != -1) {
-                        scrollToCenter(position)
-                    }
-                }
-            }
-        }
-
-        override fun onPlaybackStateChanged(status: AudioPlaybackStatus) {}
-        override fun onPlaybackError(error: String) {}
-        override fun onPlaybackEnded() {}
-        override fun onAudioBuffering(isBuffering: Boolean) {}
-    }
 
     private enum class TabType { PLAYLISTS, SONGS }
 
@@ -131,8 +98,8 @@ class AudioLibraryActivity : AppCompatActivity() {
             finish()
             return
         }
-        CoverImageStorage.init(this, UnsafeHttpClientHolder.client)
 
+        CoverImageStorage.init(this, UnsafeHttpClientHolder.client)
         metadataManager = SongMetadataManager(this, fileServerService)
         PlaylistManager.initialize(this)
 
@@ -147,29 +114,42 @@ class AudioLibraryActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        val intent = Intent(this, AudioPlaybackService::class.java)
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        isBound = true
+        // 连接到 Media3 的 MusicService
+        val sessionToken = SessionToken(this, ComponentName(this, MusicService::class.java))
+        controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
+        controllerFuture?.addListener({
+            try {
+                mediaController = controllerFuture?.get()
+                mediaController?.addListener(mediaControllerListener)
+                updatePlayingFromController()
+            } catch (e: Exception) {
+                Log.e(TAG, "连接 MusicService 失败", e)
+            }
+        }, ContextCompat.getMainExecutor(this))
     }
 
     override fun onStop() {
         super.onStop()
-        if (isBound) {
-            unbindService(serviceConnection)
-            isBound = false
-        }
+        // 释放 MediaController
+        mediaController?.removeListener(mediaControllerListener)
+        controllerFuture?.let { MediaController.releaseFuture(it) }
+        mediaController = null
+        controllerFuture = null
     }
 
     override fun onDestroy() {
         super.onDestroy()
         coroutineScope.cancel()
-        playbackService?.removePlaybackListener(playbackListener)
     }
 
     override fun onResume() {
         super.onResume()
         loadPlaylists()
+        // 刷新当前播放状态
+        updatePlayingFromController()
     }
+
+    // ==================== 动画/模式设置 ====================
 
     private fun loadAnimationIndexFromPrefs() {
         val prefs = getSharedPreferences(PREFS_ANIMATION, Context.MODE_PRIVATE)
@@ -185,7 +165,6 @@ class AudioLibraryActivity : AppCompatActivity() {
     }
 
     private fun switchToNextAnimation() {
-        // 顺序切换：0 -> 1 -> 0 -> 1 ...
         currentAnimationIndex = (currentAnimationIndex + 1) % animations.size
         val newAnimation = animations[currentAnimationIndex]
         audioAdapter.setAnimation(newAnimation)
@@ -235,6 +214,50 @@ class AudioLibraryActivity : AppCompatActivity() {
         }
         Toast.makeText(this, modeName, Toast.LENGTH_SHORT).show()
     }
+
+    // ==================== MediaController 监听 ====================
+
+    private val mediaControllerListener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+            val newMediaId = mediaItem?.mediaId
+            if (newMediaId != currentPlayingMediaId) {
+                currentPlayingMediaId = newMediaId
+                runOnUiThread { updateTrackHighlight() }
+            }
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            // 如有需要可刷新 UI，这里仅高亮
+        }
+
+        override fun onPlaybackStateChanged(state: Int) {
+            if (state == Player.STATE_IDLE) {
+                currentPlayingMediaId = null
+                runOnUiThread { updateTrackHighlight() }
+            }
+        }
+    }
+
+    private fun updatePlayingFromController() {
+        val currentMediaItem = mediaController?.currentMediaItem
+        val newMediaId = currentMediaItem?.mediaId
+        if (newMediaId != currentPlayingMediaId) {
+            currentPlayingMediaId = newMediaId
+            updateTrackHighlight()
+        }
+    }
+
+    private fun updateTrackHighlight() {
+        audioAdapter.setCurrentlyPlaying(currentPlayingMediaId)
+        if (currentTab == TabType.SONGS && currentPlayingMediaId != null) {
+            val position = audioAdapter.getPositionByTrackId(currentPlayingMediaId!!)
+            if (position != -1) {
+                scrollToCenter(position)
+            }
+        }
+    }
+
+    // ==================== 视图初始化 ====================
 
     private fun initViews() {
         audioRecyclerView = findViewById(R.id.audioRecyclerView)
@@ -301,12 +324,6 @@ class AudioLibraryActivity : AppCompatActivity() {
         playlistTab.setOnClickListener { switchToTab(TabType.PLAYLISTS) }
     }
 
-    private fun loadPlaylists() {
-        playlistList.clear()
-        playlistList.addAll(PlaylistManager.getAllPlaylists())
-        updatePlaylistUI()
-    }
-
     private fun switchToTab(tabType: TabType) {
         currentTab = tabType
         when (tabType) {
@@ -344,15 +361,162 @@ class AudioLibraryActivity : AppCompatActivity() {
                     performSearch(searchEditText.text.toString())
                 }
 
-                playbackService?.getCurrentTrack()?.let { track ->
-                    val position = audioAdapter.getPositionByTrackId(track.id)
-                    if (position != -1) {
-                        scrollToCenter(position)
-                    }
-                }
+                // 恢复高亮
+                updateTrackHighlight()
             }
         }
     }
+
+    // ==================== 搜索 ====================
+
+    private fun showSearchContainer() {
+        searchContainer.visibility = View.VISIBLE
+        searchIconButton.visibility = View.GONE
+        searchEditText.hint = if (currentTab == TabType.PLAYLISTS) "搜索歌单..." else "搜索音频..."
+        searchEditText.requestFocus()
+    }
+
+    private fun hideSearchContainer() {
+        searchContainer.visibility = View.GONE
+        searchIconButton.visibility = View.VISIBLE
+        searchEditText.setText("")
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.hideSoftInputFromWindow(searchEditText.windowToken, 0)
+        performSearch("")
+    }
+
+    private fun setupSearch() {
+        searchEditText.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                performSearch(s.toString())
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        clearSearchButton.setOnClickListener { searchEditText.setText("") }
+        clearSearchButton.visibility = View.GONE
+    }
+
+    private fun performSearch(query: String) {
+        val searchQuery = query.trim()
+        clearSearchButton.visibility = if (searchQuery.isNotEmpty()) View.VISIBLE else View.GONE
+
+        when (currentTab) {
+            TabType.SONGS -> {
+                filteredAudioTracks.clear()
+                filteredAudioTracks.addAll(
+                    if (searchQuery.isEmpty()) audioTracks
+                    else audioTracks.filter { track ->
+                        track.name.contains(searchQuery, true) ||
+                                (track.title?.contains(searchQuery, true) == true) ||
+                                (track.artist?.contains(searchQuery, true) == true) ||
+                                (track.album?.contains(searchQuery, true) == true)
+                    }
+                )
+                audioAdapter.updateData(filteredAudioTracks)
+                statusText.text = if (searchQuery.isNotEmpty()) "找到 ${filteredAudioTracks.size} 个匹配的音频文件"
+                else "共找到 ${audioTracks.size} 个音频文件"
+
+                // 更新高亮
+                updateTrackHighlight()
+            }
+            TabType.PLAYLISTS -> {
+                val filtered = if (searchQuery.isEmpty()) playlistList else playlistList.filter {
+                    it.name.contains(searchQuery, true)
+                }
+                playlistAdapter.updateData(filtered)
+                statusText.text = if (searchQuery.isNotEmpty()) "找到 ${filtered.size} 个匹配的歌单"
+                else "共 ${playlistList.size} 个歌单"
+            }
+        }
+    }
+
+    // ==================== 加载音频与歌单 ====================
+
+    private fun loadAudios() {
+        coroutineScope.launch {
+            statusText.text = "正在加载音频..."
+            try {
+                val allItems = withContext(Dispatchers.IO) {
+                    fileServerService.getFileList(currentServerUrl, audioLibraryPath)
+                }
+                audioFileItems.clear()
+                audioFileItems.addAll(allItems.filter { !it.isDirectory && AudioUtils.isAudioFile(it) })
+
+                val tracks = audioFileItems.map { item ->
+                    AudioTrack.fromFileSystemItem(item, currentServerUrl)
+                }
+
+                val metadataMap = withContext(Dispatchers.IO) {
+                    metadataManager.getBatchMetadata(currentServerUrl, tracks.map { it.path })
+                }
+
+                val updatedTracks = tracks.map { track ->
+                    val encodedPath = java.net.URLEncoder.encode(track.path, "UTF-8")
+                    val meta = metadataMap[encodedPath]
+                    if (meta != null) {
+                        track.copy(
+                            title = meta.title.ifEmpty { track.title },
+                            artist = meta.artist.ifEmpty { track.artist },
+                            album = meta.album.ifEmpty { track.album },
+                            coverUrl = if (meta.hasCover) {
+                                metadataManager.getCoverUrl(currentServerUrl, track.path, addTimestamp = false)
+                            } else null
+                        )
+                    } else track
+                }
+
+                audioTracks.clear()
+                audioTracks.addAll(updatedTracks)
+                filteredAudioTracks.clear()
+                filteredAudioTracks.addAll(audioTracks)
+
+                audioAdapter.updateData(filteredAudioTracks)
+                statusText.text = if (audioTracks.isEmpty()) "没有找到音频文件" else "共找到 ${audioTracks.size} 个音频文件"
+
+                // 重新高亮当前播放
+                updatePlayingFromController()
+            } catch (e: Exception) {
+                statusText.text = "加载失败: ${e.message}"
+                Log.e(TAG, "加载音频异常", e)
+            }
+        }
+    }
+
+    private fun loadPlaylists() {
+        playlistList.clear()
+        playlistList.addAll(PlaylistManager.getAllPlaylists())
+        updatePlaylistUI()
+    }
+
+    private fun updatePlaylistUI() {
+        if (playlistList.isEmpty()) statusText.text = "暂无歌单，点击右下角按钮创建"
+        else statusText.text = "共 ${playlistList.size} 个歌单"
+        playlistAdapter.updateData(playlistList)
+    }
+
+    // ==================== 播放操作 ====================
+
+    private fun playAudio(audioTrack: AudioTrack) {
+        try {
+            val audioTracksList = AudioUtils.convertToAudioTracks(audioFileItems, currentServerUrl)
+            val currentIndex = audioTracks.indexOfFirst { it.id == audioTrack.id }.takeIf { it >= 0 } ?: 0
+
+            val intent = Intent(this, AudioPlayerActivity::class.java).apply {
+                putExtra("AUDIO_TRACK", audioTrack)
+                putExtra("AUDIO_TRACKS", ArrayList(audioTracksList))
+                putExtra("CURRENT_INDEX", currentIndex)
+                putExtra("SERVER_URL", currentServerUrl)
+                putExtra("FROM_MUSIC_LIBRARY", true)
+                putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, currentPlayMode)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "播放音频失败", e)
+        }
+    }
+
+    // ==================== 歌单对话框 ====================
 
     private fun showAddToPlaylistDialog(audioTrack: AudioTrack) {
         val playlists = PlaylistManager.getAllPlaylists()
@@ -409,130 +573,6 @@ class AudioLibraryActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun showSearchContainer() {
-        searchContainer.visibility = View.VISIBLE
-        searchIconButton.visibility = View.GONE
-        searchEditText.hint = if (currentTab == TabType.PLAYLISTS) "搜索歌单..." else "搜索音频..."
-        searchEditText.requestFocus()
-    }
-
-    private fun hideSearchContainer() {
-        searchContainer.visibility = View.GONE
-        searchIconButton.visibility = View.VISIBLE
-        searchEditText.setText("")
-        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-        imm.hideSoftInputFromWindow(searchEditText.windowToken, 0)
-        performSearch("")
-    }
-
-    private fun setupSearch() {
-        searchEditText.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                performSearch(s.toString())
-            }
-            override fun afterTextChanged(s: Editable?) {}
-        })
-        clearSearchButton.setOnClickListener { searchEditText.setText("") }
-        clearSearchButton.visibility = View.GONE
-    }
-
-    private fun performSearch(query: String) {
-        val searchQuery = query.trim()
-        clearSearchButton.visibility = if (searchQuery.isNotEmpty()) View.VISIBLE else View.GONE
-
-        when (currentTab) {
-            TabType.SONGS -> {
-                filteredAudioTracks.clear()
-                filteredAudioTracks.addAll(if (searchQuery.isEmpty()) audioTracks else audioTracks.filter { track ->
-                    track.name.contains(searchQuery, true) ||
-                            (track.title?.contains(searchQuery, true) == true) ||
-                            (track.artist?.contains(searchQuery, true) == true) ||
-                            (track.album?.contains(searchQuery, true) == true)
-                })
-                audioAdapter.updateData(filteredAudioTracks)
-                statusText.text = if (searchQuery.isNotEmpty()) "找到 ${filteredAudioTracks.size} 个匹配的音频文件"
-                else "共找到 ${audioTracks.size} 个音频文件"
-
-                playbackService?.getCurrentTrack()?.let { track ->
-                    val position = audioAdapter.getPositionByTrackId(track.id)
-                    if (position != -1) {
-                        audioAdapter.setCurrentlyPlaying(track.id)
-                        scrollToCenter(position)
-                    } else {
-                        audioAdapter.setCurrentlyPlaying(null)
-                    }
-                }
-            }
-            TabType.PLAYLISTS -> {
-                val filtered = if (searchQuery.isEmpty()) playlistList else playlistList.filter { it.name.contains(searchQuery, true) }
-                playlistAdapter.updateData(filtered)
-                statusText.text = if (searchQuery.isNotEmpty()) "找到 ${filtered.size} 个匹配的歌单" else "共 ${playlistList.size} 个歌单"
-            }
-        }
-    }
-
-    private fun loadAudios() {
-        coroutineScope.launch {
-            statusText.text = "正在加载音频..."
-            try {
-                val allItems = withContext(Dispatchers.IO) {
-                    fileServerService.getFileList(currentServerUrl, audioLibraryPath)
-                }
-                audioFileItems.clear()
-                audioFileItems.addAll(allItems.filter { !it.isDirectory && AudioUtils.isAudioFile(it) })
-
-                val tracks = audioFileItems.map { item ->
-                    AudioTrack.fromFileSystemItem(item, currentServerUrl)
-                }
-
-                val metadataMap = withContext(Dispatchers.IO) {
-                    metadataManager.getBatchMetadata(currentServerUrl, tracks.map { it.path })
-                }
-
-                val updatedTracks = tracks.map { track ->
-                    val encodedPath = java.net.URLEncoder.encode(track.path, "UTF-8")
-                    val meta = metadataMap[encodedPath]
-                    if (meta != null) {
-                        track.copy(
-                            title = meta.title.ifEmpty { track.title },
-                            artist = meta.artist.ifEmpty { track.artist },
-                            album = meta.album.ifEmpty { track.album },
-                            coverUrl = if (meta.hasCover) {
-                                metadataManager.getCoverUrl(currentServerUrl, track.path, addTimestamp = false)
-                            } else null
-                        )
-                    } else track
-                }
-
-                audioTracks.clear()
-                audioTracks.addAll(updatedTracks)
-                filteredAudioTracks.clear()
-                filteredAudioTracks.addAll(audioTracks)
-
-                audioAdapter.updateData(filteredAudioTracks)
-                statusText.text = if (audioTracks.isEmpty()) "没有找到音频文件" else "共找到 ${audioTracks.size} 个音频文件"
-
-                playbackService?.getCurrentTrack()?.let { track ->
-                    val position = audioAdapter.getPositionByTrackId(track.id)
-                    if (position != -1) {
-                        audioAdapter.setCurrentlyPlaying(track.id)
-                        scrollToCenter(position)
-                    }
-                }
-            } catch (e: Exception) {
-                statusText.text = "加载失败: ${e.message}"
-                Log.e(TAG, "加载音频异常", e)
-            }
-        }
-    }
-
-    private fun updatePlaylistUI() {
-        if (playlistList.isEmpty()) statusText.text = "暂无歌单，点击右下角按钮创建"
-        else statusText.text = "共 ${playlistList.size} 个歌单"
-        playlistAdapter.updateData(playlistList)
-    }
-
     private fun showCreatePlaylistDialog() {
         val input = EditText(this)
         input.hint = "输入歌单名称"
@@ -552,32 +592,7 @@ class AudioLibraryActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun playAudio(audioTrack: AudioTrack) {
-        try {
-            val audioTracksList = AudioUtils.convertToAudioTracks(audioFileItems, currentServerUrl)
-            val currentIndex = audioTracks.indexOfFirst { it.id == audioTrack.id }.takeIf { it >= 0 } ?: 0
-
-            val intent = Intent(this, AudioPlayerActivity::class.java).apply {
-                putExtra("FILE_NAME", audioTrack.name)
-                putExtra("FILE_URL", audioTrack.url)
-                putExtra("FILE_TYPE", "audio")
-                putExtra("FILE_PATH", audioTrack.path)
-                putExtra("AUDIO_TRACK", audioTrack)
-                putExtra("AUDIO_TRACKS", ArrayList(audioTracksList))
-                putExtra("CURRENT_INDEX", currentIndex)
-                putExtra("SERVER_URL", currentServerUrl)
-                putExtra("FROM_MUSIC_LIBRARY", true)
-                putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, currentPlayMode)
-            }
-            startActivity(intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "播放音频失败", e)
-        }
-    }
-
-    private fun showToast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-    }
+    // ==================== 滚动辅助 ====================
 
     private fun scrollToCenter(position: Int) {
         val layoutManager = audioRecyclerView.layoutManager as? LinearLayoutManager ?: return
@@ -606,5 +621,9 @@ class AudioLibraryActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun showToast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 }

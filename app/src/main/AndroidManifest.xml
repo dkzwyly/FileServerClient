@@ -2,30 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.dkc.fileserverclient">
 
-    <!-- 网络权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-
-    <!-- 存储权限 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-
-    <!-- 相机权限 -->
     <uses-permission android:name="android.permission.CAMERA" />
-
-    <!-- 音频后台播放权限 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 相机特性 -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
-
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- 声明需要查询的 TTS 服务，解决第三方 TTS 引擎不可见问题 -->
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
@@ -39,7 +29,6 @@
         android:theme="@style/Theme.FileServerClient"
         android:networkSecurityConfig="@xml/network_security_config">
 
-        <!-- 主活动 -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -49,7 +38,6 @@
             </intent-filter>
         </activity>
 
-        <!-- 文件列表活动 -->
         <activity
             android:name=".FileListActivity"
             android:exported="false"
@@ -89,7 +77,6 @@
             android:label="音频库"
             android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
 
-        <!-- 添加设置活动 -->
         <activity
             android:name=".SettingsActivity"
             android:label="设置"
@@ -111,7 +98,12 @@
             android:exported="false"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
-        <!-- FileProvider配置，用于相机拍照 -->
+        <activity
+            android:name=".AudioPlayerActivity"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -122,6 +114,7 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- 旧的音频播放服务（可保留或删除，建议后续移除） -->
         <service
             android:name=".AudioPlaybackService"
             android:enabled="true"
@@ -133,11 +126,24 @@
             android:foregroundServiceType="mediaPlayback"
             android:exported="false" />
 
-        <activity
-            android:name=".AudioPlayerActivity"
-            android:launchMode="singleTop"
-            android:configChanges="orientation|screenSize"
-            android:exported="false" />
-    </application>
+        <!-- 新的 Media3 MusicService，基于 MediaLibraryService -->
+        <service
+            android:name=".MusicService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
+            </intent-filter>
+        </service>
 
+        <!-- Media3 按钮接收器，用于耳机/蓝牙控制 -->
+        <receiver
+            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+    </application>
 </manifest>

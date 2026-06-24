@@ -58,7 +58,7 @@ data class AudioTrack(
 }
 
 enum class PlaybackState {
-    IDLE, LOADING, READY, PLAYING, PAUSED, BUFFERING, ENDED, ERROR
+    IDLE, LOADING, READY, PLAYING, PAUSED, BUFFERING, ENDED, ERROR,STOPPED
 }
 
 enum class RepeatMode {

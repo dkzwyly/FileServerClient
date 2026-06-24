@@ -9,32 +9,36 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.MutableLiveData
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.Log
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
-import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.*
 import java.io.File
+import java.net.URLEncoder
+
 
 class AudioPlayerViewModel(application: Application) : AndroidViewModel(application),
-    LyricsManager.LyricsStateListener,
-    LyricsManager.TimeProvider,
-    LyricsManager.PlayStateProvider {
+    LyricsManager.LyricsStateListener, LyricsManager.TimeProvider, LyricsManager.PlayStateProvider {
 
     val currentTrackName = MutableLiveData<String>()
     val artistAlbum = MutableLiveData<String>()
     val coverLocalPath = MutableLiveData<String?>()
     val isPlaying = MutableLiveData<Boolean>()
     val playbackState = MutableLiveData<PlaybackState>()
-    private val prefs: SharedPreferences = application.getSharedPreferences("audio_cache", Context.MODE_PRIVATE)
-    val currentPosition = MutableLiveData(prefs.getLong("last_position", 0L))
-    val duration = MutableLiveData(prefs.getLong("last_duration", 0L))
+
+    private val prefs: SharedPreferences =
+        getApplication<Application>().getSharedPreferences("audio_cache", Context.MODE_PRIVATE)
+
+    val currentPosition = MutableLiveData(0L)
+    val duration = MutableLiveData(0L)
     val currentLyricsLine = MutableLiveData<String?>()
     val nextLyricsLine = MutableLiveData<String?>()
     val errorMessage = MutableLiveData<String?>()
@@ -46,7 +50,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var currentTrack: AudioTrack? = null
     private var serverUrl = ""
     private var songPath = ""
-
     private val trackList = mutableListOf<AudioTrack>()
 
     private var mediaController: MediaController? = null
@@ -64,14 +67,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 if (dur > 0) {
                     currentPosition.postValue(pos)
                     duration.postValue(dur)
-                    prefs.edit()
-                        .putLong("last_position", pos)
-                        .putLong("last_duration", dur)
-                        .apply()
-                    saveRecoveryInfo(controller)
                 }
             }
-            handler.postDelayed(this, 200)
+            handler.postDelayed(this, 500)
         }
     }
 
@@ -79,27 +77,30 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private lateinit var metadataManager: SongMetadataManager
 
     init {
-        CoverImageStorage.init(application, UnsafeHttpClient.createUnsafeOkHttpClient())
+        val app = getApplication<Application>()
+        CoverImageStorage.init(app, UnsafeHttpClient.createUnsafeOkHttpClient())
+        lyricsManager = LyricsManager(app, handler, scope)
+        metadataManager = SongMetadataManager(app, FileServerService(app))
     }
 
     fun init(intent: Intent) {
         val track: AudioTrack? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
         } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra("AUDIO_TRACK")
+            @Suppress("DEPRECATION") intent.getParcelableExtra("AUDIO_TRACK")
         }
 
-        val tracks: ArrayList<AudioTrack>? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableArrayListExtra("AUDIO_TRACKS", AudioTrack::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableArrayListExtra("AUDIO_TRACKS")
-        }
+        val tracks: ArrayList<AudioTrack>? =
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableArrayListExtra("AUDIO_TRACKS", AudioTrack::class.java)
+            } else {
+                @Suppress("DEPRECATION") intent.getParcelableArrayListExtra("AUDIO_TRACKS")
+            }
 
         val index = intent.getIntExtra("CURRENT_INDEX", 0)
         serverUrl = intent.getStringExtra("SERVER_URL") ?: ""
         songPath = intent.getStringExtra("FILE_PATH") ?: track?.path ?: ""
+
         if (track == null) {
             errorMessage.value = "无法获取音频信息"
             return
@@ -109,12 +110,15 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         trackList.clear()
         trackList.addAll(tracks ?: listOf(track))
 
+        // 保存服务器地址供 MusicService 使用
+        prefs.edit().putString("server_url", serverUrl).apply()
+
         if (!::lyricsManager.isInitialized) {
-            lyricsManager = LyricsManager(application, handler, scope)
+            lyricsManager = LyricsManager(getApplication(), handler, scope)
             lyricsManager.setListener(this)
         }
         if (!::metadataManager.isInitialized) {
-            metadataManager = SongMetadataManager(application, FileServerService(application))
+            metadataManager = SongMetadataManager(getApplication(), FileServerService(getApplication()))
         }
 
         connectToMediaService(index)
@@ -123,6 +127,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private fun connectToMediaService(startIndex: Int) {
         val context = getApplication<Application>()
         val sessionToken = SessionToken(context, ComponentName(context, MusicService::class.java))
+
         controllerFuture = MediaController.Builder(context, sessionToken)
             .setListener(object : MediaController.Listener {
                 override fun onDisconnected(controller: MediaController) {
@@ -136,10 +141,11 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 mediaController = controllerFuture?.get()
                 mediaController?.addListener(playerListener)
 
-                val mediaItems = trackList.map { it.toMediaItem() }
-                mediaController?.setMediaItems(mediaItems, startIndex, 0L)
-                mediaController?.prepare()
-                mediaController?.play()
+                if (trackList.isNotEmpty()) {
+                    val mediaItems = trackList.map { it.toMediaItem() }
+                    mediaController?.setMediaItems(mediaItems, startIndex, 0L)
+                    mediaController?.play()
+                }
 
                 updateTrackInfo(currentTrack!!)
                 loadCoverAndMetadata()
@@ -148,18 +154,33 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             } catch (e: Exception) {
                 errorMessage.postValue("连接媒体服务失败")
             }
-        }, MoreExecutors.directExecutor())
+        }, ContextCompat.getMainExecutor(context))
     }
 
+    /**
+     * 转换为 MediaItem，只设置 mediaId 和元数据，不包含真实 URI。
+     * 真实播放地址由 MusicService.onAddMediaItems 统一解析。
+     */
     private fun AudioTrack.toMediaItem(): MediaItem {
         val metadata = MediaMetadata.Builder()
             .setTitle(name ?: "")
             .setArtist(artist ?: "")
             .setAlbumTitle(album ?: "")
             .build()
+
+        val mediaId = path  // 使用 path 作为媒体 ID
+        val uri = try {
+            val encodedPath = mediaId.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8") }
+            Uri.parse("$serverUrl/api/fileserver/stream/$encodedPath")
+        } catch (e: Exception) {
+            Log.e("AudioPlayerVM", "Failed to build URI for $mediaId", e)
+            Uri.EMPTY
+        }
+
+        Log.d("AudioPlayerVM", "toMediaItem: mediaId=$mediaId, uri=$uri")
         return MediaItem.Builder()
-            .setMediaId(id ?: path)
-            .setUri(Uri.parse(url))
+            .setMediaId(mediaId)
+            .setUri(uri)
             .setMediaMetadata(metadata)
             .build()
     }
@@ -167,6 +188,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             this@AudioPlayerViewModel.isPlaying.postValue(isPlaying)
+            if (!isPlaying) saveRecoveryInfo()
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -178,6 +200,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     updateTrackInfo(track)
                     loadCoverAndMetadata()
                     lyricsManager.loadLyrics(serverUrl, songPath, track.name)
+                    saveRecoveryInfo()
                 }
             }
         }
@@ -197,7 +220,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     private fun findTrackByMediaId(mediaId: String): AudioTrack? {
-        return trackList.firstOrNull { it.id == mediaId || it.path == mediaId }
+        return trackList.firstOrNull { it.path == mediaId }
     }
 
     private fun updateTrackInfo(track: AudioTrack) {
@@ -224,8 +247,8 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val baseCoverUrl = if (metadata?.hasCover == true) {
                     metadataManager.getCoverUrl(serverUrl, songPath, addTimestamp = false)
                 } else null
-                currentCoverUrl = baseCoverUrl
 
+                currentCoverUrl = baseCoverUrl
                 if (baseCoverUrl == null) {
                     coverLocalPath.postValue(null)
                     return@launch
@@ -248,11 +271,10 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun updateIntent(intent: Intent) {
-        val newTrack: AudioTrack? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        val newTrack: AudioTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
         } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra("AUDIO_TRACK")
+            @Suppress("DEPRECATION") intent.getParcelableExtra("AUDIO_TRACK")
         } ?: return
 
         val newServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
@@ -266,6 +288,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         currentTrack = newTrack
         songPath = newFilePath
         serverUrl = newServerUrl
+        prefs.edit().putString("server_url", serverUrl).apply()
 
         updateTrackInfo(newTrack)
         loadCoverAndMetadata()
@@ -280,29 +303,17 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             trackList.clear()
             trackList.add(newTrack)
         }
+
         val mediaItems = trackList.map { it.toMediaItem() }
         mediaController?.setMediaItems(mediaItems, index, 0L)
-        mediaController?.prepare()
         mediaController?.play()
     }
 
-    fun togglePlayback() {
-        mediaController?.let {
-            if (it.isPlaying) it.pause() else it.play()
-        }
-    }
-
-    fun playNext() {
-        mediaController?.seekToNextMediaItem()
-    }
-
-    fun playPrevious() {
-        mediaController?.seekToPreviousMediaItem()
-    }
-
-    fun seekTo(position: Long) {
-        mediaController?.seekTo(position)
-    }
+    // 其他方法保持不变，略...
+    fun togglePlayback() { mediaController?.let { if (it.isPlaying) it.pause() else it.play() } }
+    fun playNext() { mediaController?.seekToNextMediaItem() }
+    fun playPrevious() { mediaController?.seekToPreviousMediaItem() }
+    fun seekTo(position: Long) { mediaController?.seekTo(position) }
 
     fun setPlaybackSpeed(speed: Float) {
         playbackSpeed.value = speed
@@ -327,9 +338,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun reloadLyrics() {
-        lyricsManager.loadLyrics(serverUrl, songPath, currentTrack?.name ?: "")
-    }
+    fun reloadLyrics() { lyricsManager.loadLyrics(serverUrl, songPath, currentTrack?.name ?: "") }
 
     fun markAsNoLyrics() {
         scope.launch {
@@ -376,6 +385,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val tempFile = File(getApplication<Application>().cacheDir, "temp_cover.jpg")
                 tempFile.outputStream().use { out -> input.copyTo(out) }
                 input.close()
+
                 val ok = metadataManager.uploadCover(serverUrl, songPath, tempFile)
                 tempFile.delete()
                 if (ok) {
@@ -395,9 +405,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             val ok = metadataManager.deleteCover(serverUrl, songPath)
             if (ok) {
                 val trackId = currentTrack?.id ?: songPath
-                currentCoverUrl?.let { url ->
-                    CoverImageStorage.deleteLocalFile(trackId, url)
-                }
+                currentCoverUrl?.let { url -> CoverImageStorage.deleteLocalFile(trackId, url) }
                 currentCoverUrl = null
                 loadCoverAndMetadata()
                 Toast.makeText(getApplication(), "已删除封面", Toast.LENGTH_SHORT).show()
@@ -407,6 +415,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun onActivityPause() {
         handler.removeCallbacks(progressUpdater)
+        saveRecoveryInfo()
     }
 
     fun onActivityResume() {
@@ -424,41 +433,41 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun release() {
+        saveRecoveryInfo()
         mediaController?.removeListener(playerListener)
-        mediaController?.let { MediaController.releaseFuture(controllerFuture!!) }
+        if (controllerFuture != null) {
+            MediaController.releaseFuture(controllerFuture!!)
+        }
         mediaController = null
         handler.removeCallbacks(progressUpdater)
         scope.cancel()
     }
 
-    private fun saveRecoveryInfo(controller: MediaController) {
+    private fun saveRecoveryInfo() {
+        val controller = mediaController ?: return
         val ids = (0 until controller.mediaItemCount).mapNotNull { i ->
             controller.getMediaItemAt(i).mediaId
         }
         prefs.edit()
             .putString("last_playlist", ids.joinToString("|||"))
             .putInt("last_index", controller.currentMediaItemIndex)
+            .putLong("last_position", controller.currentPosition)
+            .putLong("last_duration", controller.duration)
+            .putString("server_url", serverUrl)
             .apply()
     }
 
-    override fun onLyricsLoaded(data: LyricsData?, title: String?) {
-        lyricsManager.startLyricsUpdates()
-    }
-
+    // 歌词回调
+    override fun onLyricsLoaded(data: LyricsData?, title: String?) { lyricsManager.startLyricsUpdates() }
     override fun onLyricsUpdated(currentLine: String?, nextLine: String?) {
         currentLyricsLine.postValue(currentLine)
         nextLyricsLine.postValue(nextLine)
     }
-
     override fun onLyricsError(message: String) {
         currentLyricsLine.postValue(message)
         nextLyricsLine.postValue("")
     }
-
-    override fun onLyricsFileSelected(files: List<FileServerService.LyricsFileInfo>) {
-        lyricsFileSelection.postValue(files)
-    }
-
+    override fun onLyricsFileSelected(files: List<FileServerService.LyricsFileInfo>) { lyricsFileSelection.postValue(files) }
     override fun onNoLyrics() {
         currentLyricsLine.postValue("此歌曲无歌词")
         nextLyricsLine.postValue("")

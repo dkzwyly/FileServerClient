@@ -57,7 +57,7 @@ class AudioLibraryAdapter(
 
         loadCoverImage(holder, track)
 
-        val isPlaying = currentlyPlayingId == track.id
+        val isPlaying = currentlyPlayingId == track.path
         if (isPlaying) {
             holder.itemView.setBackgroundColor(
                 holder.itemView.context.getColor(R.color.playing_highlight)
@@ -134,17 +134,16 @@ class AudioLibraryAdapter(
         notifyDataSetChanged()
     }
 
-    fun setCurrentlyPlaying(trackId: String?) {
-        if (currentlyPlayingId != trackId) {
-            currentlyPlayingId = trackId
+    fun setCurrentlyPlaying(trackPath: String?) {
+        if (currentlyPlayingId != trackPath) {
+            currentlyPlayingId = trackPath
             notifyDataSetChanged()
         }
     }
 
-    fun getPositionByTrackId(trackId: String): Int {
-        return audioTracks.indexOfFirst { it.id == trackId }
+    fun getPositionByTrackId(trackPath: String): Int {
+        return audioTracks.indexOfFirst { it.path == trackPath }
     }
-
     fun setAnimation(newAnimation: PlayingAnimation) {
         animation = newAnimation
         notifyDataSetChanged()
