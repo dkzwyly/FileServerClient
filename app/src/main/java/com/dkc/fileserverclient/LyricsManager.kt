@@ -87,7 +87,13 @@ class LyricsManager(
                         "lyrics_content" -> {
                             lyricsResponse.content?.let { content ->
                                 Log.d("LyricsManager", "解析歌词内容，长度: ${content.length}")
-                                parseLyricsContent(content, fileName)
+                                try {
+                                    // ← 增加异常保护，避免解析异常导致回调丢失
+                                    parseLyricsContent(content, fileName)
+                                } catch (e: Exception) {
+                                    Log.e("LyricsManager", "歌词解析失败", e)
+                                    listener?.onLyricsError("歌词解析错误: ${e.message}")
+                                }
                             } ?: run {
                                 listener?.onLyricsError("歌词内容为空")
                             }
@@ -221,19 +227,11 @@ class LyricsManager(
                     // 获取当前时间（由监听器提供）
                     val currentTime = (listener as? TimeProvider)?.getCurrentTime() ?: 0L
 
-                    // 检查时间是否有效（不为0）
-                    if (currentTime <= 0L) {
-                        // 如果时间无效，延迟后重试
-                        lyricsUpdateRunnable?.let {
-                            handler.postDelayed(it, 500L)
-                        }
-                        return
-                    }
-
+                    // ← 移除 currentTime <= 0 的阻塞逻辑，始终尝试匹配当前行和下一行
                     val currentLine = findCurrentLyricsLine(data.lines, currentTime)
                     val nextLine = findNextLyricsLine(data.lines, currentTime)
 
-                    // 关键：在主线程更新UI
+                    // 在主线程更新UI
                     handler.post {
                         (listener as? LyricsStateListener)?.onLyricsUpdated(
                             currentLine?.text,

@@ -120,13 +120,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         prefs.edit().putString("server_url", serverUrl).apply()
 
-        if (!::lyricsManager.isInitialized) {
-            lyricsManager = LyricsManager(getApplication(), handler, scope)
-            lyricsManager.setListener(this)
-        }
-        if (!::metadataManager.isInitialized) {
-            metadataManager = SongMetadataManager(getApplication(), FileServerService(getApplication()))
-        }
+        // ↓ 修改点：无条件设置监听器（即使 LyricsManager 已初始化）
+        lyricsManager.setListener(this)
+        metadataManager = SongMetadataManager(getApplication(), FileServerService(getApplication()))
 
         connectToMediaService(index)
     }
