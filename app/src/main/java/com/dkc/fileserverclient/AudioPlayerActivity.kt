@@ -1,10 +1,7 @@
 package com.dkc.fileserverclient
 
 import android.Manifest
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -31,7 +28,6 @@ class AudioPlayerActivity : AppCompatActivity() {
     private val viewModel: AudioPlayerViewModel by viewModels()
 
     private lateinit var audioCoverView: ImageView
-    private lateinit var musicVisualizerView: MusicVisualizerView
     private lateinit var mediaLoadingProgress: ProgressBar
 
     private lateinit var playPauseButton: ImageButton
@@ -48,14 +44,6 @@ class AudioPlayerActivity : AppCompatActivity() {
     private lateinit var lyricsSettingsButton: Button
     private var currentCoverPath: String? = null
 
-    private val closeReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "AUDIO_SERVICE_CLOSED") {
-                finish()
-            }
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_audio_player)
@@ -66,12 +54,8 @@ class AudioPlayerActivity : AppCompatActivity() {
         setupClickListeners()
         observeViewModel()
 
-        val filter = IntentFilter("AUDIO_SERVICE_CLOSED")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(closeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnreceiverdException")
-            registerReceiver(closeReceiver, filter)
+        viewModel.finishEvent.observe(this) { finish ->
+            if (finish) finish()
         }
     }
 
@@ -111,7 +95,6 @@ class AudioPlayerActivity : AppCompatActivity() {
 
     private fun initViews() {
         audioCoverView = findViewById(R.id.audioCoverView)
-        musicVisualizerView = findViewById(R.id.musicVisualizerView)
         mediaLoadingProgress = findViewById(R.id.mediaLoadingProgress)
         playPauseButton = findViewById(R.id.playPauseButton)
         previousButton = findViewById(R.id.previousButton)
@@ -166,7 +149,6 @@ class AudioPlayerActivity : AppCompatActivity() {
             playPauseButton.setImageResource(
                 if (it) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
             )
-            musicVisualizerView.setPlaying(it)
         }
         viewModel.playbackState.observe(this) { state ->
             mediaLoadingProgress.visibility = if (state == PlaybackState.BUFFERING) View.VISIBLE else View.GONE
@@ -181,7 +163,6 @@ class AudioPlayerActivity : AppCompatActivity() {
         viewModel.duration.observe(this) { dur -> durationTextView.text = formatTime(dur) }
         viewModel.currentLyricsLine.observe(this) { currentLyricsLine.text = it }
         viewModel.nextLyricsLine.observe(this) { nextLyricsLine.text = it }
-        viewModel.spectrumData.observe(this) { musicVisualizerView.updateSpectrum(it) }
         viewModel.errorMessage.observe(this) {
             if (!it.isNullOrEmpty()) Toast.makeText(this, it, Toast.LENGTH_SHORT).show()
         }
@@ -315,16 +296,7 @@ class AudioPlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         viewModel.release()
-        try {
-            unregisterReceiver(closeReceiver)
-        } catch (e: IllegalArgumentException) {
-            // 忽略未注册的情况
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        super.onDestroy()
     }
 }

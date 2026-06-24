@@ -1,6 +1,7 @@
 package com.dkc.fileserverclient
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -9,18 +10,23 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.*
 import java.io.File
 
 class AudioPlayerViewModel(application: Application) : AndroidViewModel(application),
-    AudioPlaybackListener, AudioProgressListener,
     LyricsManager.LyricsStateListener,
     LyricsManager.TimeProvider,
     LyricsManager.PlayStateProvider {
 
-    // ---------- UI LiveData ----------
     val currentTrackName = MutableLiveData<String>()
     val artistAlbum = MutableLiveData<String>()
     val coverLocalPath = MutableLiveData<String?>()
@@ -31,46 +37,52 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     val duration = MutableLiveData(prefs.getLong("last_duration", 0L))
     val currentLyricsLine = MutableLiveData<String?>()
     val nextLyricsLine = MutableLiveData<String?>()
-    val spectrumData = MutableLiveData<FloatArray>()
     val errorMessage = MutableLiveData<String?>()
     val playbackSpeed = MutableLiveData<Float>(1.0f)
     val currentSongMetadata = MutableLiveData<SongMetadata?>()
     val lyricsFileSelection = MutableLiveData<List<FileServerService.LyricsFileInfo>?>()
+    val finishEvent = MutableLiveData<Boolean>()
 
-    // 播放模式
-    private var currentPlayMode = PlaylistDetailActivity.MODE_LIST
-
-    private lateinit var audioBackgroundManager: AudioBackgroundManager
-    private lateinit var lyricsManager: LyricsManager
-    private lateinit var metadataManager: SongMetadataManager
-
+    private var currentTrack: AudioTrack? = null
     private var serverUrl = ""
     private var songPath = ""
-    private var currentTrack: AudioTrack? = null
-    private var playlist: List<AudioTrack> = emptyList()
-    private var currentIndex = -1
-    private var currentCoverUrl: String? = null
 
-    // 缓存最新进度（用于快速响应）
-    private var latestPosition = 0L
-    private var latestDuration = 0L
+    private val trackList = mutableListOf<AudioTrack>()
+
+    private var mediaController: MediaController? = null
+    private var controllerFuture: ListenableFuture<MediaController>? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    // 频谱监听器引用，用于后续移除
-    private val spectrumListener = object : AudioSpectrumListener {
-        override fun onSpectrumData(spectrum: FloatArray) {
-            spectrumData.postValue(spectrum)
+    private val progressUpdater = object : Runnable {
+        override fun run() {
+            val controller = mediaController ?: return
+            if (controller.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) {
+                val pos = controller.currentPosition
+                val dur = controller.duration
+                if (dur > 0) {
+                    currentPosition.postValue(pos)
+                    duration.postValue(dur)
+                    prefs.edit()
+                        .putLong("last_position", pos)
+                        .putLong("last_duration", dur)
+                        .apply()
+                    saveRecoveryInfo(controller)
+                }
+            }
+            handler.postDelayed(this, 200)
         }
     }
+
+    private lateinit var lyricsManager: LyricsManager
+    private lateinit var metadataManager: SongMetadataManager
 
     init {
         CoverImageStorage.init(application, UnsafeHttpClient.createUnsafeOkHttpClient())
     }
 
     fun init(intent: Intent) {
-        // 获取传入参数
         val track: AudioTrack? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
         } else {
@@ -88,82 +100,111 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val index = intent.getIntExtra("CURRENT_INDEX", 0)
         serverUrl = intent.getStringExtra("SERVER_URL") ?: ""
         songPath = intent.getStringExtra("FILE_PATH") ?: track?.path ?: ""
-        currentPlayMode = intent.getIntExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
-
         if (track == null) {
             errorMessage.value = "无法获取音频信息"
             return
         }
 
-        // 初始化后台服务管理器（如果尚未初始化）
-        if (!::audioBackgroundManager.isInitialized) {
-            audioBackgroundManager = AudioBackgroundManager(getApplication())
-            audioBackgroundManager.addPlaybackListener(this)
-            audioBackgroundManager.addProgressListener(this)
-            // 频谱监听器将在 onActivityResume 中添加，避免后台高频更新
-        }
+        currentTrack = track
+        trackList.clear()
+        trackList.addAll(tracks ?: listOf(track))
 
-        // 初始化歌词管理器（若未初始化）
         if (!::lyricsManager.isInitialized) {
-            lyricsManager = LyricsManager(getApplication(), handler, scope)
+            lyricsManager = LyricsManager(application, handler, scope)
             lyricsManager.setListener(this)
         }
-
-        // 初始化元数据管理器
         if (!::metadataManager.isInitialized) {
-            metadataManager = SongMetadataManager(getApplication(), FileServerService(getApplication()))
+            metadataManager = SongMetadataManager(application, FileServerService(application))
         }
 
-        // 保存播放数据
-        currentTrack = track
-        playlist = tracks ?: listOf(track)
-        currentIndex = index.coerceIn(0, playlist.size - 1)
+        connectToMediaService(index)
+    }
 
-        // 检查服务是否已在运行且播放同一首歌，若是则仅绑定同步状态，避免重置播放
-        if (audioBackgroundManager.isServiceRunning() &&
-            audioBackgroundManager.getCurrentTrack()?.url == track.url) {
-            // 服务已在运行，仅同步UI状态
-            applyPlayMode(currentPlayMode)
-            updateTrackInfo(track)
-            loadCoverAndMetadata()
-            lyricsManager.loadLyrics(serverUrl, songPath, track.name)
-            refreshPositionImmediately()
-        } else {
-            // 启动或更新服务
-            audioBackgroundManager.startService(track, ArrayList(playlist), currentIndex)
-            applyPlayMode(currentPlayMode)
-            updateTrackInfo(track)
-            loadCoverAndMetadata()
-            lyricsManager.loadLyrics(serverUrl, songPath, track.name)
-            audioBackgroundManager.bindService()
+    private fun connectToMediaService(startIndex: Int) {
+        val context = getApplication<Application>()
+        val sessionToken = SessionToken(context, ComponentName(context, MusicService::class.java))
+        controllerFuture = MediaController.Builder(context, sessionToken)
+            .setListener(object : MediaController.Listener {
+                override fun onDisconnected(controller: MediaController) {
+                    finishEvent.postValue(true)
+                }
+            })
+            .buildAsync()
+
+        controllerFuture?.addListener({
+            try {
+                mediaController = controllerFuture?.get()
+                mediaController?.addListener(playerListener)
+
+                val mediaItems = trackList.map { it.toMediaItem() }
+                mediaController?.setMediaItems(mediaItems, startIndex, 0L)
+                mediaController?.prepare()
+                mediaController?.play()
+
+                updateTrackInfo(currentTrack!!)
+                loadCoverAndMetadata()
+                lyricsManager.loadLyrics(serverUrl, songPath, currentTrack!!.name)
+                handler.post(progressUpdater)
+            } catch (e: Exception) {
+                errorMessage.postValue("连接媒体服务失败")
+            }
+        }, MoreExecutors.directExecutor())
+    }
+
+    private fun AudioTrack.toMediaItem(): MediaItem {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(name ?: "")
+            .setArtist(artist ?: "")
+            .setAlbumTitle(album ?: "")
+            .build()
+        return MediaItem.Builder()
+            .setMediaId(id ?: path)
+            .setUri(Uri.parse(url))
+            .setMediaMetadata(metadata)
+            .build()
+    }
+
+    private val playerListener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            this@AudioPlayerViewModel.isPlaying.postValue(isPlaying)
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (mediaItem != null) {
+                val track = findTrackByMediaId(mediaItem.mediaId)
+                if (track != null) {
+                    currentTrack = track
+                    songPath = track.path
+                    updateTrackInfo(track)
+                    loadCoverAndMetadata()
+                    lyricsManager.loadLyrics(serverUrl, songPath, track.name)
+                }
+            }
+        }
+
+        override fun onPlaybackStateChanged(state: Int) {
+            when (state) {
+                Player.STATE_BUFFERING -> playbackState.postValue(PlaybackState.BUFFERING)
+                Player.STATE_READY -> playbackState.postValue(PlaybackState.PLAYING)
+                Player.STATE_ENDED -> { /* 自动下一首由服务处理 */ }
+                Player.STATE_IDLE -> playbackState.postValue(PlaybackState.STOPPED)
+            }
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            errorMessage.postValue(error.message)
         }
     }
 
-    private fun applyPlayMode(mode: Int) {
-        when (mode) {
-            PlaylistDetailActivity.MODE_LIST -> {
-                audioBackgroundManager.setRepeatMode(RepeatMode.ALL)
-                audioBackgroundManager.setShuffleEnabled(false)
-            }
-            PlaylistDetailActivity.MODE_SINGLE -> {
-                audioBackgroundManager.setRepeatMode(RepeatMode.ONE)
-                audioBackgroundManager.setShuffleEnabled(false)
-            }
-            PlaylistDetailActivity.MODE_RANDOM -> {
-                audioBackgroundManager.setRepeatMode(RepeatMode.ALL)
-                audioBackgroundManager.setShuffleEnabled(true)
-            }
-        }
-    }
-
-    fun setPlayMode(mode: Int) {
-        currentPlayMode = mode
-        applyPlayMode(mode)
+    private fun findTrackByMediaId(mediaId: String): AudioTrack? {
+        return trackList.firstOrNull { it.id == mediaId || it.path == mediaId }
     }
 
     private fun updateTrackInfo(track: AudioTrack) {
         currentTrackName.value = track.name
     }
+
+    private var currentCoverUrl: String? = null
 
     private fun loadCoverAndMetadata() {
         scope.launch {
@@ -207,64 +248,83 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun updateIntent(intent: Intent) {
-        val newTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        val newTrack: AudioTrack? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra("AUDIO_TRACK")
         } ?: return
 
-        val newIndex = intent.getIntExtra("CURRENT_INDEX", 0)
-        val newPlayMode = intent.getIntExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
         val newServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
+        val newFilePath = intent.getStringExtra("FILE_PATH") ?: newTrack.path
 
-        if (newTrack.path == songPath && currentTrack?.path == songPath) {
-            if (currentPlayMode != newPlayMode) {
-                currentPlayMode = newPlayMode
-                applyPlayMode(currentPlayMode)
-            }
+        if (newFilePath == songPath && currentTrack?.path == songPath) {
             refreshPositionImmediately()
             return
         }
 
         currentTrack = newTrack
-        currentIndex = newIndex.coerceIn(0, playlist.size - 1)
-        currentPlayMode = newPlayMode
-        songPath = newTrack.path
+        songPath = newFilePath
         serverUrl = newServerUrl
 
         updateTrackInfo(newTrack)
         loadCoverAndMetadata()
         lyricsManager.loadLyrics(serverUrl, songPath, newTrack.name)
-        applyPlayMode(currentPlayMode)
 
-        if (audioBackgroundManager.getCurrentTrack()?.path != songPath) {
-            audioBackgroundManager.startService(newTrack, ArrayList(playlist), currentIndex)
+        val tracks = intent.getParcelableArrayListExtra<AudioTrack>("AUDIO_TRACKS")
+        val index = intent.getIntExtra("CURRENT_INDEX", 0)
+        if (tracks != null) {
+            trackList.clear()
+            trackList.addAll(tracks)
+        } else {
+            trackList.clear()
+            trackList.add(newTrack)
+        }
+        val mediaItems = trackList.map { it.toMediaItem() }
+        mediaController?.setMediaItems(mediaItems, index, 0L)
+        mediaController?.prepare()
+        mediaController?.play()
+    }
+
+    fun togglePlayback() {
+        mediaController?.let {
+            if (it.isPlaying) it.pause() else it.play()
         }
     }
 
-    // ---------- 播放控制 ----------
-    fun togglePlayback() {
-        audioBackgroundManager.sendAction(AudioPlaybackService.ACTION_PLAY_PAUSE)
-    }
-
     fun playNext() {
-        audioBackgroundManager.safePlayNext()
+        mediaController?.seekToNextMediaItem()
     }
 
     fun playPrevious() {
-        audioBackgroundManager.safePlayPrevious()
+        mediaController?.seekToPreviousMediaItem()
     }
 
     fun seekTo(position: Long) {
-        latestPosition = position
-        currentPosition.value = position
-        audioBackgroundManager.seekTo(position)
+        mediaController?.seekTo(position)
     }
 
     fun setPlaybackSpeed(speed: Float) {
         playbackSpeed.value = speed
-        audioBackgroundManager.setPlaybackSpeed(speed)
+        mediaController?.setPlaybackSpeed(speed)
+    }
+
+    fun setPlayMode(mode: Int) {
+        val controller = mediaController ?: return
+        when (mode) {
+            PlaylistDetailActivity.MODE_LIST -> {
+                controller.repeatMode = Player.REPEAT_MODE_ALL
+                controller.shuffleModeEnabled = false
+            }
+            PlaylistDetailActivity.MODE_SINGLE -> {
+                controller.repeatMode = Player.REPEAT_MODE_ONE
+                controller.shuffleModeEnabled = false
+            }
+            PlaylistDetailActivity.MODE_RANDOM -> {
+                controller.repeatMode = Player.REPEAT_MODE_ALL
+                controller.shuffleModeEnabled = true
+            }
+        }
     }
 
     fun reloadLyrics() {
@@ -346,84 +406,41 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun onActivityPause() {
-        // 移除频谱监听器以停止后台高频更新，节省电量和CPU
-        if (::audioBackgroundManager.isInitialized) {
-            audioBackgroundManager.removeSpectrumListener(spectrumListener)
-        }
+        handler.removeCallbacks(progressUpdater)
     }
 
     fun onActivityResume() {
-        // 重新绑定并添加频谱监听器
-        if (::audioBackgroundManager.isInitialized) {
-            audioBackgroundManager.bindService()
-            audioBackgroundManager.addSpectrumListener(spectrumListener)
-        }
+        handler.post(progressUpdater)
         refreshPositionImmediately()
     }
 
-    fun release() {
-        if (::audioBackgroundManager.isInitialized) {
-            audioBackgroundManager.removePlaybackListener(this)
-            audioBackgroundManager.removeProgressListener(this)
-            audioBackgroundManager.removeSpectrumListener(spectrumListener)
-            audioBackgroundManager.unbindService()
+    fun refreshPositionImmediately() {
+        val controller = mediaController ?: return
+        if (controller.duration > 0) {
+            currentPosition.value = controller.currentPosition
+            duration.value = controller.duration
+            isPlaying.value = controller.isPlaying
         }
+    }
+
+    fun release() {
+        mediaController?.removeListener(playerListener)
+        mediaController?.let { MediaController.releaseFuture(controllerFuture!!) }
+        mediaController = null
+        handler.removeCallbacks(progressUpdater)
         scope.cancel()
     }
 
-    fun refreshPositionImmediately() {
-        if (!::audioBackgroundManager.isInitialized) return
-        val status = audioBackgroundManager.getPlaybackStatus()
-        if (status != null && status.duration > 0) {
-            latestPosition = status.position
-            latestDuration = status.duration
-            currentPosition.postValue(status.position)
-            duration.postValue(status.duration)
-            isPlaying.postValue(status.isPlaying)
-            playbackState.postValue(status.state)
+    private fun saveRecoveryInfo(controller: MediaController) {
+        val ids = (0 until controller.mediaItemCount).mapNotNull { i ->
+            controller.getMediaItemAt(i).mediaId
         }
+        prefs.edit()
+            .putString("last_playlist", ids.joinToString("|||"))
+            .putInt("last_index", controller.currentMediaItemIndex)
+            .apply()
     }
 
-    // ---------- AudioPlaybackListener 实现 ----------
-    override fun onPlaybackStateChanged(status: AudioPlaybackStatus) {
-        isPlaying.postValue(status.isPlaying)
-        playbackState.postValue(status.state)
-        if (status.errorMessage != null) errorMessage.postValue(status.errorMessage)
-    }
-
-    override fun onTrackChanged(track: AudioTrack, index: Int) {
-        currentTrack = track
-        currentIndex = index
-        songPath = track.path
-        updateTrackInfo(track)
-        loadCoverAndMetadata()
-        lyricsManager.loadLyrics(serverUrl, songPath, track.name)
-    }
-
-    override fun onPlaybackError(error: String) {
-        errorMessage.postValue(error)
-    }
-
-    override fun onPlaybackEnded() {
-        // 服务会自动处理下一首
-    }
-
-    override fun onAudioBuffering(isBuffering: Boolean) {
-        playbackState.postValue(if (isBuffering) PlaybackState.BUFFERING else PlaybackState.PLAYING)
-    }
-
-    // ---------- AudioProgressListener 实现 ----------
-    override fun onProgressUpdated(position: Long, duration: Long) {
-        latestPosition = position
-        latestDuration = duration
-        currentPosition.postValue(position)
-        this.duration.postValue(duration)
-        prefs.edit().putLong("last_position", position).putLong("last_duration", duration).apply()
-    }
-
-    override fun onBufferingProgress(percent: Int) {}
-
-    // ---------- 歌词相关接口 ----------
     override fun onLyricsLoaded(data: LyricsData?, title: String?) {
         lyricsManager.startLyricsUpdates()
     }
@@ -447,17 +464,11 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         nextLyricsLine.postValue("")
     }
 
-    override fun getCurrentTime(): Long = latestPosition
+    override fun getCurrentTime(): Long = currentPosition.value ?: 0L
     override fun isPlaying(): Boolean = isPlaying.value ?: false
 
     override fun onCleared() {
-        if (::audioBackgroundManager.isInitialized) {
-            audioBackgroundManager.removePlaybackListener(this)
-            audioBackgroundManager.removeProgressListener(this)
-            audioBackgroundManager.removeSpectrumListener(spectrumListener)
-            audioBackgroundManager.unbindService()
-        }
-        scope.cancel()
+        release()
         super.onCleared()
     }
 }
