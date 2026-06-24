@@ -4,9 +4,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -80,6 +83,10 @@ class MusicService : MediaLibraryService() {
             startPositionMs: Long
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
             Log.d(TAG, "onSetMediaItems: count=${mediaItems.size}, startIndex=$startIndex, startPositionMs=$startPositionMs")
+            // 延迟应用播放模式，确保 player 已经设置好媒体列表
+            Handler(Looper.getMainLooper()).post {
+                applyPlayMode()
+            }
             return Futures.immediateFuture(
                 MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, startPositionMs)
             )
@@ -129,6 +136,10 @@ class MusicService : MediaLibraryService() {
                 settableFuture.set(
                     MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, startPosition)
                 )
+                // 应用播放模式
+                Handler(Looper.getMainLooper()).post {
+                    applyPlayMode()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in onPlaybackResumption", e)
                 settableFuture.set(MediaSession.MediaItemsWithStartPosition(emptyList(), 0, 0L))
@@ -141,7 +152,7 @@ class MusicService : MediaLibraryService() {
         super.onCreate()
         prefs = getSharedPreferences("audio_cache", Context.MODE_PRIVATE)
 
-        // 创建忽略 SSL 证书的 OkHttpClient（复用 UnsafeHttpClient）
+        // 忽略 SSL 证书校验
         val unsafeOkHttpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
         val httpDataSourceFactory = OkHttpDataSource.Factory(unsafeOkHttpClient)
 
@@ -175,5 +186,26 @@ class MusicService : MediaLibraryService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         Log.d(TAG, "onTaskRemoved, isPlaying=${player.isPlaying}")
         if (!player.isPlaying) stopSelf()
+    }
+
+    /** 从 SharedPreferences 读取播放模式并应用到播放器 */
+    private fun applyPlayMode() {
+        val modePrefs = getSharedPreferences("audio_library_play_mode", Context.MODE_PRIVATE)
+        val mode = modePrefs.getInt("current_play_mode", PlaylistDetailActivity.MODE_LIST)
+        Log.d(TAG, "applyPlayMode: mode=$mode")
+        when (mode) {
+            PlaylistDetailActivity.MODE_LIST -> {
+                player.repeatMode = Player.REPEAT_MODE_ALL
+                player.shuffleModeEnabled = false
+            }
+            PlaylistDetailActivity.MODE_SINGLE -> {
+                player.repeatMode = Player.REPEAT_MODE_ONE
+                player.shuffleModeEnabled = false
+            }
+            PlaylistDetailActivity.MODE_RANDOM -> {
+                player.repeatMode = Player.REPEAT_MODE_ALL
+                player.shuffleModeEnabled = true
+            }
+        }
     }
 }
