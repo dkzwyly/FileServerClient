@@ -70,8 +70,22 @@ class PageRepository private constructor(private val appContext: Context) {
     private val _errorEvents = MutableSharedFlow<String>()
     val errorEvents: SharedFlow<String> = _errorEvents.asSharedFlow()
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var httpClient: OkHttpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
+    private val exceptionHandler = CoroutineExceptionHandler { _, e ->
+        Log.e(TAG, "Unhandled coroutine exception", e)
+        _errorEvents.tryEmit("内部错误: ${e.message}")
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + exceptionHandler)
+
+    // ── 网络客户端管理 ──
+    // 默认客户端（单例，永不关闭）
+    private val defaultClient: OkHttpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
+
+    // 网络绑定客户端（随网络切换重建）
+    @Volatile
+    private var boundClient: OkHttpClient? = null
+
+    @Volatile
+    private var currentNetwork: Network? = null
 
     private var fileName = ""
     private var fileUrl = ""
@@ -99,48 +113,8 @@ class PageRepository private constructor(private val appContext: Context) {
     private var readingHistoryFile: File? = null
     private var historySaveJob: Job? = null
 
-    // ── 网络绑定 ──
-    @Volatile
-    private var currentNetwork: Network? = null
-
-    @Volatile
-    private var boundHttpClient: OkHttpClient? = null
-
-    fun setNetwork(network: Network?) {
-        // Android 6.0 (API 23) 及以下不支持绑定 socket 到指定网络，强行绑定会抛出 EPERM
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            return
-        }
-        synchronized(this) {
-            if (currentNetwork == network) return
-            currentNetwork = network
-            boundHttpClient = if (network != null) {
-                try {
-                    buildNetworkBoundClient(network)
-                } catch (e: Exception) {
-                    Log.e(TAG, "构建网络绑定客户端失败，回退到默认客户端", e)
-                    null
-                }
-            } else {
-                null
-            }
-        }
-    }
-
-    private fun buildNetworkBoundClient(network: Network): OkHttpClient {
-        return UnsafeHttpClient.createUnsafeOkHttpClient().newBuilder()
-            .socketFactory(network.socketFactory)
-            .dns(object : Dns {
-                override fun lookup(hostname: String): List<InetAddress> {
-                    return network.getAllByName(hostname).toList()
-                }
-            })
-            .build()
-    }
-
-    private fun getEffectiveHttpClient(): OkHttpClient {
-        return boundHttpClient ?: UnsafeHttpClient.createUnsafeOkHttpClient()
-    }
+    // 布局是否就绪（textWidth > 0）
+    private var isLayoutReady = false
 
     private data class CachedBlock(
         val blockPage: Int,
@@ -161,8 +135,58 @@ class PageRepository private constructor(private val appContext: Context) {
         val endChar: Int
     )
 
+    // ── 网络绑定 ──
+    fun setNetwork(network: Network?) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return
+        }
+        synchronized(this) {
+            if (currentNetwork == network) return
+            // 关闭旧的绑定客户端（使用属性访问，消除 deprecated 警告）
+            boundClient?.let { old ->
+                try {
+                    old.dispatcher.cancelAll()
+                    old.dispatcher.executorService.shutdown()
+                    old.connectionPool.evictAll()
+                } catch (e: Exception) {
+                    Log.w(TAG, "关闭旧绑定客户端时出错", e)
+                }
+            }
+            currentNetwork = network
+            boundClient = if (network != null) {
+                try {
+                    buildNetworkBoundClient(network)
+                } catch (e: Exception) {
+                    Log.e(TAG, "构建网络绑定客户端失败，回退到默认客户端", e)
+                    null
+                }
+            } else {
+                null
+            }
+        }
+    }
+
+    private fun buildNetworkBoundClient(network: Network): OkHttpClient {
+        return defaultClient.newBuilder()
+            .socketFactory(network.socketFactory)
+            .dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    return network.getAllByName(hostname).toList()
+                }
+            })
+            .build()
+    }
+
+    private fun getEffectiveHttpClient(): OkHttpClient {
+        return boundClient ?: defaultClient
+    }
+
+    // ── 文件与显示参数 ──
     fun setupFile(name: String, url: String, path: String) {
         if (fileName != name) resetForNewFile(name, url, path)
+        if (isLayoutReady && fileName.isNotEmpty()) {
+            initialize()
+        }
     }
 
     fun updateDisplayParams(width: Int, paint: Paint, extra: Float, multiplier: Float, lines: Int) {
@@ -173,6 +197,14 @@ class PageRepository private constructor(private val appContext: Context) {
         lineSpacingExtra = extra
         lineSpacingMultiplier = multiplier
         linesPerPage = lines.coerceAtLeast(2)
+
+        if (!isLayoutReady) {
+            isLayoutReady = true
+            if (fileName.isNotEmpty()) {
+                initialize()
+                return
+            }
+        }
 
         if (needRelayout && windowBlocks.isNotEmpty()) {
             scope.launch {
@@ -187,6 +219,7 @@ class PageRepository private constructor(private val appContext: Context) {
         }
     }
 
+    // ── 页面导航 ──
     suspend fun nextPage() {
         if (!isInitialized()) return
         var target = currentPageIndex + 1
@@ -271,8 +304,18 @@ class PageRepository private constructor(private val appContext: Context) {
         loadingJobs.values.forEach { it.cancel() }
         loadingJobs.clear()
         scope.cancel()
+        // 只关闭绑定客户端，默认客户端保留（使用属性访问）
+        boundClient?.let {
+            try {
+                it.dispatcher.cancelAll()
+                it.dispatcher.executorService.shutdown()
+                it.connectionPool.evictAll()
+            } catch (_: Exception) {}
+            boundClient = null
+        }
     }
 
+    // ── 私有方法 ──
     private fun isInitialized() = windowBlocks.isNotEmpty() && globalLines.isNotEmpty()
 
     private fun resetForNewFile(name: String, url: String, path: String) {
@@ -294,8 +337,6 @@ class PageRepository private constructor(private val appContext: Context) {
         if (!historyDir.exists()) historyDir.mkdirs()
         val safeName = name.replace("[^a-zA-Z0-9]".toRegex(), "_")
         readingHistoryFile = File(historyDir, "history_${safeName}.dat")
-
-        initialize()
     }
 
     private fun initialize() {
@@ -371,7 +412,9 @@ class PageRepository private constructor(private val appContext: Context) {
     }
 
     private fun buildStaticLayout(text: String): StaticLayout {
-        if (!::textPaint.isInitialized) textPaint = TextPaint().apply { textSize = 40f }
+        if (textWidth <= 0) {
+            throw IllegalStateException("Layout width not set")
+        }
         return StaticLayout.Builder.obtain(text, 0, text.length, textPaint, textWidth)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setLineSpacing(lineSpacingExtra, lineSpacingMultiplier)

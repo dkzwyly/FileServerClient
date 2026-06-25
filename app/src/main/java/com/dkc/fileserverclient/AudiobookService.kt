@@ -107,7 +107,18 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "Service onCreate")
         createNotificationChannel()
 
-        // 立即启动前台服务，防止系统在启动期间杀死服务
+        // ✅ 先初始化 MediaSession，后续构建通知时需要它的 sessionToken
+        mediaSession = MediaSessionCompat(this, "AudiobookService").apply {
+            setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() { startAutoPlay() }
+                override fun onPause() { pause() }
+                override fun onStop() { stop() }
+            })
+            isActive = true
+        }
+
+        // ✅ 现在可以安全启动前台通知（buildNotification 内部会使用 mediaSession.sessionToken）
         startForegroundIfNeeded()
 
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
@@ -120,20 +131,8 @@ class AudiobookService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
-        // 初始化 MediaSession 并设置 Callback，使其具备 ExoPlayer 同级别的交互能力
-        mediaSession = MediaSessionCompat(this, "AudiobookService").apply {
-            setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
-            setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() { startAutoPlay() }
-                override fun onPause() { pause() }
-                override fun onStop() { stop() }
-            })
-            isActive = true
-        }
-
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AudiobookService::WakeLock")
-
 
         readingPrefs = getSharedPreferences("reading_prefs", MODE_PRIVATE)
         speechRate = readingPrefs.getFloat("tts_speed", 1.0f)

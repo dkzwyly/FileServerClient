@@ -10,32 +10,19 @@ import javax.net.ssl.X509TrustManager
 
 object UnsafeHttpClient {
 
-    /**
-     * 创建不验证SSL证书的OkHttpClient
-     * 注意：仅用于开发环境或可信的内部网络
-     */
-    fun createUnsafeOkHttpClient(): OkHttpClient {
+    // 单例客户端，所有默认请求复用此实例
+    private val unsafeClient: OkHttpClient by lazy { buildClient() }
+
+    private fun buildClient(): OkHttpClient {
         return try {
-            // 创建信任所有证书的 TrustManager
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-                    // 信任所有客户端证书
-                }
-
-                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-                    // 信任所有服务器证书
-                }
-
-                override fun getAcceptedIssuers(): Array<X509Certificate> {
-                    return arrayOf()
-                }
+                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
             })
 
-            // 创建 SSLContext 使用信任所有证书的 TrustManager
             val sslContext = SSLContext.getInstance("SSL")
             sslContext.init(null, trustAllCerts, java.security.SecureRandom())
-
-            // 创建不验证主机名的 HostnameVerifier
             val hostnameVerifier = HostnameVerifier { _, _ -> true }
 
             OkHttpClient.Builder()
@@ -49,4 +36,7 @@ object UnsafeHttpClient {
             throw RuntimeException("创建不安全HTTP客户端失败", e)
         }
     }
+
+    // 返回单例客户端，不会新建实例
+    fun createUnsafeOkHttpClient(): OkHttpClient = unsafeClient
 }

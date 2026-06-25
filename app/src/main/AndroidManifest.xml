@@ -114,13 +114,6 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- 旧的音频播放服务（可保留或删除，建议后续移除） -->
-        <service
-            android:name=".AudioPlaybackService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
-
         <service
             android:name=".AudiobookService"
             android:foregroundServiceType="mediaPlayback"
