@@ -2,7 +2,7 @@ package com.dkc.fileserverclient
 
 import android.content.Context
 import android.graphics.Paint
-import android.net.Network
+import android.net.ConnectivityManager
 import android.os.Build
 import android.text.Layout
 import android.text.SpannableString
@@ -14,13 +14,15 @@ import android.text.style.StyleSpan
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import okhttp3.Dns
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.*
-import java.net.InetAddress
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlin.math.min
 
 class PageRepository private constructor(private val appContext: Context) {
@@ -76,16 +78,17 @@ class PageRepository private constructor(private val appContext: Context) {
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + exceptionHandler)
 
-    // ── 网络客户端管理 ──
-    // 默认客户端（单例，永不关闭）
+    // 统一使用默认客户端，移除所有网络绑定相关逻辑
     private val defaultClient: OkHttpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
+        .newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .build()
 
-    // 网络绑定客户端（随网络切换重建）
-    @Volatile
-    private var boundClient: OkHttpClient? = null
-
-    @Volatile
-    private var currentNetwork: Network? = null
+    // 请求去重 + 并发限制
+    private val activeFetchJobs = ConcurrentHashMap<String, Deferred<String>>()
+    private val requestSemaphore = Semaphore(3)
 
     private var fileName = ""
     private var fileUrl = ""
@@ -113,7 +116,6 @@ class PageRepository private constructor(private val appContext: Context) {
     private var readingHistoryFile: File? = null
     private var historySaveJob: Job? = null
 
-    // 布局是否就绪（textWidth > 0）
     private var isLayoutReady = false
 
     private data class CachedBlock(
@@ -135,53 +137,6 @@ class PageRepository private constructor(private val appContext: Context) {
         val endChar: Int
     )
 
-    // ── 网络绑定 ──
-    fun setNetwork(network: Network?) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            return
-        }
-        synchronized(this) {
-            if (currentNetwork == network) return
-            // 关闭旧的绑定客户端（使用属性访问，消除 deprecated 警告）
-            boundClient?.let { old ->
-                try {
-                    old.dispatcher.cancelAll()
-                    old.dispatcher.executorService.shutdown()
-                    old.connectionPool.evictAll()
-                } catch (e: Exception) {
-                    Log.w(TAG, "关闭旧绑定客户端时出错", e)
-                }
-            }
-            currentNetwork = network
-            boundClient = if (network != null) {
-                try {
-                    buildNetworkBoundClient(network)
-                } catch (e: Exception) {
-                    Log.e(TAG, "构建网络绑定客户端失败，回退到默认客户端", e)
-                    null
-                }
-            } else {
-                null
-            }
-        }
-    }
-
-    private fun buildNetworkBoundClient(network: Network): OkHttpClient {
-        return defaultClient.newBuilder()
-            .socketFactory(network.socketFactory)
-            .dns(object : Dns {
-                override fun lookup(hostname: String): List<InetAddress> {
-                    return network.getAllByName(hostname).toList()
-                }
-            })
-            .build()
-    }
-
-    private fun getEffectiveHttpClient(): OkHttpClient {
-        return boundClient ?: defaultClient
-    }
-
-    // ── 文件与显示参数 ──
     fun setupFile(name: String, url: String, path: String) {
         if (fileName != name) resetForNewFile(name, url, path)
         if (isLayoutReady && fileName.isNotEmpty()) {
@@ -219,7 +174,6 @@ class PageRepository private constructor(private val appContext: Context) {
         }
     }
 
-    // ── 页面导航 ──
     suspend fun nextPage() {
         if (!isInitialized()) return
         var target = currentPageIndex + 1
@@ -279,10 +233,10 @@ class PageRepository private constructor(private val appContext: Context) {
                 _chapters.value = list
                 _chaptersLoadedEvent.emit(Unit)
                 if (isInitialized()) {
-                    val currentOffset = _pageContent.value?.state?.absoluteCharOffset ?: 0
                     recalculatePageBreaks()
-                    currentPageIndex = findPageForAbsoluteOffset(currentOffset)
-                    updateCurrentPage()
+                    if (currentPageIndex >= pageBreaks.size) {
+                        currentPageIndex = (pageBreaks.size - 1).coerceAtLeast(0)
+                    }
                 }
             } catch (e: Exception) {
                 _errorEvents.emit("章节加载失败: ${e.message}")
@@ -304,15 +258,6 @@ class PageRepository private constructor(private val appContext: Context) {
         loadingJobs.values.forEach { it.cancel() }
         loadingJobs.clear()
         scope.cancel()
-        // 只关闭绑定客户端，默认客户端保留（使用属性访问）
-        boundClient?.let {
-            try {
-                it.dispatcher.cancelAll()
-                it.dispatcher.executorService.shutdown()
-                it.connectionPool.evictAll()
-            } catch (_: Exception) {}
-            boundClient = null
-        }
     }
 
     // ── 私有方法 ──
@@ -332,6 +277,7 @@ class PageRepository private constructor(private val appContext: Context) {
         chapterStartOffsetSet = emptySet()
         loadingJobs.values.forEach { it.cancel() }
         loadingJobs.clear()
+        activeFetchJobs.clear()
 
         val historyDir = File(appContext.filesDir, "reading_history")
         if (!historyDir.exists()) historyDir.mkdirs()
@@ -384,11 +330,11 @@ class PageRepository private constructor(private val appContext: Context) {
         }
     }
 
-    private suspend fun fetchJsonWithRetry(url: String, maxRetries: Int = 3): String {
+    private suspend fun fetchJsonWithRetry(url: String, maxRetries: Int = 2): String {
         var lastException: Exception? = null
         repeat(maxRetries) { attempt ->
             try {
-                return fetchJson(url)
+                return fetchJsonDeduplicated(url)
             } catch (e: Exception) {
                 lastException = e
                 Log.w(TAG, "fetchJson 失败 (第 ${attempt + 1} 次), url=$url", e)
@@ -398,6 +344,31 @@ class PageRepository private constructor(private val appContext: Context) {
             }
         }
         throw lastException ?: Exception("网络请求失败")
+    }
+
+    private suspend fun fetchJsonDeduplicated(url: String): String {
+        val existing = activeFetchJobs[url] as? Deferred<String>
+        if (existing != null && existing.isActive) {
+            return existing.await()
+        }
+        val job = scope.async(start = CoroutineStart.LAZY) {
+            fetchJson(url)
+        }
+        activeFetchJobs[url] = job
+        job.invokeOnCompletion { activeFetchJobs.remove(url) }
+        return job.await()
+    }
+
+    private suspend fun fetchJson(url: String) = requestSemaphore.withPermit {
+        withContext(Dispatchers.IO) {
+            try {
+                val resp = defaultClient.newCall(Request.Builder().url(url).build()).execute()
+                if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
+                resp.body?.string() ?: throw Exception("空响应")
+            } catch (e: IOException) {
+                throw Exception("网络请求异常: ${e.message}")
+            }
+        }
     }
 
     private suspend fun fetchAndCacheBlock(page: Int): CachedBlock {
@@ -513,6 +484,11 @@ class PageRepository private constructor(private val appContext: Context) {
         }
 
         if (toAdd.isNotEmpty()) {
+            if (!isNetworkAvailable()) {
+                Log.d(TAG, "网络不可用，跳过预加载")
+                return
+            }
+
             val jobs = toAdd.map { page ->
                 page to scope.async {
                     try {
@@ -539,6 +515,16 @@ class PageRepository private constructor(private val appContext: Context) {
             val currentOffset = _pageContent.value?.state?.absoluteCharOffset ?: return
             currentPageIndex = findPageForAbsoluteOffset(currentOffset)
             refreshPageDisplay()
+        }
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            cm.activeNetwork != null
+        } else {
+            @Suppress("DEPRECATION")
+            cm.activeNetworkInfo?.isConnected == true
         }
     }
 
@@ -644,17 +630,6 @@ class PageRepository private constructor(private val appContext: Context) {
 
     private fun buildBlockUrl(page: Int) =
         "${fileUrl}${if (fileUrl.contains("?")) "&" else "?"}page=$page"
-
-    private suspend fun fetchJson(url: String) = withContext(Dispatchers.IO) {
-        try {
-            val client = getEffectiveHttpClient()
-            val resp = client.newCall(Request.Builder().url(url).build()).execute()
-            if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
-            resp.body?.string() ?: throw Exception("空响应")
-        } catch (e: IOException) {
-            throw Exception("网络请求异常: ${e.message}")
-        }
-    }
 
     private fun parseBlockResponse(json: String): BlockData {
         val obj = JSONObject(json)
