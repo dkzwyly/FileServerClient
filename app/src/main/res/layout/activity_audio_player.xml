@@ -87,15 +87,33 @@
             android:gravity="center"
             android:padding="4dp" />
 
-        <Button
-            android:id="@+id/lyricsSettingsButton"
+        <!-- 按钮行：歌词设置 + 频谱开关 -->
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="歌词设置"
-            android:textSize="12sp"
-            android:background="@android:color/transparent"
-            android:textColor="#AAAAAA"
-            android:layout_marginTop="8dp" />
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginTop="8dp">
+
+            <Button
+                android:id="@+id/lyricsSettingsButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="歌词设置"
+                android:textSize="12sp"
+                android:background="@android:color/transparent"
+                android:textColor="#AAAAAA" />
+
+            <ImageButton
+                android:id="@+id/visualizerToggleButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/ic_visualizer_on"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="频谱开关"
+                android:layout_marginStart="16dp"
+                app:tint="#FFFFFF" />
+        </LinearLayout>
     </LinearLayout>
 
     <!-- 可视化频谱条（放在底部控制栏上方） -->

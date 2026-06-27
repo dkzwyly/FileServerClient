@@ -47,6 +47,13 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     val lyricsFileSelection = MutableLiveData<List<FileServerService.LyricsFileInfo>?>()
     val finishEvent = MutableLiveData<Boolean>()
 
+    // ========== 频谱相关 ==========
+    val spectrumData = MutableLiveData<FloatArray>()          // 频谱数据
+    val visualizerEnabled = MutableLiveData(true)             // 用户开关状态
+    val visualizerActive = MutableLiveData(false)             // 频谱是否实际在运行
+    private var visualizerHelper: AudioVisualizerHelper? = null
+    // ============================
+
     private var currentTrack: AudioTrack? = null
     private var serverUrl = ""
     private var songPath = ""
@@ -120,14 +127,12 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         prefs.edit().putString("server_url", serverUrl).apply()
 
-        // ↓ 修改点：无条件设置监听器（即使 LyricsManager 已初始化）
         lyricsManager.setListener(this)
         metadataManager = SongMetadataManager(getApplication(), FileServerService(getApplication()))
 
         connectToMediaService(index)
     }
 
-    // ======================= 修改后的 connectToMediaService =======================
     private fun connectToMediaService(startIndex: Int) {
         val context = getApplication<Application>()
         val sessionToken = SessionToken(context, ComponentName(context, MusicService::class.java))
@@ -148,7 +153,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val currentMediaId = mediaController?.currentMediaItem?.mediaId
                 val targetTrack = trackList.getOrNull(startIndex)
 
-                // 情况1：已有播放且点击的是当前歌曲 -> 仅更新 UI，不重置播放
                 if (currentMediaId != null && targetTrack != null && currentMediaId == targetTrack.path) {
                     Log.d("AudioPlayerVM", "Same track clicked, skip re-set")
                     currentTrack = targetTrack
@@ -156,9 +160,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     updateTrackInfo(targetTrack)
                     loadCoverAndMetadata()
                     lyricsManager.loadLyrics(serverUrl, songPath, targetTrack.name)
-                    // 不调用 setMediaItems，保持进度不变
                 } else {
-                    // 情况2：无播放或点击不同歌曲 -> 正常切换
                     if (trackList.isNotEmpty()) {
                         val mediaItems = trackList.map { it.toMediaItem() }
                         mediaController?.setMediaItems(mediaItems, startIndex, 0L)
@@ -166,24 +168,25 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     }
                 }
 
-                // 处理在连接过程中积压的切歌请求（比如 updateIntent 在连接完成前调用）
                 pendingChange?.let { change ->
                     executePlaybackChange(change.track, change.trackList, change.startIndex)
                     pendingChange = null
                 }
 
                 handler.post(progressUpdater)
+
+                // 控制器就绪后尝试初始化频谱
+                setupVisualizerIfNeeded()
+
             } catch (e: Exception) {
                 errorMessage.postValue("连接媒体服务失败")
             }
         }, ContextCompat.getMainExecutor(context))
     }
 
-    // ======================= 修改后的 executePlaybackChange =======================
     private fun executePlaybackChange(track: AudioTrack, tracks: List<AudioTrack>, startIndex: Int) {
         val currentMediaId = mediaController?.currentMediaItem?.mediaId
 
-        // 如果当前播放的就是这首歌，只刷新 UI，不重新 setMediaItems
         if (currentMediaId == track.path) {
             currentTrack = track
             songPath = track.path
@@ -193,7 +196,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             return
         }
 
-        // 否则正常切换
         currentTrack = track
         songPath = track.path
         trackList.clear()
@@ -208,9 +210,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         mediaController?.play()
     }
 
-    /**
-     * 转换为 MediaItem，使用 path 作为 mediaId 并直接构建流地址
-     */
     private fun AudioTrack.toMediaItem(): MediaItem {
         val metadata = MediaMetadata.Builder()
             .setTitle(name ?: "")
@@ -239,6 +238,17 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             this@AudioPlayerViewModel.isPlaying.postValue(isPlaying)
             if (!isPlaying) saveRecoveryInfo()
+
+            // 频谱状态跟随播放状态，同时尊重用户开关
+            if (visualizerEnabled.value == true) {
+                if (isPlaying) {
+                    visualizerHelper?.start()
+                    visualizerActive.postValue(true)
+                } else {
+                    visualizerHelper?.stop()
+                    visualizerActive.postValue(false)
+                }
+            }
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -327,28 +337,22 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             @Suppress("DEPRECATION") intent.getParcelableExtra("AUDIO_TRACK")
         } ?: return
 
-        // 如果切的是同一首歌，只刷新进度
         val newFilePath = intent.getStringExtra("FILE_PATH") ?: newTrack.path
         if (newFilePath == songPath && currentTrack?.path == songPath) {
             refreshPositionImmediately()
             return
         }
 
-        // 更新服务器地址
         val newServerUrl = intent.getStringExtra("SERVER_URL") ?: ""
         serverUrl = newServerUrl
         prefs.edit().putString("server_url", serverUrl).apply()
 
-        // 提取播放列表和索引
         val tracks = intent.getParcelableArrayListExtra<AudioTrack>("AUDIO_TRACKS") ?: arrayListOf(newTrack)
         val index = intent.getIntExtra("CURRENT_INDEX", 0)
 
-        // 判断控制器是否就绪
         if (mediaController == null) {
-            // 控制器尚未连接，保存请求
             pendingChange = PendingPlaybackChange(newTrack, tracks, index)
         } else {
-            // 控制器已就绪，直接执行切歌
             executePlaybackChange(newTrack, tracks, index)
         }
     }
@@ -459,11 +463,19 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun onActivityPause() {
         handler.removeCallbacks(progressUpdater)
         saveRecoveryInfo()
+        // 后台强制停止频谱
+        visualizerHelper?.stop()
+        visualizerActive.postValue(false)
     }
 
     fun onActivityResume() {
         handler.post(progressUpdater)
         refreshPositionImmediately()
+        // 恢复频谱：仅当用户开关开启且正在播放
+        if (visualizerEnabled.value == true && isPlaying.value == true) {
+            visualizerHelper?.start()
+            visualizerActive.postValue(true)
+        }
     }
 
     fun refreshPositionImmediately() {
@@ -483,6 +495,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
         mediaController = null
         handler.removeCallbacks(progressUpdater)
+        // 释放频谱
+        visualizerHelper?.stop()
+        visualizerHelper = null
         scope.cancel()
     }
 
@@ -499,6 +514,36 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             .putString("server_url", serverUrl)
             .apply()
     }
+
+    // ========== 频谱开关与初始化 ==========
+    /** 按需创建 AudioVisualizerHelper（仅在开关打开时） */
+    private fun setupVisualizerIfNeeded() {
+        if (visualizerEnabled.value != true) return
+        val player = MusicService.exoPlayer ?: return
+        if (visualizerHelper == null) {
+            visualizerHelper = AudioVisualizerHelper(player) { spectrum ->
+                spectrumData.postValue(spectrum)
+            }
+        }
+        // 如果当前正在播放，立即启动采集
+        if (isPlaying.value == true) {
+            visualizerHelper?.start()
+            visualizerActive.postValue(true)
+        }
+    }
+
+    /** 用户开关操作 */
+    fun toggleVisualizer(enable: Boolean) {
+        if (visualizerEnabled.value == enable) return
+        visualizerEnabled.value = enable
+        if (enable) {
+            setupVisualizerIfNeeded()
+        } else {
+            visualizerHelper?.stop()
+            visualizerActive.postValue(false)
+        }
+    }
+    // ================================
 
     // LyricsManager 回调
     override fun onLyricsLoaded(data: LyricsData?, title: String?) { lyricsManager.startLyricsUpdates() }

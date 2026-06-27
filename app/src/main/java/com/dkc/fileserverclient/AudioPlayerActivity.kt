@@ -42,6 +42,11 @@ class AudioPlayerActivity : AppCompatActivity() {
     private lateinit var currentLyricsLine: TextView
     private lateinit var nextLyricsLine: TextView
     private lateinit var lyricsSettingsButton: Button
+
+    // 频谱视图及开关按钮
+    private lateinit var musicVisualizerView: MusicVisualizerView
+    private lateinit var visualizerToggleButton: ImageButton
+
     private var currentCoverPath: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -107,6 +112,10 @@ class AudioPlayerActivity : AppCompatActivity() {
         currentLyricsLine = findViewById(R.id.currentLyricsLine)
         nextLyricsLine = findViewById(R.id.nextLyricsLine)
         lyricsSettingsButton = findViewById(R.id.lyricsSettingsButton)
+
+        musicVisualizerView = findViewById(R.id.musicVisualizerView)
+        visualizerToggleButton = findViewById(R.id.visualizerToggleButton)
+
         seekBar.max = 1000
     }
 
@@ -115,6 +124,11 @@ class AudioPlayerActivity : AppCompatActivity() {
         previousButton.setOnClickListener { viewModel.playPrevious() }
         nextButton.setOnClickListener { viewModel.playNext() }
         lyricsSettingsButton.setOnClickListener { showLyricsSettingsDialog() }
+
+        // 频谱开关按钮
+        visualizerToggleButton.setOnClickListener {
+            viewModel.toggleVisualizer(viewModel.visualizerEnabled.value != true)
+        }
 
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -171,6 +185,23 @@ class AudioPlayerActivity : AppCompatActivity() {
                 showLyricsFileSelectionDialog(files)
                 viewModel.lyricsFileSelection.value = null
             }
+        }
+
+        // 频谱开关状态图标切换
+        viewModel.visualizerEnabled.observe(this) { enabled ->
+            visualizerToggleButton.setImageResource(
+                if (enabled) R.drawable.ic_visualizer_on else R.drawable.ic_visualizer_off
+            )
+        }
+
+        // 传递频谱运行状态给可视化View（控制衰减动画）
+        viewModel.visualizerActive.observe(this) { active ->
+            musicVisualizerView.setPlaying(active)
+        }
+
+        // 实时频谱数据
+        viewModel.spectrumData.observe(this) { spectrum ->
+            musicVisualizerView.updateSpectrum(spectrum)
         }
     }
 

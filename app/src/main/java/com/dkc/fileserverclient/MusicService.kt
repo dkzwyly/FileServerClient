@@ -32,6 +32,10 @@ class MusicService : MediaLibraryService() {
 
     companion object {
         private const val TAG = "MusicService"
+
+        /** 暴露 ExoPlayer 供同进程 ViewModel 直接使用 */
+        @Volatile
+        var exoPlayer: ExoPlayer? = null
     }
 
     private val mediaLibrarySessionCallback = object : MediaLibraryService.MediaLibrarySession.Callback {
@@ -83,7 +87,6 @@ class MusicService : MediaLibraryService() {
             startPositionMs: Long
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
             Log.d(TAG, "onSetMediaItems: count=${mediaItems.size}, startIndex=$startIndex, startPositionMs=$startPositionMs")
-            // 延迟应用播放模式，确保 player 已经设置好媒体列表
             Handler(Looper.getMainLooper()).post {
                 applyPlayMode()
             }
@@ -136,7 +139,6 @@ class MusicService : MediaLibraryService() {
                 settableFuture.set(
                     MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, startPosition)
                 )
-                // 应用播放模式
                 Handler(Looper.getMainLooper()).post {
                     applyPlayMode()
                 }
@@ -163,6 +165,8 @@ class MusicService : MediaLibraryService() {
             )
             .build()
 
+        exoPlayer = player  // 暴露给同进程使用
+
         Log.d(TAG, "MusicService onCreate, server_url in prefs: '${prefs.getString("server_url", "")}'")
 
         mediaLibrarySession = MediaLibraryService.MediaLibrarySession.Builder(this, player, mediaLibrarySessionCallback)
@@ -176,6 +180,7 @@ class MusicService : MediaLibraryService() {
             release()
         }
         mediaLibrarySession = null
+        exoPlayer = null
         super.onDestroy()
     }
 
