@@ -338,17 +338,26 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            if (mediaItem != null) {
-                val track = findTrackByMediaId(mediaItem.mediaId)
-                if (track != null) {
-                    currentTrack = track
-                    songPath = track.path
-                    updateTrackInfo(track)
-                    loadCoverAndMetadata()
-                    lyricsManager.loadLyrics(serverUrl, songPath, track.name)
-                    saveRecoveryInfo()
-                }
-            }
+            if (mediaItem == null) return
+            val track = findTrackByMediaId(mediaItem.mediaId)
+                ?: AudioTrack(
+                    id = "audio_${mediaItem.mediaId.hashCode().toString().replace("-", "n")}",
+                    name = mediaItem.mediaMetadata.title?.toString() ?: "未知歌曲",
+                    url = "${serverUrl.trimEnd('/')}/api/fileserver/stream/${
+                        URLEncoder.encode(mediaItem.mediaId, "UTF-8")
+                    }",
+                    serverUrl = serverUrl,
+                    path = mediaItem.mediaId,
+                    artist = mediaItem.mediaMetadata.artist?.toString(),
+                    album = mediaItem.mediaMetadata.albumTitle?.toString(),
+                    title = mediaItem.mediaMetadata.title?.toString()
+                )
+            currentTrack = track
+            songPath = track.path
+            updateTrackInfo(track)
+            loadCoverAndMetadata()
+            lyricsManager.loadLyrics(serverUrl, songPath, track.name)
+            saveRecoveryInfo()
         }
 
         override fun onPlaybackStateChanged(state: Int) {

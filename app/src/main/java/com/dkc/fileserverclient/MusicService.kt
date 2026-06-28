@@ -38,6 +38,7 @@ class MusicService : MediaLibraryService() {
     private var mediaLibrarySession: MediaLibrarySession? = null
     private lateinit var player: ExoPlayer
     private lateinit var prefs: SharedPreferences
+    private var savedActionFactory: MediaNotification.ActionFactory? = null
 
     companion object {
         private const val TAG = "MusicService"
@@ -51,82 +52,16 @@ class MusicService : MediaLibraryService() {
         val exitEvent = SingleLiveEvent<Boolean>()
     }
 
-    // ========== 自定义通知提供者 ==========
+    // ========== 通知提供者 ==========
     private val notificationProvider = object : MediaNotification.Provider {
-
         override fun createNotification(
             mediaSession: MediaSession,
-            customLayout: ImmutableList<CommandButton>,   // 正确的参数类型
+            customLayout: ImmutableList<CommandButton>,
             actionFactory: MediaNotification.ActionFactory,
             onNotificationChangedCallback: MediaNotification.Provider.Callback
         ): MediaNotification {
-            val mediaItem = player.currentMediaItem
-            val title = mediaItem?.mediaMetadata?.title?.toString() ?: "未知歌曲"
-            val artist = mediaItem?.mediaMetadata?.artist?.toString() ?: "未知艺术家"
-
-            // 滑动删除 → 停止服务
-            val deleteIntent = Intent(this@MusicService, MusicService::class.java).apply {
-                action = ACTION_STOP_SERVICE
-            }
-            val deletePendingIntent = PendingIntent.getService(
-                this@MusicService, 0, deleteIntent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-
-            // 点击通知 → 返回播放界面
-            val contentIntent = Intent(this@MusicService, AudioPlayerActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val contentPendingIntent = PendingIntent.getActivity(
-                this@MusicService, 0, contentIntent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-
-            // 使用 actionFactory 将 CommandButton 列表转换为 NotificationCompat.Action 列表
-            val actions = customLayout.map { button ->
-                when {
-                    button.playerCommand != Player.COMMAND_INVALID -> {
-                        // 标准播放器命令
-                        actionFactory.createMediaAction(
-                            mediaSession,
-                            IconCompat.createWithResource(this@MusicService, button.iconResId),
-                            button.displayName ?: "",
-                            button.playerCommand
-                        )
-                    }
-                    button.sessionCommand != null -> {
-                        // 自定义命令（如切换循环模式）
-                        actionFactory.createCustomAction(
-                            mediaSession,
-                            IconCompat.createWithResource(this@MusicService, button.iconResId),
-                            button.displayName ?: "",
-                            button.sessionCommand!!.customAction,
-                            button.sessionCommand!!.customExtras
-                        )
-                    }
-                    else -> null
-                }
-            }.filterNotNull()
-
-            // 构建通知并添加按钮
-            val notification = NotificationCompat.Builder(this@MusicService, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_media_play)
-                .setContentTitle(title)
-                .setContentText(artist)
-                .setContentIntent(contentPendingIntent)
-                .setDeleteIntent(deletePendingIntent)
-                .setOngoing(true)
-                .setStyle(
-                    androidx.media.app.NotificationCompat.MediaStyle()
-                        .setMediaSession(mediaSession.sessionCompatToken)
-                        .setShowActionsInCompactView(0, 1, 2)  // 紧凑模式显示前三按钮
-                )
-                .apply {
-                    // 将 actions 添加到通知
-                    actions.forEach { addAction(it) }
-                }
-                .build()
-
+            savedActionFactory = actionFactory
+            val notification = buildNotificationInternal()
             return MediaNotification(NOTIFICATION_ID, notification)
         }
 
@@ -135,38 +70,34 @@ class MusicService : MediaLibraryService() {
             action: String,
             extras: Bundle
         ): Boolean {
-            when (action) {
-                "ACTION_CHANGE_REPEAT_MODE" -> {
-                    cycleRepeatMode()
-                    return true
-                }
+            if (action == "ACTION_CHANGE_REPEAT_MODE") {
+                cycleRepeatMode()
+                return true
             }
             return false
         }
     }
 
-    // ========== 媒体库回调（保持不变） ==========
+    // ========== 媒体库回调 ==========
     private val mediaLibrarySessionCallback = object : MediaLibrarySession.Callback {
-
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
             mediaItems: List<MediaItem>
         ): ListenableFuture<List<MediaItem>> {
             val serverUrl = prefs.getString("server_url", null).orEmpty().trimEnd('/')
-            val resolvedMediaItems = mediaItems.map { mediaItem ->
-                val currentUri = mediaItem.localConfiguration?.uri
-                if (currentUri == null || currentUri == android.net.Uri.EMPTY) {
-                    if (serverUrl.isNotEmpty() && (serverUrl.startsWith("http://") || serverUrl.startsWith("https://"))) {
-                        val encodedPath = try {
-                            mediaItem.mediaId.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8") }
-                        } catch (e: Exception) { mediaItem.mediaId }
-                        val finalUri = "$serverUrl/api/fileserver/stream/$encodedPath"
-                        mediaItem.buildUpon().setUri(finalUri).build()
-                    } else mediaItem
-                } else mediaItem
+            val resolved = mediaItems.map { item ->
+                val uri = item.localConfiguration?.uri
+                if (uri == null || uri == android.net.Uri.EMPTY) {
+                    if (serverUrl.startsWith("http")) {
+                        val encoded = try {
+                            item.mediaId.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8") }
+                        } catch (e: Exception) { item.mediaId }
+                        item.buildUpon().setUri("$serverUrl/api/fileserver/stream/$encoded").build()
+                    } else item
+                } else item
             }
-            return Futures.immediateFuture(resolvedMediaItems)
+            return Futures.immediateFuture(resolved)
         }
 
         override fun onSetMediaItems(
@@ -186,30 +117,37 @@ class MusicService : MediaLibraryService() {
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-            val settableFuture = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+            val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
             val itemsJson = prefs.getString("last_playlist", null)
             if (itemsJson.isNullOrEmpty()) {
-                settableFuture.set(MediaSession.MediaItemsWithStartPosition(emptyList(), 0, 0L))
-                return settableFuture
+                future.set(MediaSession.MediaItemsWithStartPosition(emptyList(), 0, 0L))
+                return future
             }
             val serverUrl = prefs.getString("server_url", "").orEmpty().trimEnd('/')
             val mediaItems = itemsJson.split("|||").map { id ->
                 val uri = if (serverUrl.startsWith("http")) {
-                    val encodedPath = try { id.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8") } } catch (_: Exception) { id }
-                    "$serverUrl/api/fileserver/stream/$encodedPath"
+                    val encoded = try { id.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8") } } catch (_: Exception) { id }
+                    "$serverUrl/api/fileserver/stream/$encoded"
                 } else ""
                 MediaItem.Builder().setMediaId(id).setUri(uri).build()
             }
             val startIndex = prefs.getInt("last_index", 0).coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0))
             val startPosition = prefs.getLong("last_position", 0L)
-            settableFuture.set(MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, startPosition))
+            future.set(MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, startPosition))
             Handler(Looper.getMainLooper()).post { applyPlayMode() }
-            return settableFuture
+            return future
         }
     }
 
-    // ========== 自定义按钮列表 ==========
+    // ========== 按钮列表 ==========
     private fun buildCommandButtons(): ImmutableList<CommandButton> {
+        // 循环模式按钮的图标根据当前播放模式决定
+        val repeatIcon = when {
+            player.shuffleModeEnabled -> R.drawable.ic_shuffle          // 随机播放
+            player.repeatMode == Player.REPEAT_MODE_ONE -> R.drawable.ic_repeat_one   // 单曲循环
+            else -> R.drawable.ic_repeat_all                           // 列表循环
+        }
+
         return ImmutableList.of(
             CommandButton.Builder()
                 .setDisplayName("上一曲")
@@ -228,15 +166,79 @@ class MusicService : MediaLibraryService() {
                 .build(),
             CommandButton.Builder()
                 .setDisplayName("循环模式")
-                .setIconResId(
-                    when (player.repeatMode) {
-                        Player.REPEAT_MODE_ONE -> R.drawable.ic_repeat_one
-                        else -> R.drawable.ic_repeat_all
-                    }
-                )
+                .setIconResId(repeatIcon)
                 .setSessionCommand(SessionCommand("ACTION_CHANGE_REPEAT_MODE", Bundle.EMPTY))
                 .build()
         )
+    }
+
+    // ========== 通知构建 ==========
+    private fun buildNotificationInternal(): Notification {
+        val mediaItem = player.currentMediaItem
+        val title = mediaItem?.mediaMetadata?.title?.toString() ?: "未知歌曲"
+        val artist = mediaItem?.mediaMetadata?.artist?.toString() ?: "未知艺术家"
+
+        val deleteIntent = Intent(this, MusicService::class.java).apply {
+            action = ACTION_STOP_SERVICE
+        }
+        val deletePendingIntent = PendingIntent.getService(
+            this, 0, deleteIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val contentIntent = Intent(this, AudioPlayerActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val contentPendingIntent = PendingIntent.getActivity(
+            this, 0, contentIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        // 构建通知按钮动作 —— 修复点：直接使用 mediaLibrarySession，无需 .mediaSession
+        val actions = buildCommandButtons().mapNotNull { button ->
+            val factory = savedActionFactory ?: return@mapNotNull null
+            when {
+                button.playerCommand != Player.COMMAND_INVALID -> {
+                    factory.createMediaAction(
+                        mediaLibrarySession!!,   // 修复：原为 mediaLibrarySession?.mediaSession!!
+                        IconCompat.createWithResource(this, button.iconResId),
+                        button.displayName ?: "",
+                        button.playerCommand
+                    )
+                }
+                button.sessionCommand != null -> {
+                    factory.createCustomAction(
+                        mediaLibrarySession!!,   // 修复：原为 mediaLibrarySession?.mediaSession!!
+                        IconCompat.createWithResource(this, button.iconResId),
+                        button.displayName ?: "",
+                        button.sessionCommand!!.customAction,
+                        button.sessionCommand!!.customExtras
+                    )
+                }
+                else -> null
+            }
+        }
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(title)
+            .setContentText(artist)
+            .setContentIntent(contentPendingIntent)
+            .setDeleteIntent(deletePendingIntent)
+            .setOngoing(true)
+            .setStyle(
+                androidx.media.app.NotificationCompat.MediaStyle()
+                    .setMediaSession(mediaLibrarySession?.sessionCompatToken) // 修复：原为 mediaLibrarySession?.mediaSession?.sessionCompatToken
+                    .setShowActionsInCompactView(0, 1, 2)
+            )
+            .apply { actions.forEach { addAction(it) } }
+            .build()
+    }
+
+    private fun updateNotification() {
+        val notification = buildNotificationInternal()
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, notification)
     }
 
     // ========== 生命周期 ==========
@@ -254,11 +256,18 @@ class MusicService : MediaLibraryService() {
                     .setDataSourceFactory(DefaultDataSource.Factory(this, httpDataSourceFactory))
             )
             .build()
+            .apply {
+                addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(isPlaying: Boolean) = updateNotification()
+                    override fun onRepeatModeChanged(repeatMode: Int) = updateNotification()
+                    override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) = updateNotification()
+                    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = updateNotification()
+                })
+            }
         exoPlayer = player
 
         val builder = MediaLibrarySession.Builder(this, player, mediaLibrarySessionCallback)
         setMediaNotificationProvider(notificationProvider)
-        // 设置自定义按钮布局，这些按钮会通过 createNotification 的 customLayout 参数传入
         builder.setCustomLayout(buildCommandButtons())
         mediaLibrarySession = builder.build()
     }
@@ -282,15 +291,14 @@ class MusicService : MediaLibraryService() {
         super.onDestroy()
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
-        return mediaLibrarySession
-    }
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
+        mediaLibrarySession
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         if (!player.isPlaying) stopSelf()
     }
 
-    // ========== 辅助方法 ==========
+    // ========== 辅助 ==========
     private fun createNotificationChannel() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -304,12 +312,25 @@ class MusicService : MediaLibraryService() {
     }
 
     private fun cycleRepeatMode() {
-        player.repeatMode = if (player.repeatMode == Player.REPEAT_MODE_ONE) {
-            Player.REPEAT_MODE_ALL
-        } else {
-            Player.REPEAT_MODE_ONE
+        // 三种模式轮换：列表循环 → 单曲循环 → 随机播放 → 列表循环...
+        when {
+            player.shuffleModeEnabled -> {
+                // 当前是随机，切换到列表循环
+                player.shuffleModeEnabled = false
+                player.repeatMode = Player.REPEAT_MODE_ALL
+            }
+            player.repeatMode == Player.REPEAT_MODE_ONE -> {
+                // 当前是单曲，切换到随机
+                player.repeatMode = Player.REPEAT_MODE_ALL
+                player.shuffleModeEnabled = true
+            }
+            else -> {
+                // 当前是列表循环，切换到单曲
+                player.repeatMode = Player.REPEAT_MODE_ONE
+                player.shuffleModeEnabled = false
+            }
         }
-        // 状态改变后 Media3 会自动重建通知（重新调用 createNotification 和 buildCommandButtons）
+        // 自动触发 onRepeatModeChanged 或 onShuffleModeEnabledChanged，通知会更新
     }
 
     private fun applyPlayMode() {
