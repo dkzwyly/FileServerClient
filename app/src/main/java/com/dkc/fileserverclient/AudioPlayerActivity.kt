@@ -59,8 +59,14 @@ class AudioPlayerActivity : AppCompatActivity() {
         setupClickListeners()
         observeViewModel()
 
+        // 观察 ViewModel 原有的 finish 事件（服务断开时）
         viewModel.finishEvent.observe(this) { finish ->
             if (finish) finish()
+        }
+
+        // ★ 新增：观察 MusicService 主动发出的退出事件（滑动删除通知时）
+        MusicService.exitEvent.observeEvent(this) { exit ->
+            if (exit) finish()
         }
     }
 
