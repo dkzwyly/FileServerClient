@@ -1,16 +1,13 @@
 package com.dkc.fileserverclient
 
 import android.app.NotificationManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
-import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.Menu
@@ -52,20 +49,16 @@ class MainActivity : AppCompatActivity() {
 
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
 
-    private var audioBackgroundManager: AudioBackgroundManager? = null
-    private var isAudioServiceBound = false
-
     private lateinit var rootFrame: FrameLayout
     private lateinit var rootLayout: LinearLayout
     private var currentGradientIndex = 0
-    // 修改 gradientList，新增第6个纯白背景
     private val gradientList = listOf(
         createGradientDrawable(intArrayOf(0xFFFCE4EC.toInt(), 0xFFFFF0F5.toInt(), 0xFFF8BBD0.toInt()), GradientDrawable.Orientation.TL_BR),
         createGradientDrawable(intArrayOf(0xFFE8F0FE.toInt(), 0xFFD4E4FC.toInt(), 0xFFBBDEFB.toInt()), GradientDrawable.Orientation.TL_BR),
         createGradientDrawable(intArrayOf(0xFFE0F7FA.toInt(), 0xFFB2EBF2.toInt(), 0xFF80DEEA.toInt()), GradientDrawable.Orientation.TOP_BOTTOM),
         createGradientDrawable(intArrayOf(0xFFF3E5F5.toInt(), 0xFFE1BEE7.toInt(), 0xFFCE93D8.toInt()), GradientDrawable.Orientation.LEFT_RIGHT),
         createGradientDrawable(intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()), GradientDrawable.Orientation.BL_TR),
-        createSolidWhiteDrawable()   // 新增纯白背景
+        createSolidWhiteDrawable()
     )
     private fun createSolidWhiteDrawable(): GradientDrawable {
         return GradientDrawable().apply {
@@ -78,17 +71,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val PREF_AUTO_CONNECT = "auto_connect_enabled"
-    }
-
-    private val audioServiceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            Log.d(TAG, "音频服务连接成功")
-            isAudioServiceBound = true
-        }
-        override fun onServiceDisconnected(name: ComponentName?) {
-            Log.d(TAG, "音频服务断开连接")
-            isAudioServiceBound = false
-        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -116,7 +98,6 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "自动连接设置: $autoConnectEnabled")
         }
 
-        audioBackgroundManager = AudioBackgroundManager(this)
         initViews()
         loadConnectionHistory()
         setupHistoryListView()
@@ -147,8 +128,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        audioBackgroundManager?.cleanup()
-        audioBackgroundManager = null
         effectManager.onDestroy()
         coroutineScope.cancel()
     }
@@ -162,7 +141,6 @@ class MainActivity : AppCompatActivity() {
     private fun applyGradient(index: Int) {
         currentGradientIndex = index
         if (index == 5) {
-            // 纯白背景：直接设置白色，无渐变
             rootFrame.setBackgroundColor(Color.WHITE)
         } else if (index in gradientList.indices) {
             rootFrame.background = gradientList[index]
@@ -453,9 +431,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
-        if (audioBackgroundManager?.isServiceRunning() == true) {
-            Log.d(TAG, "音频后台播放中，返回时保持服务")
-        }
         super.onBackPressed()
     }
 }

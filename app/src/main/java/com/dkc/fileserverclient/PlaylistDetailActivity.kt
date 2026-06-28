@@ -4,18 +4,21 @@ package com.dkc.fileserverclient
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.os.Bundle
-import android.os.IBinder
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.core.content.ContextCompat
+import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.common.util.concurrent.ListenableFuture
 
 class PlaylistDetailActivity : AppCompatActivity() {
 
@@ -41,52 +44,31 @@ class PlaylistDetailActivity : AppCompatActivity() {
     private var serverUrl: String = ""
     private var currentPlayMode: Int = MODE_LIST
 
-    private var playbackService: AudioPlaybackService? = null
-    private var isBound = false
+    // 新架构：Media3 控制器
+    private var mediaController: MediaController? = null
+    private var controllerFuture: ListenableFuture<MediaController>? = null
 
-    // 两种风格：静态蓝（索引0）、扫光（索引1）
     private val animations = listOf(
         StaticBackgroundAnimation(),
         ShineAnimationSimple()
     )
     private var currentAnimationIndex = 0
 
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            playbackService = (service as AudioPlaybackService.AudioServiceBinder).getService()
-            playbackService?.addPlaybackListener(playbackListener)
-            val currentTrack = playbackService?.getCurrentTrack()
-            adapter.setCurrentlyPlaying(currentTrack?.id)
-            currentTrack?.let {
-                val position = adapter.getPositionByTrackId(it.id)
-                if (position != -1) {
-                    scrollToCenter(position)
-                }
-            }
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            playbackService?.removePlaybackListener(playbackListener)
-            playbackService = null
-            isBound = false
-        }
-    }
-
-    private val playbackListener = object : AudioPlaybackListener {
-        override fun onTrackChanged(track: AudioTrack, index: Int) {
+    // Media3 播放器监听器（用于高亮更新）
+    private val playerListener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
             runOnUiThread {
-                adapter.setCurrentlyPlaying(track.id)
-                val position = adapter.getPositionByTrackId(track.id)
-                if (position != -1) {
-                    scrollToCenter(position)
-                }
+                updateHighlight()
             }
         }
 
-        override fun onPlaybackStateChanged(status: AudioPlaybackStatus) {}
-        override fun onPlaybackError(error: String) {}
-        override fun onPlaybackEnded() {}
-        override fun onAudioBuffering(isBuffering: Boolean) {}
+        override fun onPlaybackStateChanged(state: Int) {
+            if (state == Player.STATE_IDLE) {
+                runOnUiThread {
+                    adapter.setCurrentlyPlaying(null)
+                }
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -111,22 +93,32 @@ class PlaylistDetailActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        val intent = Intent(this, AudioPlaybackService::class.java)
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        isBound = true
+        // 连接到 MusicService (Media3)
+        val sessionToken = SessionToken(this, ComponentName(this, MusicService::class.java))
+        controllerFuture = MediaController.Builder(this, sessionToken).buildAsync()
+        controllerFuture?.addListener({
+            try {
+                mediaController = controllerFuture?.get()
+                mediaController?.addListener(playerListener)
+                // 连接成功后刷新高亮
+                updateHighlight()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }, ContextCompat.getMainExecutor(this))
     }
 
     override fun onStop() {
         super.onStop()
-        if (isBound) {
-            unbindService(serviceConnection)
-            isBound = false
-        }
+        mediaController?.removeListener(playerListener)
+        controllerFuture?.let { MediaController.releaseFuture(it) }
+        mediaController = null
+        controllerFuture = null
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        playbackService?.removePlaybackListener(playbackListener)
+        // 移除监听（已由 onStop 处理）
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -224,6 +216,20 @@ class PlaylistDetailActivity : AppCompatActivity() {
         }
         supportActionBar?.title = playlist.name
         adapter.updateData(playlist.tracks)
+        // 加载完成后尝试高亮当前正在播放的曲目
+        updateHighlight()
+    }
+
+    // 新增：从 MediaController 获取当前播放媒体 ID 并更新高亮
+    private fun updateHighlight() {
+        val currentMediaId = mediaController?.currentMediaItem?.mediaId
+        adapter.setCurrentlyPlaying(currentMediaId)
+        if (currentMediaId != null) {
+            val position = adapter.getPositionByTrackPath(currentMediaId)
+            if (position != -1) {
+                scrollToCenter(position)
+            }
+        }
     }
 
     private fun playTrack(track: AudioTrack, index: Int) {
@@ -247,8 +253,9 @@ class PlaylistDetailActivity : AppCompatActivity() {
             if (success) {
                 Toast.makeText(this, "已从歌单移除", Toast.LENGTH_SHORT).show()
                 loadPlaylist()
-                val currentPlayingId = playbackService?.getCurrentTrack()?.id
-                if (currentPlayingId == track.id) {
+                // 如果移除的是当前播放的曲目，清除高亮
+                val currentMediaId = mediaController?.currentMediaItem?.mediaId
+                if (currentMediaId == track.path) {
                     adapter.setCurrentlyPlaying(null)
                 }
             } else {

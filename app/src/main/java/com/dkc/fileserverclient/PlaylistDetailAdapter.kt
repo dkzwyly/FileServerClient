@@ -21,7 +21,8 @@ class PlaylistDetailAdapter(
         private const val TAG = "PlaylistDetailAdapter"
     }
 
-    private var currentlyPlayingId: String? = null
+    // 修改：使用 path 作为唯一标识（与 Media3 mediaId 对齐）
+    private var currentlyPlayingPath: String? = null
     private var recyclerView: RecyclerView? = null
 
     class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -45,7 +46,8 @@ class PlaylistDetailAdapter(
 
         loadTrackCover(holder, track)
 
-        val isPlaying = currentlyPlayingId == track.id
+        // 修改：使用 path 进行比较
+        val isPlaying = currentlyPlayingPath == track.path
         if (isPlaying) {
             holder.itemView.setBackgroundColor(
                 holder.itemView.context.getColor(R.color.playing_highlight)
@@ -71,23 +73,18 @@ class PlaylistDetailAdapter(
         Log.d(TAG, "loadTrackCover: trackId=${track.id}, name=${track.name}, coverUrl=$coverUrl")
 
         if (coverUrl.isNullOrEmpty()) {
-            Log.d(TAG, "coverUrl is null or empty, using placeholder")
             holder.icon.setImageResource(R.drawable.ic_music_image_placeholder)
             return
         }
 
         val localFile = CoverImageStorage.getLocalFile(track.id, coverUrl)
-        Log.d(TAG, "localFile path: ${localFile.absolutePath}, exists=${localFile.exists()}, length=${localFile.length()}")
-
         if (localFile.exists()) {
-            Log.d(TAG, "Local cache found, loading from file")
             holder.icon.load(localFile) {
                 placeholder(R.drawable.ic_music_image_placeholder)
                 error(R.drawable.ic_music_image_placeholder)
                 crossfade(true)
             }
         } else {
-            Log.d(TAG, "No local cache, using placeholder")
             holder.icon.setImageResource(R.drawable.ic_music_image_placeholder)
         }
     }
@@ -99,22 +96,23 @@ class PlaylistDetailAdapter(
         notifyDataSetChanged()
     }
 
-    fun setCurrentlyPlaying(trackId: String?) {
-        if (currentlyPlayingId != trackId) {
-            currentlyPlayingId = trackId
+    // 修改：参数改为 path
+    fun setCurrentlyPlaying(playingPath: String?) {
+        if (currentlyPlayingPath != playingPath) {
+            currentlyPlayingPath = playingPath
             notifyDataSetChanged()
         }
     }
 
-    fun getPositionByTrackId(trackId: String): Int {
-        return tracks.indexOfFirst { it.id == trackId }
+    // 修改：根据 path 查找位置
+    fun getPositionByTrackPath(trackPath: String): Int {
+        return tracks.indexOfFirst { it.path == trackPath }
     }
 
     fun setAnimation(newAnimation: PlayingAnimation) {
-        // 停止当前正在播放的项上的旧动画
-        val playingId = currentlyPlayingId
-        if (playingId != null && recyclerView != null) {
-            val position = getPositionByTrackId(playingId)
+        val playingPath = currentlyPlayingPath
+        if (playingPath != null && recyclerView != null) {
+            val position = getPositionByTrackPath(playingPath)
             if (position != -1) {
                 val holder = recyclerView?.findViewHolderForAdapterPosition(position) as? ViewHolder
                 if (holder != null) {
