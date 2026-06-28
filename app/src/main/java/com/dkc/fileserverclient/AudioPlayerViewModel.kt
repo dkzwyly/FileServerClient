@@ -178,6 +178,16 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 // 控制器就绪后尝试初始化频谱
                 setupVisualizerIfNeeded()
 
+                // ----- 新增：主动同步当前播放状态与频谱 -----
+                val nowPlaying = mediaController?.isPlaying ?: false
+                isPlaying.postValue(nowPlaying)
+                if (nowPlaying && visualizerEnabled.value == true) {
+                    // 确保频谱采集器存在并启动（setupVisualizerIfNeeded 已创建 helper）
+                    visualizerHelper?.start()
+                    visualizerActive.postValue(true)
+                }
+                // -----------------------------------------
+
             } catch (e: Exception) {
                 errorMessage.postValue("连接媒体服务失败")
             }
