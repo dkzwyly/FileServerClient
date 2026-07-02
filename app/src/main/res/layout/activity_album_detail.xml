@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F5F5">
+
+    <!-- 标题栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@android:color/white"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:elevation="4dp">
+
+        <ImageButton
+            android:id="@+id/detailBackButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_arrow_back"
+            app:tint="@android:color/black"
+            android:contentDescription="返回" />
+
+        <TextView
+            android:id="@+id/detailTitleText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:textColor="@android:color/black" />
+
+        <!-- 添加图片按钮 -->
+        <ImageButton
+            android:id="@+id/addImageButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_add_photo"
+            app:tint="#2196F3"
+            android:contentDescription="添加图片" />
+    </LinearLayout>
+
+    <!-- 删除选中状态栏 -->
+    <LinearLayout
+        android:id="@+id/detailSelectionToolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#E8E8E8"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/detailSelectedCountText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="已选择 0 项"
+            android:textSize="14sp"
+            android:textColor="#333333"
+            android:paddingStart="16dp" />
+
+        <Button
+            android:id="@+id/detailRemoveSelectedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="移除"
+            android:textSize="14sp"
+            android:textColor="#FF5252" />
+    </LinearLayout>
+
+    <!-- 状态提示 -->
+    <TextView
+        android:id="@+id/detailStatusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="16dp"
+        android:text="加载中..."
+        android:textSize="14sp"
+        android:textColor="#666666"
+        android:gravity="center" />
+
+    <!-- 图片网格 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/detailRecyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:padding="4dp" />
+</LinearLayout>

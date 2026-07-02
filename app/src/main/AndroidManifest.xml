@@ -54,6 +54,19 @@
             android:theme="@style/Theme.AppCompat.Light.NoActionBar"
             android:screenOrientation="portrait" />
 
+        <!-- 新增：相册详情页 -->
+        <activity
+            android:name=".AlbumDetailActivity"
+            android:label="相册详情"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:screenOrientation="portrait" />
+
+        <!-- 新增：从服务器选择图片 -->
+        <activity
+            android:name=".ImagePickerActivity"
+            android:label="选择图片"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+
         <activity
             android:name=".TextLibraryActivity"
             android:label="文本库"
@@ -119,7 +132,6 @@
             android:foregroundServiceType="mediaPlayback"
             android:exported="false" />
 
-        <!-- 新的 Media3 MusicService，基于 MediaLibraryService -->
         <service
             android:name=".MusicService"
             android:exported="true"
@@ -129,9 +141,6 @@
             </intent-filter>
         </service>
 
-
-
-        <!-- Media3 按钮接收器，用于耳机/蓝牙控制 -->
         <receiver
             android:name="androidx.media3.session.MediaButtonReceiver"
             android:exported="true">

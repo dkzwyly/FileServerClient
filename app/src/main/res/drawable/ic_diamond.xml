@@ -1,0 +1,46 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="120dp"
+    android:height="140dp"
+    android:viewportWidth="120"
+    android:viewportHeight="140">
+
+    <!-- 投影（向右下偏移 3dp） -->
+    <path
+        android:fillColor="#1A000000"
+        android:pathData="M63,13 L113,73 L63,133 L13,73 Z" />
+
+    <!-- 主体菱形：渐变填充 + 蓝色描边 -->
+    <path
+        android:strokeColor="#2196F3"
+        android:strokeWidth="2"
+        android:pathData="M60,10 L110,70 L60,130 L10,70 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startColor="#FFFFFF"
+                android:endColor="#E0E0E0"
+                android:type="linear"
+                android:startY="10"
+                android:endY="130" />
+        </aapt:attr>
+    </path>
+
+    <!-- 水平辅助线（实线） -->
+    <path
+        android:strokeColor="#90CAF9"
+        android:strokeWidth="1.5"
+        android:pathData="M10,70 L110,70" />
+
+    <!-- 实线折线 a-f-b（蓝灰） -->
+    <path
+        android:strokeColor="#78909C"
+        android:strokeWidth="2"
+        android:pathData="M60,10 L50,70 L60,130" />
+
+    <!-- 另一条折线 a-e-b（浅蓝） -->
+    <path
+        android:strokeColor="#BBDEFB"
+        android:strokeWidth="1.5"
+        android:pathData="M60,10 L70,70 L60,130" />
+
+</vector>

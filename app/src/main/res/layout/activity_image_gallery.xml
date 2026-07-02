@@ -33,7 +33,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="图片库"
+            android:text="图片"
             android:textSize="18sp"
             android:textStyle="bold"
             android:gravity="center"
@@ -46,7 +46,7 @@
             android:orientation="horizontal"
             android:gravity="center">
 
-            <!-- 排序按钮（第一） -->
+            <!-- 排序按钮（仅相册Tab可见） -->
             <ImageButton
                 android:id="@+id/sortButton"
                 android:layout_width="40dp"
@@ -55,9 +55,10 @@
                 android:src="@drawable/ic_sort"
                 app:tint="#333333"
                 android:contentDescription="排序"
-                android:layout_marginEnd="8dp" />
+                android:layout_marginEnd="8dp"
+                android:visibility="visible" />
 
-            <!-- 相机按钮（第二） -->
+            <!-- 相机按钮 -->
             <ImageButton
                 android:id="@+id/cameraButton"
                 android:layout_width="40dp"
@@ -68,7 +69,7 @@
                 android:contentDescription="相机"
                 android:layout_marginEnd="8dp" />
 
-            <!-- 上传按钮（第三） -->
+            <!-- 上传按钮 -->
             <ImageButton
                 android:id="@+id/reindexButton"
                 android:layout_width="40dp"
@@ -79,7 +80,7 @@
                 android:contentDescription="上传图片"
                 android:layout_marginEnd="8dp" />
 
-            <!-- 多选删除按钮（第四） -->
+            <!-- 多选删除按钮（仅相册Tab可见） -->
             <ImageButton
                 android:id="@+id/deleteSelectedButton"
                 android:layout_width="40dp"
@@ -94,7 +95,7 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 多选状态栏 -->
+    <!-- 多选状态栏（仅相册Tab可见） -->
     <LinearLayout
         android:id="@+id/selectionToolbar"
         android:layout_width="match_parent"
@@ -141,6 +142,40 @@
 
     </LinearLayout>
 
+    <!-- Tab 切换栏 -->
+    <LinearLayout
+        android:id="@+id/tabContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@android:color/white"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/albumTab"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="相册"
+            android:gravity="center"
+            android:padding="12dp"
+            android:background="@drawable/tab_background_selected"
+            android:textColor="@color/primary_color"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/albumSetTab"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="相册集"
+            android:gravity="center"
+            android:padding="12dp"
+            android:background="@drawable/tab_background"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp" />
+    </LinearLayout>
+
     <!-- 状态提示 -->
     <TextView
         android:id="@+id/galleryStatusText"
@@ -152,13 +187,35 @@
         android:textColor="#666666"
         android:gravity="center" />
 
-    <!-- 图片网格 -->
+    <!-- 相册图片网格（原功能） -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/galleryRecyclerView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:clipToPadding="false"
-        android:padding="4dp" />
+        android:padding="4dp"
+        android:visibility="visible" />
+
+    <!-- 相册集列表 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/albumSetRecyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone"
+        android:padding="8dp" />
+
+    <!-- 新建相册 FAB（仅相册集Tab可见） -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/addAlbumFab"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:src="@drawable/ic_add"
+        android:visibility="gone"
+        app:tint="@android:color/white"
+        app:backgroundTint="@color/primary_color" />
 
 </LinearLayout>

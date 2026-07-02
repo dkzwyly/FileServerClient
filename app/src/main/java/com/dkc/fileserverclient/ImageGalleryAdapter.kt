@@ -22,8 +22,8 @@ class ImageGalleryAdapter(
 ) : ListAdapter<GalleryItem, RecyclerView.ViewHolder>(GalleryItemDiffCallback()) {
 
     companion object {
-        private const val VIEW_TYPE_HEADER = 0
-        private const val VIEW_TYPE_IMAGE  = 1
+        const val VIEW_TYPE_HEADER = 0
+        const val VIEW_TYPE_IMAGE  = 1
     }
 
     private var unsafeImageLoader: ImageLoader? = null
