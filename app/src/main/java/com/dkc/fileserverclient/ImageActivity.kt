@@ -117,7 +117,6 @@ class ImageActivity : AppCompatActivity() {
 
         imageManager.setListener(object : ImagePreviewManager.ImageStateListener {
             override fun onImageLoadStart() {
-                // 隐藏图片，避免显示未定位的图片导致跳变
                 imagePreview.visibility = View.INVISIBLE
                 imagePreview.setImageDrawable(null)
                 matrix.reset()
@@ -129,17 +128,12 @@ class ImageActivity : AppCompatActivity() {
             override fun onImageLoadSuccess(isGif: Boolean) {
                 loadingProgress.visibility = View.GONE
                 errorTextView.visibility = View.GONE
-                // 延迟到下一帧，确保 ImageView 尺寸已确定，计算矩阵后再显示
                 imagePreview.post {
                     applyFittedCenterMatrix()
                     imagePreview.visibility = View.VISIBLE
                     if (isGif) {
                         imageManager.startGifAnimation()
                     }
-                }
-
-                if (isGif) {
-                    imageManager.startGifAnimation()
                 }
             }
 
@@ -152,9 +146,6 @@ class ImageActivity : AppCompatActivity() {
         })
     }
 
-    /**
-     * 计算并应用初始居中适配矩阵（FIT_CENTER 效果）
-     */
     private fun applyFittedCenterMatrix() {
         val drawable = imagePreview.drawable ?: return
         val dw = drawable.intrinsicWidth
@@ -177,7 +168,6 @@ class ImageActivity : AppCompatActivity() {
         currentScale = 1f
     }
 
-    // ---------- 手势相关 ----------
     private fun setupGestureDetectors() {
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
@@ -197,7 +187,7 @@ class ImageActivity : AppCompatActivity() {
                 e2: MotionEvent,
                 distanceX: Float,
                 distanceY: Float
-            ): Boolean = false // 让 onTouch 处理拖动
+            ): Boolean = false
         })
 
         scaleGestureDetector = ScaleGestureDetector(this,
@@ -208,7 +198,6 @@ class ImageActivity : AppCompatActivity() {
                     val focusY = detector.focusY
 
                     val newScale = (currentScale * scaleFactor).coerceIn(minScale, maxScale)
-                    // 计算相对于当前矩阵的缩放变换
                     matrix.postScale(
                         newScale / currentScale,
                         newScale / currentScale,
@@ -225,9 +214,7 @@ class ImageActivity : AppCompatActivity() {
     @SuppressLint("ClickableViewAccessibility")
     private fun setupTouchListener() {
         imagePreview.setOnTouchListener { _, event ->
-            // 双指缩放优先
             scaleGestureDetector.onTouchEvent(event)
-            // 双指缩放进行中时不处理单指手势
             if (!scaleGestureDetector.isInProgress) {
                 gestureDetector.onTouchEvent(event)
             }
@@ -243,7 +230,6 @@ class ImageActivity : AppCompatActivity() {
                 MotionEvent.ACTION_MOVE -> {
                     if (scaleGestureDetector.isInProgress) return@setOnTouchListener true
 
-                    // 放大超过 1.01 倍才允许拖动
                     if (event.pointerCount == 1 && currentScale > 1.01f) {
                         val dx = event.rawX - lastTouchX
                         val dy = event.rawY - lastTouchY
@@ -257,7 +243,6 @@ class ImageActivity : AppCompatActivity() {
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    // 未放大且未拖动时，左右滑动可以切换图片
                     if (!isDragging && currentScale <= 1.01f) {
                         val diffX = event.rawX - touchStartX
                         if (abs(diffX) > SWIPE_THRESHOLD) {
@@ -276,24 +261,19 @@ class ImageActivity : AppCompatActivity() {
         animateScale(currentScale, targetScale, focusX, focusY)
     }
 
-    /**
-     * 平滑缩放动画，以 (focusX, focusY) 为中心进行缩放
-     */
     private fun animateScale(
         fromScale: Float,
         toScale: Float,
         pivotX: Float,
         pivotY: Float
     ) {
-        val startMatrix = Matrix(matrix) // 克隆当前矩阵
+        val startMatrix = Matrix(matrix)
         ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 250
             addUpdateListener { animator ->
                 val fraction = animator.animatedFraction
                 val scaleThisFrame = fromScale + (toScale - fromScale) * fraction
                 val scaleChange = scaleThisFrame / fromScale
-
-                // 基于开始矩阵进行变换，避免累积误差
                 val m = Matrix(startMatrix)
                 m.postScale(scaleChange, scaleChange, pivotX, pivotY)
                 imagePreview.imageMatrix = m
@@ -317,7 +297,6 @@ class ImageActivity : AppCompatActivity() {
         }
     }
 
-    // ---------- 控制栏与事件 ----------
     private fun setupEventListeners() {
         backButton.setOnClickListener { onBackPressed() }
         shareButton.setOnClickListener { shareCurrentImage() }
@@ -325,25 +304,32 @@ class ImageActivity : AppCompatActivity() {
         nextButton.setOnClickListener { viewModel.navigateToNext() }
     }
 
-    // ImageActivity.kt
     private fun loadIntentData() {
         val serverUrl = intent.getStringExtra("SERVER_URL") ?: ""
-        var directoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
-        val imagePath = intent.getStringExtra("FILE_URL") ?: ""
-        val filePath = intent.getStringExtra("FILE_PATH") ?: ""
-        val sortBy = intent.getStringExtra("SORT_BY") ?: ""
-        val sortOrder = intent.getStringExtra("SORT_ORDER") ?: ""
+        val imageList = intent.getStringArrayListExtra("IMAGE_LIST")
+        val currentIndex = intent.getIntExtra("CURRENT_INDEX", -1)
 
-        // 如果 CURRENT_PATH 为空，则从 FILE_PATH 提取父目录
-        if (directoryPath.isEmpty() && filePath.isNotEmpty()) {
-            directoryPath = File(filePath).parent ?: ""
-        }
+        if (imageList != null && currentIndex >= 0 && currentIndex < imageList.size) {
+            // 使用相册传来的图片路径列表
+            viewModel.initializeWithPaths(serverUrl, imageList, currentIndex)
+        } else {
+            // 原有逻辑：从服务器目录加载
+            var directoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
+            val imagePath = intent.getStringExtra("FILE_URL") ?: ""
+            val filePath = intent.getStringExtra("FILE_PATH") ?: ""
+            val sortBy = intent.getStringExtra("SORT_BY") ?: ""
+            val sortOrder = intent.getStringExtra("SORT_ORDER") ?: ""
 
-        if (serverUrl.isEmpty()) {
-            showError("服务器地址不能为空")
-            return
+            if (directoryPath.isEmpty() && filePath.isNotEmpty()) {
+                directoryPath = File(filePath).parent ?: ""
+            }
+
+            if (serverUrl.isEmpty()) {
+                showError("服务器地址不能为空")
+                return
+            }
+            viewModel.initialize(serverUrl, directoryPath, imagePath, sortBy, sortOrder)
         }
-        viewModel.initialize(serverUrl, directoryPath, imagePath, sortBy, sortOrder)
     }
 
     @SuppressLint("SetTextI18n")
@@ -391,7 +377,7 @@ class ImageActivity : AppCompatActivity() {
     }
 
     private fun getFullImageUrl(item: FileSystemItem): String {
-        val serverUrl = intent.getStringExtra("SERVER_URL") ?: ""
+        val serverUrl = viewModel.getServerUrl()
         val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
         return "${serverUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
     }
@@ -408,7 +394,6 @@ class ImageActivity : AppCompatActivity() {
         imagePreview.visibility = View.GONE
     }
 
-    // ---------- 分享功能 ----------
     private fun shareCurrentImage() {
         val item = viewModel.currentImage.value ?: return
         val imageUrl = getFullImageUrl(item)

@@ -1,4 +1,3 @@
-// ImageViewModel.kt
 package com.dkc.fileserverclient
 
 import android.app.Application
@@ -15,7 +14,6 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
 
     private val fileServerService = FileServerService(application)
 
-    // 状态管理
     private val _imageList = MutableLiveData<List<FileSystemItem>>()
     val imageList: LiveData<List<FileSystemItem>> = _imageList
 
@@ -34,11 +32,9 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
     private val _totalCount = MutableLiveData<Int>(0)
     val totalCount: LiveData<Int> = _totalCount
 
-    // 初始化数据
     private var serverUrl = ""
     private var directoryPath = ""
     private var initialImagePath = ""
-    // 新增：排序参数
     private var sortBy = ""
     private var sortOrder = ""
 
@@ -49,14 +45,6 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
         data class Error(val message: String) : LoadingState()
     }
 
-    /**
-     * 初始化 ViewModel，支持传入排序参数
-     * @param serverUrl 服务器地址
-     * @param directoryPath 图片所在目录路径
-     * @param initialImagePath 初始图片的路径（可选）
-     * @param sortBy 排序字段（name, modified, size, dateTaken 等）
-     * @param sortOrder 排序方向（asc, desc）
-     */
     fun initialize(
         serverUrl: String,
         directoryPath: String,
@@ -73,8 +61,38 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 加载图片列表，使用当前排序参数（如果有）
+     * 使用外部传入的路径列表初始化（用于相册预览）
      */
+    fun initializeWithPaths(serverUrl: String, paths: List<String>, currentIndex: Int) {
+        this.serverUrl = serverUrl
+        val items = paths.map { path ->
+            FileSystemItem(
+                name = path.substringAfterLast("/"),
+                path = path,
+                size = 0,
+                extension = path.substringAfterLast('.', ""),
+                sizeFormatted = "",
+                lastModified = "",
+                isVideo = false,
+                isAudio = false,
+                mimeType = "image/*",
+                encoding = ""
+            )
+        }
+        _imageList.value = items
+        _totalCount.value = items.size
+        if (currentIndex in items.indices) {
+            _currentIndex.value = currentIndex
+            _currentImage.value = items[currentIndex]
+        } else if (items.isNotEmpty()) {
+            _currentIndex.value = 0
+            _currentImage.value = items[0]
+        }
+        _loadingState.value = LoadingState.Success
+    }
+
+    fun getServerUrl(): String = serverUrl
+
     private fun loadImageList() {
         viewModelScope.launch {
             try {
@@ -82,7 +100,6 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
                 _errorState.value = null
 
                 val allItems = withContext(Dispatchers.IO) {
-                    // 如果有排序参数，使用带排序的接口
                     if (sortBy.isNotEmpty() && sortOrder.isNotEmpty()) {
                         fileServerService.getFileList(serverUrl, directoryPath, sortBy, sortOrder)
                     } else {
@@ -97,10 +114,8 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
                 _imageList.value = images
                 _totalCount.value = images.size
 
-                // 设置当前图片
                 if (images.isNotEmpty()) {
                     if (initialImagePath.isNotEmpty()) {
-                        // 找到初始图片的索引
                         val index = images.indexOfFirst { item ->
                             getFullImageUrl(item) == initialImagePath || item.path.contains(initialImagePath)
                         }
@@ -126,7 +141,6 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateToNext() {
         val currentIdx = _currentIndex.value ?: -1
         val images = _imageList.value ?: emptyList()
-
         if (currentIdx < images.size - 1) {
             val nextIdx = currentIdx + 1
             _currentIndex.value = nextIdx
@@ -137,7 +151,6 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateToPrevious() {
         val currentIdx = _currentIndex.value ?: -1
         val images = _imageList.value ?: emptyList()
-
         if (currentIdx > 0) {
             val prevIdx = currentIdx - 1
             _currentIndex.value = prevIdx

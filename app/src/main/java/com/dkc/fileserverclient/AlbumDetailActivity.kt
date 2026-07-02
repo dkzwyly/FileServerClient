@@ -464,6 +464,16 @@ class AlbumDetailActivity : AppCompatActivity() {
     }
 
     private fun previewImage(item: FileSystemItem) {
+        // 构建当前相册的图片路径列表（从 adapter 中提取）
+        val imagePaths = mutableListOf<String>()
+        for (galleryItem in adapter.currentList) {
+            if (galleryItem is GalleryItem.ImageEntry) {
+                imagePaths.add(galleryItem.image.path)
+            }
+        }
+        val currentIndex = imagePaths.indexOf(item.path)
+        if (currentIndex == -1) return
+
         try {
             val encoded = java.net.URLEncoder.encode(item.path, "UTF-8")
             val url = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encoded"
@@ -472,10 +482,12 @@ class AlbumDetailActivity : AppCompatActivity() {
                 putExtra("FILE_URL", url)
                 putExtra("FILE_PATH", item.path)
                 putExtra("SERVER_URL", currentServerUrl)
-                putExtra("CURRENT_PATH", imageGalleryPath)
+                putExtra("CURRENT_PATH", imageGalleryPath) // 保留用于降级
+                putStringArrayListExtra("IMAGE_LIST", ArrayList(imagePaths))
+                putExtra("CURRENT_INDEX", currentIndex)
             })
         } catch (e: Exception) {
-            Toast.makeText(this, "预览失败", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "预览失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
