@@ -25,7 +25,7 @@ class VideoLibraryActivity : AppCompatActivity() {
 
     private val fileServerService by lazy { FileServerService(this) }
     private var currentServerUrl = ""
-    private val videoLibraryPath = "data/影视"  // 视频库根目录
+    private val videoLibraryPath = "data/影视"  // 视频库根目录（仅用于显示，不再实际使用）
 
     // 数据列表
     private val recentWatchedList = mutableListOf<FileSystemItem>()
@@ -42,12 +42,15 @@ class VideoLibraryActivity : AppCompatActivity() {
     private lateinit var sharedPreferences: SharedPreferences
     private val gson = Gson()
 
+    // 新增：存储完整的视频库树
+    private var videoLibraryRoot: VideoLibraryNode? = null
+
     companion object {
         private const val TAG = "VideoLibraryActivity"
         private const val PREFS_NAME = "video_library_prefs"
         private const val KEY_RECENT_WATCHED = "recent_watched"
 
-        // 视频文件扩展名
+        // 视频文件扩展名（用于兼容旧逻辑，但新逻辑从树中直接判断 type）
         private val VIDEO_EXTENSIONS = listOf(
             ".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm",
             ".m4v", ".3gp", ".mpeg", ".mpg", ".ts", ".m2ts"
@@ -64,7 +67,6 @@ class VideoLibraryActivity : AppCompatActivity() {
             return
         }
 
-        // 初始化 SharedPreferences
         sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
         initViews()
@@ -82,12 +84,11 @@ class VideoLibraryActivity : AppCompatActivity() {
 
         titleText.text = "视频库"
 
-        // 设置返回按钮
         backButton.setOnClickListener {
             finish()
         }
 
-        // 设置最近观看列表（水平滚动）
+        // 最近观看
         recentWatchedRecyclerView.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
         recentWatchedAdapter = RecentWatchedAdapter(
             currentServerUrl,
@@ -97,14 +98,14 @@ class VideoLibraryActivity : AppCompatActivity() {
         )
         recentWatchedRecyclerView.adapter = recentWatchedAdapter
 
-        // 设置文件夹列表（水平滚动）
+        // 文件夹
         foldersRecyclerView.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
         foldersAdapter = VideoFoldersAdapter(currentServerUrl, folderList) { folderItem ->
             onFolderSelected(folderItem)
         }
         foldersRecyclerView.adapter = foldersAdapter
 
-        // 设置视频文件列表（水平滚动）
+        // 视频文件
         videosRecyclerView.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
         videosAdapter = VideoFilesAdapter(
             currentServerUrl,
@@ -115,6 +116,7 @@ class VideoLibraryActivity : AppCompatActivity() {
         videosRecyclerView.adapter = videosAdapter
     }
 
+    // ---------- 最近观看 ----------
     private fun loadRecentWatched() {
         coroutineScope.launch {
             try {
@@ -122,221 +124,152 @@ class VideoLibraryActivity : AppCompatActivity() {
                 recentWatchedList.clear()
                 recentWatchedList.addAll(recentItems)
                 recentWatchedAdapter.notifyDataSetChanged()
-
-                if (recentWatchedList.isEmpty()) {
-                    Log.d(TAG, "没有找到最近观看记录")
-                } else {
-                    Log.d(TAG, "加载了 ${recentWatchedList.size} 个最近观看记录")
-                }
             } catch (e: Exception) {
                 Log.e(TAG, "加载最近观看记录失败", e)
             }
         }
     }
 
-    /**
-     * 从本地存储加载最近观看记录
-     */
     private suspend fun loadRecentWatchedFromStorage(): List<FileSystemItem> = withContext(Dispatchers.IO) {
-        return@withContext try {
-            val recentWatchedJson = sharedPreferences.getString(KEY_RECENT_WATCHED, null)
-
-            if (recentWatchedJson.isNullOrEmpty()) {
-                emptyList()
-            } else {
+        try {
+            val json = sharedPreferences.getString(KEY_RECENT_WATCHED, null)
+            if (json.isNullOrEmpty()) emptyList()
+            else {
                 val type = object : TypeToken<List<FileSystemItem>>() {}.type
-                gson.fromJson(recentWatchedJson, type) ?: emptyList()
+                gson.fromJson(json, type) ?: emptyList()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "解析最近观看记录失败", e)
             emptyList()
         }
     }
 
+    // ---------- 视频库加载（使用 getVideoLibrary 一次获取） ----------
     private fun loadVideoFolders() {
         coroutineScope.launch {
-            statusText.text = "正在加载影视文件夹..."
-
+            statusText.text = "正在加载影视库..."
             try {
-                Log.d(TAG, "开始加载视频库目录: $videoLibraryPath")
+                // 1. 获取树
+                val root = withContext(Dispatchers.IO) {
+                    fileServerService.getVideoLibrary(currentServerUrl)
+                }
+                if (root == null) {
+                    statusText.text = "获取影视库失败"
+                    return@launch
+                }
+                videoLibraryRoot = root
 
-                // 获取所有包含视频文件的文件夹（包括两层深度）
-                val allVideoFolders = findAllVideoFolders(videoLibraryPath, 2)
+                // 2. 提取第一层子目录（即电视剧/电影目录），树中 type != "video" 的节点
+                val dirNodes = root.children?.filter { it.type != "video" } ?: emptyList()
+                if (dirNodes.isEmpty()) {
+                    statusText.text = "没有找到影视目录"
+                    foldersAdapter.updateFolders(emptyList())
+                    return@launch
+                }
 
-                Log.d(TAG, "找到 ${allVideoFolders.size} 个包含视频的文件夹")
+                // 3. 转换为 FileSystemItem 并更新文件夹列表
+                val folderItems = dirNodes.map { node ->
+                    FileSystemItem(
+                        name = node.name,
+                        path = node.path,
+                        size = 0,
+                        extension = "",
+                        sizeFormatted = "",
+                        lastModified = "",
+                        isVideo = false,
+                        isAudio = false,
+                        mimeType = "inode/directory",
+                        encoding = ""
+                    )
+                }
+                foldersAdapter.updateFolders(folderItems)
 
-                // 更新文件夹列表
-                foldersAdapter.updateFolders(allVideoFolders)
+                // 4. 统计每个目录下的视频数量（从 children 中 type == "video" 计数）
+                dirNodes.forEach { node ->
+                    val videoCount = node.children?.count { it.type == "video" } ?: 0
+                    foldersAdapter.setVideoCount(node.path, videoCount)
+                }
 
-                if (folderList.isEmpty()) {
-                    statusText.text = "没有找到包含视频的文件夹"
-                } else {
-                    statusText.text = "找到 ${folderList.size} 个影视文件夹"
+                statusText.text = "找到 ${folderItems.size} 个影视目录"
 
-                    // 默认选择第一个文件夹
-                    if (folderList.isNotEmpty()) {
-                        onFolderSelected(folderList[0])
-                    }
+                // 5. 默认选中第一个目录，加载其视频
+                if (folderItems.isNotEmpty()) {
+                    onFolderSelected(folderItems[0])
                 }
 
             } catch (e: Exception) {
                 statusText.text = "加载失败: ${e.message}"
-                Log.e(TAG, "加载影视文件夹异常", e)
+                Log.e(TAG, "加载影视库异常", e)
             }
         }
     }
 
-    /**
-     * 递归查找包含视频文件的文件夹，最多搜索指定深度
-     */
-    private suspend fun findAllVideoFolders(startPath: String, maxDepth: Int): List<FileSystemItem> {
-        val result = mutableListOf<FileSystemItem>()
-
-        // 使用递归查找
-        findVideoFoldersRecursive(startPath, 0, maxDepth, result)
-
-        return result
-    }
-
-    /**
-     * 递归查找包含视频文件的文件夹
-     */
-    private suspend fun findVideoFoldersRecursive(
-        currentPath: String,
-        currentDepth: Int,
-        maxDepth: Int,
-        result: MutableList<FileSystemItem>
-    ) {
-        if (currentDepth > maxDepth) {
-            return
-        }
-
-        try {
-            val items = withContext(Dispatchers.IO) {
-                fileServerService.getFileList(currentServerUrl, currentPath)
-            }
-
-            for (item in items) {
-                if (item.isDirectory && item.name != "..") {
-                    // 检查该文件夹是否包含视频文件并统计数量
-                    val videoCount = countVideoFiles(item.path)
-                    if (videoCount > 0) {
-                        result.add(item)
-                        // 设置视频数量到适配器
-                        foldersAdapter.setVideoCount(item.path, videoCount)
-                    }
-
-                    // 如果还有深度，继续递归搜索
-                    if (currentDepth < maxDepth) {
-                        findVideoFoldersRecursive(item.path, currentDepth + 1, maxDepth, result)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "搜索文件夹 $currentPath 失败", e)
-        }
-    }
-
-    /**
-     * 统计文件夹中的视频文件数量
-     */
-    private suspend fun countVideoFiles(folderPath: String): Int {
-        return withContext(Dispatchers.IO) {
-            try {
-                val folderItems = fileServerService.getFileList(currentServerUrl, folderPath)
-                folderItems.count { item ->
-                    !item.isDirectory && isVideoFile(item)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "统计文件夹 $folderPath 视频数量失败", e)
-                0
-            }
-        }
-    }
-
+    // ---------- 选中文件夹 ----------
     private fun onFolderSelected(folderItem: FileSystemItem) {
         selectedFolder = folderItem
         statusText.text = "正在加载: ${folderItem.name}"
-        loadVideosInFolder(folderItem.path)
+
+        // 1. 从树中查找对应节点
+        val targetNode = findNodeByPath(videoLibraryRoot, folderItem.path)
+        if (targetNode == null) {
+            statusText.text = "未找到该目录"
+            return
+        }
+
+        // 2. 提取视频节点（type == "video"）
+        val videoNodes = targetNode.children?.filter { it.type == "video" } ?: emptyList()
+        val videoItems = videoNodes.map { node ->
+            FileSystemItem(
+                name = node.name,
+                path = node.path,
+                size = node.size ?: 0,
+                extension = node.name.substringAfterLast('.', ""),
+                sizeFormatted = node.sizeFormatted ?: "",
+                lastModified = "",
+                isVideo = true,
+                isAudio = false,
+                mimeType = "video/*",
+                encoding = ""
+            )
+        }
+
+        // 3. 更新视频列表
+        videoList.clear()
+        videoList.addAll(videoItems)
+        videosAdapter.notifyDataSetChanged()
+
+        if (videoList.isEmpty()) {
+            statusText.text = "${folderItem.name} 没有视频文件"
+        } else {
+            statusText.text = "${folderItem.name} - ${videoList.size} 个视频"
+            preloadVideoThumbnails()
+        }
 
         // 更新文件夹选中状态
         foldersAdapter.setSelectedFolder(folderItem)
     }
 
-    private fun loadVideosInFolder(folderPath: String) {
-        coroutineScope.launch {
-            try {
-                Log.d(TAG, "开始加载文件夹视频: $folderPath")
-
-                val allItems = withContext(Dispatchers.IO) {
-                    fileServerService.getFileList(currentServerUrl, folderPath)
-                }
-
-                // 过滤出视频文件
-                videoList.clear()
-                videoList.addAll(allItems.filter { item ->
-                    !item.isDirectory && isVideoFile(item)
-                })
-
-                Log.d(TAG, "在文件夹中找到 ${videoList.size} 个视频文件")
-                videosAdapter.notifyDataSetChanged()
-
-                if (videoList.isEmpty()) {
-                    statusText.text = "该文件夹没有视频文件"
-                } else {
-                    statusText.text = "${selectedFolder?.name} - ${videoList.size} 个视频"
-
-                    // 预加载视频缩略图以提高用户体验
-                    preloadVideoThumbnails()
-                }
-
-            } catch (e: Exception) {
-                statusText.text = "加载视频失败: ${e.message}"
-                Log.e(TAG, "加载文件夹视频异常", e)
-            }
+    // ---------- 辅助：在树中按路径查找节点 ----------
+    private fun findNodeByPath(root: VideoLibraryNode?, path: String): VideoLibraryNode? {
+        if (root == null) return null
+        if (root.path == path) return root
+        root.children?.forEach { child ->
+            val found = findNodeByPath(child, path)
+            if (found != null) return found
         }
+        return null
     }
 
-    /**
-     * 预加载视频缩略图以提高用户体验
-     */
-    private fun preloadVideoThumbnails() {
-        if (videoList.size > 10) {
-            val videosToPreload = videoList.take(10)
-            coroutineScope.launch {
-                videosToPreload.forEach { videoItem ->
-                    try {
-                        // 调用 loadVideoThumbnailBitmap，不关心返回值，只要能触发缓存就行
-                        ThumbnailLoader.loadVideoThumbnailBitmap(
-                            serverUrl = currentServerUrl,
-                            videoPath = videoItem.path,
-                            width = 320,
-                            height = 180
-                        )
-                    } catch (e: Exception) {
-                        Log.e(TAG, "预加载失败: ${videoItem.path}", e)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun isVideoFile(item: FileSystemItem): Boolean {
-        return VIDEO_EXTENSIONS.any { item.name.endsWith(it, ignoreCase = true) }
-    }
-
+    // ---------- 获取当前文件夹的视频列表（用于播放列表） ----------
     private fun getCurrentFolderVideos(): List<FileSystemItem> {
         return videoList
     }
 
+    // ---------- 播放视频 ----------
     private fun playVideo(videoItem: FileSystemItem, allVideosInFolder: List<FileSystemItem>) {
         try {
             val encodedPath = java.net.URLEncoder.encode(videoItem.path, "UTF-8")
             val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
 
-            Log.d(TAG, "播放视频: ${videoItem.name}, URL: $fileUrl")
-
-            // 找到当前视频在列表中的位置
             val currentIndex = allVideosInFolder.indexOfFirst { it.path == videoItem.path }
 
             val intent = Intent(this, VideoPlayerActivity::class.java).apply {
@@ -351,64 +284,67 @@ class VideoLibraryActivity : AppCompatActivity() {
             }
             startActivity(intent)
 
-            // 添加到最近观看
             addToRecentWatched(videoItem)
-
         } catch (e: Exception) {
             Log.e(TAG, "播放视频失败", e)
         }
     }
 
+    // ---------- 最近观看持久化 ----------
     private fun addToRecentWatched(videoItem: FileSystemItem) {
         coroutineScope.launch {
             try {
-                // 移除已存在的相同项目
                 recentWatchedList.removeAll { it.path == videoItem.path }
-
-                // 添加到开头
                 recentWatchedList.add(0, videoItem)
-
-                // 限制最近观看数量
                 if (recentWatchedList.size > 10) {
                     recentWatchedList.removeAt(recentWatchedList.size - 1)
                 }
-
                 recentWatchedAdapter.notifyDataSetChanged()
-
-                // 保存到本地存储
                 saveRecentWatchedToStorage()
-
             } catch (e: Exception) {
                 Log.e(TAG, "保存最近观看记录失败", e)
             }
         }
     }
 
-    /**
-     * 保存最近观看记录到本地存储
-     */
     private suspend fun saveRecentWatchedToStorage() = withContext(Dispatchers.IO) {
         try {
-            val recentWatchedJson = gson.toJson(recentWatchedList)
-            sharedPreferences.edit().putString(KEY_RECENT_WATCHED, recentWatchedJson).apply()
-
-            Log.d(TAG, "最近观看记录已保存，共 ${recentWatchedList.size} 个项目")
+            val json = gson.toJson(recentWatchedList)
+            sharedPreferences.edit().putString(KEY_RECENT_WATCHED, json).apply()
         } catch (e: Exception) {
-            Log.e(TAG, "保存最近观看记录失败", e)
             throw e
         }
     }
 
+    // ---------- 缩略图预加载 ----------
+    private fun preloadVideoThumbnails() {
+        if (videoList.size > 10) {
+            val videosToPreload = videoList.take(10)
+            coroutineScope.launch {
+                videosToPreload.forEach { videoItem ->
+                    try {
+                        ThumbnailLoader.loadVideoThumbnailBitmap(
+                            serverUrl = currentServerUrl,
+                            videoPath = videoItem.path,
+                            width = 320,
+                            height = 180
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "预加载失败: ${videoItem.path}", e)
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------- 生命周期 ----------
     override fun onResume() {
         super.onResume()
-        Log.d(TAG, "onResume")
-        // 重新加载最近观看记录，确保数据最新
         loadRecentWatched()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         coroutineScope.cancel()
-        Log.d(TAG, "onDestroy")
     }
 }

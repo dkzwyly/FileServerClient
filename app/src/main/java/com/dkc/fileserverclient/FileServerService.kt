@@ -536,4 +536,30 @@ class FileServerService(private val context: Context) {
             emptyMap()
         }
     }
+    // ==================== 影视库目录树 ====================
+    /**
+     * 获取完整的影视库目录树（最多两层）
+     */
+    suspend fun getVideoLibrary(serverUrl: String): VideoLibraryNode? = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/video-library"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "FileServerClient/1.0")
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: return@withContext null
+                gson.fromJson(json, VideoLibraryNode::class.java)
+            } else {
+                Log.e(TAG, "获取影视库失败: ${response.code}")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "获取影视库异常", e)
+            null
+        }
+    }
 }

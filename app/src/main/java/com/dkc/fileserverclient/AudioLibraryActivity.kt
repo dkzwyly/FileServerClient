@@ -436,7 +436,6 @@ class AudioLibraryActivity : AppCompatActivity() {
     // ==================== 加载音频与歌单 ====================
 
     private fun loadAudios() {
-        // 重置数据就绪标志
         audioDataLoaded = false
         coroutineScope.launch {
             statusText.text = "正在加载音频..."
@@ -456,18 +455,14 @@ class AudioLibraryActivity : AppCompatActivity() {
                 }
 
                 val updatedTracks = tracks.map { track ->
-                    val encodedPath = java.net.URLEncoder.encode(track.path, "UTF-8")
-                    val meta = metadataMap[encodedPath]
-                    if (meta != null) {
-                        track.copy(
-                            title = meta.title.ifEmpty { track.title },
-                            artist = meta.artist.ifEmpty { track.artist },
-                            album = meta.album.ifEmpty { track.album },
-                            coverUrl = if (meta.hasCover) {
-                                metadataManager.getCoverUrl(currentServerUrl, track.path, addTimestamp = false)
-                            } else null
-                        )
-                    } else track
+                    val meta = metadataMap[track.path]
+                    track.copy(
+                        title = meta?.title?.takeIf { it.isNotEmpty() } ?: track.title,
+                        artist = meta?.artist?.takeIf { it.isNotEmpty() } ?: track.artist,
+                        album = meta?.album?.takeIf { it.isNotEmpty() } ?: track.album,
+                        // 始终生成封面 URL，让服务器决定是否有封面，Coil 处理占位
+                        coverUrl = metadataManager.getCoverUrl(currentServerUrl, track.path, addTimestamp = false)
+                    )
                 }
 
                 audioTracks.clear()
@@ -478,7 +473,6 @@ class AudioLibraryActivity : AppCompatActivity() {
                 audioAdapter.updateData(filteredAudioTracks)
                 statusText.text = if (audioTracks.isEmpty()) "没有找到音频文件" else "共找到 ${audioTracks.size} 个音频文件"
 
-                // 数据加载完成，设置标志位并尝试高亮
                 audioDataLoaded = true
                 tryHighlightCurrentTrack()
             } catch (e: Exception) {

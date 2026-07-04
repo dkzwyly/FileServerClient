@@ -20,14 +20,12 @@ data class FileSystemItem(
     @SerializedName("hasThumbnail") val hasThumbnail: Boolean = false
 
 ) : Parcelable {
-    // 修复：更严格的文件夹判断
     val isDirectory: Boolean
         get() = mimeType == "inode/directory" || (size == 0L && extension.isEmpty() && !isImage)
 
-    // 修复：更严格的图片文件判断
     val isImage: Boolean
         get() {
-            if (isDirectory) return false // 确保文件夹不会被识别为图片
+            if (isDirectory) return false
             val ext = extension.lowercase()
             return ext in listOf(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".jfif")
         }
@@ -66,7 +64,6 @@ data class FileInfoResponse(
     @SerializedName("encoding") val encoding: String = ""
 ) : Parcelable
 
-// ====== 新增：上传文件详细信息 ======
 @Parcelize
 data class UploadedFileInfo(
     @SerializedName("originalName") val originalName: String = "",
@@ -80,7 +77,6 @@ data class UploadedFileInfo(
     @SerializedName("errorMessage") val errorMessage: String = ""
 ) : Parcelable
 
-// ====== 新增：冲突解决信息 ======
 @Parcelize
 data class ConflictResolutionInfo(
     @SerializedName("originalName") val originalName: String = "",
@@ -91,20 +87,17 @@ data class ConflictResolutionInfo(
     @SerializedName("action") val action: String = "Renamed"
 ) : Parcelable
 
-// ====== 修改后的 UploadResult ======
 @Parcelize
 data class UploadResult(
     @SerializedName("success") val success: Boolean = false,
     @SerializedName("message") val message: String = "",
 
-    // 保持向后兼容：原有字段
     @Deprecated("请使用 uploadedFiles 字段替代")
     @SerializedName("files") val files: List<String> = emptyList(),
 
     @SerializedName("totalSize") val totalSize: Long = 0,
     @SerializedName("totalSizeFormatted") val totalSizeFormatted: String = "",
 
-    // ====== 新增字段 ======
     @SerializedName("uploadedFiles") val uploadedFiles: List<UploadedFileInfo> = emptyList(),
     @SerializedName("resolvedConflicts") val resolvedConflicts: List<ConflictResolutionInfo> = emptyList(),
     @SerializedName("totalFiles") val totalFiles: Int = 0,
@@ -116,30 +109,34 @@ data class UploadResult(
     @SerializedName("processingTime") val processingTime: String = ""
 ) : Parcelable {
 
-    // 辅助方法：获取成功上传的文件列表
     val successfulFiles: List<UploadedFileInfo>
         get() = uploadedFiles.filter { it.success }
 
-    // 辅助方法：获取失败的文件列表
     val failedFiles: List<UploadedFileInfo>
         get() = uploadedFiles.filter { !it.success }
 
-    // 辅助方法：获取重命名的文件列表
     val renamedFiles: List<UploadedFileInfo>
         get() = uploadedFiles.filter { it.wasRenamed }
 
-    // 辅助方法：获取冲突解决数量
     fun getConflictResolutionCount(): Int {
         return resolvedConflicts.size
     }
 
-    // 辅助方法：格式化显示时间
     fun getFormattedUploadTime(): String {
         return uploadTime.ifEmpty { "未知时间" }
     }
 
-    // 辅助方法：获取处理时间（毫秒）
     fun getProcessingTimeMillis(): Long {
         return processingTime.toLongOrNull() ?: 0
     }
 }
+
+// ==================== 新增：影视库树节点 ====================
+data class VideoLibraryNode(
+    @SerializedName("name") val name: String = "",
+    @SerializedName("path") val path: String = "",
+    @SerializedName("type") val type: String = "",               // "root", "season", "video"
+    @SerializedName("children") val children: List<VideoLibraryNode>? = null,
+    @SerializedName("size") val size: Long? = null,
+    @SerializedName("sizeFormatted") val sizeFormatted: String? = null
+)
