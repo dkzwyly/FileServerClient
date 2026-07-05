@@ -1,22 +1,40 @@
 package com.dkc.fileserverclient
 
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.recyclerview.widget.AsyncListDiffer
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 
 class TextLibraryAdapter(
     private val serverUrl: String,
-    private val items: List<FileSystemItem>,
     private val onItemClick: (FileSystemItem) -> Unit
 ) : RecyclerView.Adapter<TextLibraryAdapter.BookshelfViewHolder>() {
 
-    class BookshelfViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+    class BookshelfViewHolder(view: android.view.View) : RecyclerView.ViewHolder(view) {
         val iconView: ImageView = view.findViewById(R.id.bookshelfIcon)
         val titleView: TextView = view.findViewById(R.id.bookshelfTitle)
         val countView: TextView = view.findViewById(R.id.bookshelfCount)
+    }
+
+    // 使用 AsyncListDiffer 替代直接持有 List
+    private val differ = AsyncListDiffer(this, object : DiffUtil.ItemCallback<FileSystemItem>() {
+        override fun areItemsTheSame(oldItem: FileSystemItem, newItem: FileSystemItem): Boolean {
+            return oldItem.path == newItem.path
+        }
+
+        override fun areContentsTheSame(oldItem: FileSystemItem, newItem: FileSystemItem): Boolean {
+            return oldItem.name == newItem.name &&
+                    oldItem.isDirectory == newItem.isDirectory &&
+                    oldItem.size == newItem.size
+        }
+    })
+
+    // 对外提交数据
+    fun submitList(list: List<FileSystemItem>) {
+        differ.submitList(list)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BookshelfViewHolder {
@@ -26,22 +44,16 @@ class TextLibraryAdapter(
     }
 
     override fun onBindViewHolder(holder: BookshelfViewHolder, position: Int) {
-        val item = items[position]
+        val item = differ.currentList[position]
 
-        // 设置图标
         holder.iconView.setImageResource(R.drawable.ic_bookshelf)
-
-        // 设置标题（文件夹名称）
         holder.titleView.text = item.name
-
-        // 设置项目计数（可以显示文件夹中的项目数量，这里简单处理）
         holder.countView.text = "书架"
 
-        // 设置点击事件
         holder.itemView.setOnClickListener {
             onItemClick(item)
         }
     }
 
-    override fun getItemCount(): Int = items.size
+    override fun getItemCount(): Int = differ.currentList.size
 }

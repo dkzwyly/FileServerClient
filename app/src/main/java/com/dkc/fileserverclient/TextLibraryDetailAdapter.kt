@@ -1,22 +1,38 @@
 package com.dkc.fileserverclient
 
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.recyclerview.widget.AsyncListDiffer
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 
 class TextLibraryDetailAdapter(
     private val serverUrl: String,
-    private val items: List<FileSystemItem>,
     private val onItemClick: (FileSystemItem) -> Unit
 ) : RecyclerView.Adapter<TextLibraryDetailAdapter.TextItemViewHolder>() {
 
-    class TextItemViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+    class TextItemViewHolder(view: android.view.View) : RecyclerView.ViewHolder(view) {
         val iconView: ImageView = view.findViewById(R.id.textItemIcon)
         val titleView: TextView = view.findViewById(R.id.textItemTitle)
         val typeView: TextView = view.findViewById(R.id.textItemType)
+    }
+
+    private val differ = AsyncListDiffer(this, object : DiffUtil.ItemCallback<FileSystemItem>() {
+        override fun areItemsTheSame(oldItem: FileSystemItem, newItem: FileSystemItem): Boolean {
+            return oldItem.path == newItem.path
+        }
+
+        override fun areContentsTheSame(oldItem: FileSystemItem, newItem: FileSystemItem): Boolean {
+            return oldItem.name == newItem.name &&
+                    oldItem.isDirectory == newItem.isDirectory &&
+                    oldItem.size == newItem.size
+        }
+    })
+
+    fun submitList(list: List<FileSystemItem>) {
+        differ.submitList(list)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): TextItemViewHolder {
@@ -26,26 +42,18 @@ class TextLibraryDetailAdapter(
     }
 
     override fun onBindViewHolder(holder: TextItemViewHolder, position: Int) {
-        val item = items[position]
+        val item = differ.currentList[position]
 
         if (item.isDirectory) {
-            // 文件夹显示为书架
             holder.iconView.setImageResource(R.drawable.ic_bookshelf)
             holder.titleView.text = item.name
             holder.typeView.text = "文件夹"
         } else {
-            // 文本文件显示文件图标和去掉后缀的文件名
             holder.iconView.setImageResource(R.drawable.ic_text_file)
-
-            // 去掉文件后缀显示
-            val displayName = removeFileExtension(item.name)
-            holder.titleView.text = displayName
-
-            // 显示文件类型
+            holder.titleView.text = removeFileExtension(item.name)
             holder.typeView.text = getFileTypeDescription(item)
         }
 
-        // 设置点击事件
         holder.itemView.setOnClickListener {
             onItemClick(item)
         }
@@ -53,11 +61,7 @@ class TextLibraryDetailAdapter(
 
     private fun removeFileExtension(fileName: String): String {
         val lastDotIndex = fileName.lastIndexOf('.')
-        return if (lastDotIndex > 0) {
-            fileName.substring(0, lastDotIndex)
-        } else {
-            fileName
-        }
+        return if (lastDotIndex > 0) fileName.substring(0, lastDotIndex) else fileName
     }
 
     private fun getFileTypeDescription(item: FileSystemItem): String {
@@ -72,5 +76,5 @@ class TextLibraryDetailAdapter(
         }
     }
 
-    override fun getItemCount(): Int = items.size
+    override fun getItemCount(): Int = differ.currentList.size
 }

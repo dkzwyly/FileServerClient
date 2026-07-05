@@ -19,7 +19,6 @@ class TextLibraryDetailActivity : AppCompatActivity() {
     private lateinit var backButton: ImageButton
 
     private val fileServerService by lazy { FileServerService(this) }
-    private val itemList = mutableListOf<FileSystemItem>()
     private lateinit var adapter: TextLibraryDetailAdapter
     private var currentServerUrl = ""
     private var currentFolderPath = ""
@@ -29,14 +28,17 @@ class TextLibraryDetailActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "TextLibraryDetailActivity"
-
-        // 文本文件扩展名
-        private val TEXT_EXTENSIONS = listOf(
+        private val TEXT_EXTENSIONS_SET = hashSetOf(
             ".txt", ".log", ".json", ".xml", ".csv", ".md",
             ".html", ".htm", ".css", ".js", ".java", ".kt", ".py",
             ".cpp", ".c", ".h", ".php", ".rb", ".go", ".rs",
             ".doc", ".docx", ".pdf", ".ppt", ".pptx", ".xls", ".xlsx"
         )
+
+        private fun isTextFile(item: FileSystemItem): Boolean {
+            val lower = item.name.lowercase()
+            return TEXT_EXTENSIONS_SET.any { lower.endsWith(it) }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,15 +66,13 @@ class TextLibraryDetailActivity : AppCompatActivity() {
 
         titleText.text = folderName
 
-        // 设置返回按钮
         backButton.setOnClickListener {
             finish()
         }
 
-        // 使用网格布局，每行3个
         recyclerView.layoutManager = GridLayoutManager(this, 3)
 
-        adapter = TextLibraryDetailAdapter(currentServerUrl, itemList) { item ->
+        adapter = TextLibraryDetailAdapter(currentServerUrl) { item ->
             onItemClicked(item)
         }
         recyclerView.adapter = adapter
@@ -85,25 +85,23 @@ class TextLibraryDetailActivity : AppCompatActivity() {
             try {
                 Log.d(TAG, "开始加载目录: $currentFolderPath")
 
-                val allItems = withContext(Dispatchers.IO) {
-                    fileServerService.getFileList(currentServerUrl, currentFolderPath)
+                val filteredItems = withContext(Dispatchers.IO) {
+                    val allItems = fileServerService.getFileList(currentServerUrl, currentFolderPath)
+                    Log.d(TAG, "获取到 ${allItems.size} 个项目")
+
+                    allItems.filter { item ->
+                        (item.isDirectory || isTextFile(item)) && item.name != ".."
+                    }
                 }
 
-                Log.d(TAG, "获取到 ${allItems.size} 个项目")
+                Log.d(TAG, "过滤后得到 ${filteredItems.size} 个项目")
 
-                // 过滤出文件夹和文本文件，同时过滤掉".."文件夹
-                itemList.clear()
-                itemList.addAll(allItems.filter { item ->
-                    (item.isDirectory || isTextFile(item)) && item.name != ".."
-                })
-
-                Log.d(TAG, "过滤后得到 ${itemList.size} 个项目")
-
-                if (itemList.isEmpty()) {
+                if (filteredItems.isEmpty()) {
                     statusText.text = "没有找到内容"
+                    adapter.submitList(emptyList())
                 } else {
-                    statusText.text = "共找到 ${itemList.size} 个项目"
-                    adapter.notifyDataSetChanged()
+                    statusText.text = "共找到 ${filteredItems.size} 个项目"
+                    adapter.submitList(filteredItems)   // ✅ 使用 submitList
                 }
 
             } catch (e: Exception) {
@@ -113,13 +111,8 @@ class TextLibraryDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun isTextFile(item: FileSystemItem): Boolean {
-        return TEXT_EXTENSIONS.any { item.name.endsWith(it, ignoreCase = true) }
-    }
-
     private fun onItemClicked(item: FileSystemItem) {
         if (item.isDirectory) {
-            // 递归进入子目录
             val intent = Intent(this, TextLibraryDetailActivity::class.java).apply {
                 putExtra("SERVER_URL", currentServerUrl)
                 putExtra("FOLDER_PATH", item.path)
@@ -127,7 +120,6 @@ class TextLibraryDetailActivity : AppCompatActivity() {
             }
             startActivity(intent)
         } else {
-            // 预览文本文件
             previewTextFile(item)
         }
     }

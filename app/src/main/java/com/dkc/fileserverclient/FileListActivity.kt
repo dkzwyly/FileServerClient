@@ -60,8 +60,6 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
-
-
     // 自动连播相关变量
     private var autoPlayEnabled = false
     private var currentPlayingIndex = -1
@@ -95,7 +93,8 @@ class FileListActivity : AppCompatActivity() {
         uploadStatusCard = findViewById(R.id.uploadStatusCard)
         fileCountText = findViewById(R.id.fileCountText)
 
-        adapter = FileListAdapter(this, currentServerUrl, fileList,
+        // 修改：adapter 不再传入列表
+        adapter = FileListAdapter(this, currentServerUrl,
             onItemClick = { item ->
                 onFileItemClicked(item)
             },
@@ -104,6 +103,7 @@ class FileListActivity : AppCompatActivity() {
             }
         )
         filesRecyclerView.layoutManager = LinearLayoutManager(this)
+        filesRecyclerView.itemAnimator = null
         filesRecyclerView.adapter = adapter
 
         selectFilesButton.setOnClickListener {
@@ -180,9 +180,9 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
+    // ---------- 修改后的 loadCurrentDirectory ----------
     private fun loadCurrentDirectory(path: String = "") {
         currentPath = path
-        // 在Toolbar上显示当前路径（可选，通过副标题）
         supportActionBar?.subtitle = if (path.isEmpty()) "根目录" else path
 
         if (isPolling) {
@@ -191,7 +191,6 @@ class FileListActivity : AppCompatActivity() {
 
         coroutineScope.launch {
             statusLabel.text = "正在加载文件列表..."
-            // 禁用刷新菜单项
             invalidateOptionsMenu()
 
             try {
@@ -201,27 +200,23 @@ class FileListActivity : AppCompatActivity() {
 
                 fileList.clear()
                 fileList.addAll(items)
-                adapter.notifyDataSetChanged()
+                // 提交新副本，确保触发 DiffUtil 更新
+                adapter.submitList(ArrayList(fileList))
 
                 fileCountText.text = "${items.size} 个项目"
-
-                if (!isPolling) {
-                    statusLabel.text = if (path.isEmpty()) {
-                        "根目录 - ${items.size} 个项目"
-                    } else {
-                        "当前路径: $path - ${items.size} 个项目"
-                    }
+                statusLabel.text = if (path.isEmpty()) {
+                    "根目录 - ${items.size} 个项目"
+                } else {
+                    "当前路径: $path - ${items.size} 个项目"
                 }
 
                 resetAutoPlay()
-
                 Log.d("FileListActivity", "加载目录完成: path=$path, items=${items.size}")
             } catch (e: Exception) {
                 statusLabel.text = "加载失败: ${e.message}"
                 showToast("加载文件列表失败")
                 Log.e("FileListActivity", "加载目录异常: ${e.message}", e)
             } finally {
-                // 恢复刷新菜单项
                 invalidateOptionsMenu()
             }
         }
@@ -318,6 +313,7 @@ class FileListActivity : AppCompatActivity() {
         thumbnailPollingHandler.postDelayed(pollingRunnable, 500)
     }
 
+    // ---------- 修改后的 searchFiles ----------
     private fun searchFiles() {
         val query = searchEditText.text.toString().trim()
         if (query.isEmpty()) {
@@ -325,26 +321,27 @@ class FileListActivity : AppCompatActivity() {
             return
         }
 
-        val filteredList = fileList.filter {
-            it.name.contains(query, true) ||
-                    (it.extension.contains(query, true))
+        coroutineScope.launch {
+            val filtered = withContext(Dispatchers.IO) {
+                fileList.filter {
+                    it.name.contains(query, true) || it.extension.contains(query, true)
+                }
+            }
+
+            fileList.clear()
+            fileList.addAll(filtered)
+            // 提交新副本
+            adapter.submitList(ArrayList(fileList))
+
+            fileCountText.text = "${filtered.size} 个搜索结果"
+            statusLabel.text = "搜索 '${query}': 找到 ${filtered.size} 个结果"
+            resetAutoPlay()
         }
-
-        val tempList = mutableListOf<FileSystemItem>()
-        tempList.addAll(filteredList)
-
-        fileList.clear()
-        fileList.addAll(tempList)
-        adapter.notifyDataSetChanged()
-
-        fileCountText.text = "${filteredList.size} 个搜索结果"
-        statusLabel.text = "搜索 '${query}': 找到 ${filteredList.size} 个结果"
-        resetAutoPlay()
     }
 
     private fun previewFile(item: FileSystemItem) {
         try {
-            val fileType = FileTypeUtils.getFileType(item)  // 使用工具类
+            val fileType = FileTypeUtils.getFileType(item)
 
             // 音频 → AudioPlayerActivity
             if (fileType == "audio") {
@@ -402,9 +399,9 @@ class FileListActivity : AppCompatActivity() {
                 return
             }
 
-            // 视频 → VideoPlayerActivity（新建的独立视频播放器）
+            // 视频 → VideoPlayerActivity
             if (fileType == "video") {
-                setupAutoPlay(item)  // 构建播放列表和当前索引
+                setupAutoPlay(item)
 
                 val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
                 val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
@@ -415,7 +412,7 @@ class FileListActivity : AppCompatActivity() {
                     putExtra("FILE_TYPE", "video")
                     putExtra("FILE_PATH", item.path)
                     putExtra("AUTO_PLAY_ENABLED", autoPlayEnabled)
-                    putExtra("MEDIA_FILE_LIST", ArrayList(mediaFileList))   // 用于连播
+                    putExtra("MEDIA_FILE_LIST", ArrayList(mediaFileList))
                     putExtra("CURRENT_INDEX", currentPlayingIndex)
                     putExtra("SERVER_URL", currentServerUrl)
                     putExtra("CURRENT_PATH", currentPath)
@@ -424,7 +421,7 @@ class FileListActivity : AppCompatActivity() {
                 return
             }
 
-            // 通用文件（PDF、Office、网页等） → GeneralPreviewActivity（WebView 预览）
+            // 通用文件
             val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
             val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
 
@@ -442,6 +439,7 @@ class FileListActivity : AppCompatActivity() {
             showToast("预览失败: ${e.message}")
         }
     }
+
     private fun setupAutoPlay(selectedItem: FileSystemItem) {
         mediaFileList.clear()
         mediaFileList.addAll(fileList.filter { item ->
@@ -495,10 +493,7 @@ class FileListActivity : AppCompatActivity() {
     }
 
     private fun getFileType(item: FileSystemItem): String {
-        // 添加日志以便排查
         Log.d("FileListActivity", "getFileType: name=${item.name}, isVideo=${item.isVideo}, isAudio=${item.isAudio}, extension=${item.extension}")
-
-        // 去除扩展名中的点号
         val ext = item.extension.removePrefix(".")
         return when {
             item.isVideo -> "video"
@@ -549,7 +544,6 @@ class FileListActivity : AppCompatActivity() {
             }
         }
     }
-
 
     private fun uriToFile(uri: Uri): File? {
         return try {
