@@ -562,4 +562,43 @@ class FileServerService(private val context: Context) {
             null
         }
     }
+    suspend fun createDirectory(serverUrl: String, path: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedPath = URLEncoder.encode(path, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/directory/$encodedPath"
+            val request = Request.Builder().url(url).post(RequestBody.create(null, "")).build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "创建目录失败", e)
+            false
+        }
+    }
+    /**
+     * 删除指定路径的文件夹及其所有内容（递归删除）
+     * @param serverUrl 服务器地址（含协议和端口）
+     * @param directoryPath 相对根目录的文件夹路径（例如 "data/影视/第一季"）
+     * @return 是否删除成功
+     */
+    suspend fun deleteDirectory(serverUrl: String, directoryPath: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            // 对路径的每个分段进行 URL 编码（支持中文、空格等）
+            val encodedPath = directoryPath.split("/")
+                .joinToString("/") { segment -> URLEncoder.encode(segment, "UTF-8") }
+            val deleteUrl = "${formattedUrl.removeSuffix("/")}/api/fileserver/directory/$encodedPath"
+
+            val request = Request.Builder()
+                .url(deleteUrl)
+                .delete()
+                .build()
+
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "删除文件夹失败: $directoryPath", e)
+            false
+        }
+    }
 }

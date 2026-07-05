@@ -23,7 +23,8 @@ class FileListAdapter(
     private val context: Context,
     private val serverUrl: String,
     private val onItemClick: (FileSystemItem) -> Unit,
-    private val onDeleteClick: (FileSystemItem) -> Unit
+    private val onDeleteClick: (FileSystemItem) -> Unit,
+    private val onDirectoryLongPress: (FileSystemItem) -> Unit
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private val unsafeImageLoader by lazy {
@@ -66,7 +67,10 @@ class FileListAdapter(
     }
 
     // ---------- 文件夹 ViewHolder ----------
-    class DirectoryViewHolder(view: View) : BaseViewHolder(view) {
+    class DirectoryViewHolder(
+        view: View,
+        private val onDirectoryLongPress: (FileSystemItem) -> Unit
+    ) : BaseViewHolder(view) {
         val fileIcon: ImageView = view.findViewById(R.id.fileIcon)
         val fileName: TextView = view.findViewById(R.id.fileName)
         val fileInfo: TextView = view.findViewById(R.id.fileInfo)
@@ -81,6 +85,12 @@ class FileListAdapter(
             previewButton.visibility = View.GONE
             downloadButton.visibility = View.GONE
             deleteButton.visibility = View.GONE
+
+            // 长按触发删除文件夹回调
+            itemView.setOnLongClickListener {
+                onDirectoryLongPress(item)
+                true
+            }
         }
 
         override fun clear() {
@@ -291,7 +301,7 @@ class FileListAdapter(
         val view = LayoutInflater.from(parent.context)
             .inflate(R.layout.item_file_list, parent, false)
         return when (viewType) {
-            TYPE_DIRECTORY -> DirectoryViewHolder(view)
+            TYPE_DIRECTORY -> DirectoryViewHolder(view, onDirectoryLongPress)
             TYPE_FILE -> FileViewHolder(view, serverUrl, unsafeImageLoader, onItemClick, onDeleteClick)
             else -> throw IllegalArgumentException("未知视图类型")
         }

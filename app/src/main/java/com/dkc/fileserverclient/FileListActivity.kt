@@ -19,6 +19,7 @@ import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import kotlinx.coroutines.*
 import java.io.File
 import android.os.Handler
@@ -42,6 +43,7 @@ class FileListActivity : AppCompatActivity() {
     private lateinit var statusLabel: TextView
     private lateinit var uploadStatusCard: CardView
     private lateinit var fileCountText: TextView
+    private lateinit var createFolderButton: FloatingActionButton
 
     private val fileServerService by lazy { FileServerService(this) }
     private val fileList = mutableListOf<FileSystemItem>()
@@ -92,15 +94,15 @@ class FileListActivity : AppCompatActivity() {
         statusLabel = findViewById(R.id.statusLabel)
         uploadStatusCard = findViewById(R.id.uploadStatusCard)
         fileCountText = findViewById(R.id.fileCountText)
+        createFolderButton = findViewById(R.id.createFolderButton)
 
-        // 修改：adapter 不再传入列表
-        adapter = FileListAdapter(this, currentServerUrl,
-            onItemClick = { item ->
-                onFileItemClicked(item)
-            },
-            onDeleteClick = { item ->
-                showDeleteConfirmation(item)
-            }
+        // 修改：adapter 增加长按回调
+        adapter = FileListAdapter(
+            this,
+            currentServerUrl,
+            onItemClick = { item -> onFileItemClicked(item) },
+            onDeleteClick = { item -> showDeleteConfirmation(item) },
+            onDirectoryLongPress = { item -> showDeleteFolderConfirmation(item) }  // 新增
         )
         filesRecyclerView.layoutManager = LinearLayoutManager(this)
         filesRecyclerView.itemAnimator = null
@@ -121,6 +123,10 @@ class FileListActivity : AppCompatActivity() {
         uploadButton.isEnabled = false
         selectedFilesLabel.text = "未选择文件"
         uploadStatusCard.visibility = View.GONE
+
+        createFolderButton.setOnClickListener {
+            showCreateFolderDialog()
+        }
     }
 
     private fun setupToolbar() {
@@ -180,7 +186,6 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
-    // ---------- 修改后的 loadCurrentDirectory ----------
     private fun loadCurrentDirectory(path: String = "") {
         currentPath = path
         supportActionBar?.subtitle = if (path.isEmpty()) "根目录" else path
@@ -200,7 +205,6 @@ class FileListActivity : AppCompatActivity() {
 
                 fileList.clear()
                 fileList.addAll(items)
-                // 提交新副本，确保触发 DiffUtil 更新
                 adapter.submitList(ArrayList(fileList))
 
                 fileCountText.text = "${items.size} 个项目"
@@ -313,7 +317,6 @@ class FileListActivity : AppCompatActivity() {
         thumbnailPollingHandler.postDelayed(pollingRunnable, 500)
     }
 
-    // ---------- 修改后的 searchFiles ----------
     private fun searchFiles() {
         val query = searchEditText.text.toString().trim()
         if (query.isEmpty()) {
@@ -330,7 +333,6 @@ class FileListActivity : AppCompatActivity() {
 
             fileList.clear()
             fileList.addAll(filtered)
-            // 提交新副本
             adapter.submitList(ArrayList(fileList))
 
             fileCountText.text = "${filtered.size} 个搜索结果"
@@ -564,6 +566,7 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
+    // ---------- 文件删除 ----------
     private fun showDeleteConfirmation(item: FileSystemItem) {
         AlertDialog.Builder(this)
             .setTitle("删除文件")
@@ -598,6 +601,71 @@ class FileListActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 showToast("删除异常: ${e.message}")
                 Log.e("FileListActivity", "删除文件失败", e)
+            }
+        }
+    }
+
+    // ---------- 新增：文件夹删除 ----------
+    private fun showDeleteFolderConfirmation(item: FileSystemItem) {
+        AlertDialog.Builder(this)
+            .setTitle("删除文件夹")
+            .setMessage("确定要删除文件夹 \"${item.displayName}\" 及其所有内容吗？此操作不可恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                deleteFolder(item)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun deleteFolder(item: FileSystemItem) {
+        coroutineScope.launch {
+            statusLabel.text = "正在删除文件夹..."
+            val success = withContext(Dispatchers.IO) {
+                fileServerService.deleteDirectory(currentServerUrl, item.path)  // 需要 FileServerService 支持
+            }
+            if (success) {
+                showToast("文件夹删除成功")
+                loadCurrentDirectory(currentPath)
+            } else {
+                showToast("删除失败，请检查权限或文件夹是否存在")
+                statusLabel.text = "删除失败"
+            }
+        }
+    }
+
+    // ---------- 创建文件夹 ----------
+    private fun showCreateFolderDialog() {
+        val editText = EditText(this).apply {
+            hint = "请输入新文件夹名称"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("新建文件夹")
+            .setView(editText)
+            .setPositiveButton("创建") { _, _ ->
+                val folderName = editText.text.toString().trim()
+                if (folderName.isEmpty()) {
+                    showToast("文件夹名称不能为空")
+                    return@setPositiveButton
+                }
+                createFolder(folderName)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun createFolder(folderName: String) {
+        val fullPath = if (currentPath.isEmpty()) folderName else "$currentPath/$folderName"
+        coroutineScope.launch {
+            statusLabel.text = "正在创建文件夹..."
+            val success = withContext(Dispatchers.IO) {
+                fileServerService.createDirectory(currentServerUrl, fullPath)
+            }
+            if (success) {
+                showToast("文件夹创建成功")
+                loadCurrentDirectory(currentPath)
+            } else {
+                showToast("创建失败，请检查权限或名称是否重复")
+                statusLabel.text = "创建失败"
             }
         }
     }

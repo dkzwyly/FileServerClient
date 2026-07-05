@@ -17,7 +17,7 @@
         app:title="文件列表"
         app:titleTextColor="@android:color/white" />
 
-    <!-- 搜索和上传操作栏（保持原样） -->
+    <!-- 搜索和上传操作栏 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -83,7 +83,7 @@
 
     </LinearLayout>
 
-    <!-- 上传状态卡片（颜色修正） -->
+    <!-- 上传状态卡片 -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/uploadStatusCard"
         android:layout_width="match_parent"
@@ -185,5 +185,16 @@
         android:textSize="12sp"
         android:textColor="?attr/colorOnSurface"
         android:padding="12dp" />
+
+    <!-- 新增：创建文件夹的 FAB -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/createFolderButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:src="@drawable/ic_add"
+        app:tint="@android:color/white"
+        app:backgroundTint="@color/primary_color" />
 
 </LinearLayout>
