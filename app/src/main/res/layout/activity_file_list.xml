@@ -17,17 +17,18 @@
         app:title="文件列表"
         app:titleTextColor="@android:color/white" />
 
-    <!-- 搜索和操作栏 -->
+    <!-- 搜索和操作栏（修改后：统一高度 48dp，优化内边距） -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="12dp"
         android:orientation="horizontal"
-        android:baselineAligned="false">
+        android:baselineAligned="false"
+        android:gravity="center_vertical">
 
         <com.google.android.material.card.MaterialCardView
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:layout_marginEnd="8dp"
             app:cardCornerRadius="28dp"
@@ -36,13 +37,11 @@
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:paddingStart="16dp"
-                android:paddingEnd="8dp"
-                android:paddingTop="4dp"
-                android:paddingBottom="4dp">
+                android:paddingStart="12dp"
+                android:paddingEnd="4dp">
 
                 <EditText
                     android:id="@+id/searchEditText"
@@ -53,37 +52,41 @@
                     android:textSize="14sp"
                     android:textColor="?attr/colorOnSurface"
                     android:background="@null"
-                    android:padding="12dp"
+                    android:paddingVertical="8dp"
+                    android:paddingStart="0dp"
                     android:maxLines="1" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/searchButton"
                     style="@style/Widget.MaterialComponents.Button.TextButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="match_parent"
                     android:text="搜索"
                     android:textColor="?attr/colorPrimary"
-                    android:textSize="13sp" />
+                    android:textSize="13sp"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp" />
 
             </LinearLayout>
 
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 新增：选择模式按钮 -->
+        <!-- 选择模式按钮 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/selectModeButton"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="48dp"
             android:text="选择"
             android:textSize="14sp"
             app:cornerRadius="28dp" />
 
+        <!-- 上传按钮 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/selectFilesButton"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="48dp"
             android:text="上传"
             android:textSize="14sp"
             android:layout_marginStart="8dp"
@@ -94,7 +97,7 @@
 
     </LinearLayout>
 
-    <!-- 上传状态卡片（保持不变） -->
+    <!-- 上传状态卡片 -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/uploadStatusCard"
         android:layout_width="match_parent"
@@ -197,7 +200,7 @@
         android:textColor="?attr/colorOnSurface"
         android:padding="12dp" />
 
-    <!-- 新增：底部操作栏（选择模式） -->
+    <!-- 底部操作栏（选择模式） -->
     <LinearLayout
         android:id="@+id/selectionActionBar"
         android:layout_width="match_parent"
@@ -224,7 +227,8 @@
             android:layout_height="48dp"
             android:src="@drawable/ic_rename"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="重命名" />
+            android:contentDescription="重命名"
+            app:tint="@android:color/white" />
 
         <ImageButton
             android:id="@+id/actionMove"
@@ -232,7 +236,8 @@
             android:layout_height="48dp"
             android:src="@drawable/ic_move"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="移动" />
+            android:contentDescription="移动"
+            app:tint="@android:color/white" />
 
         <ImageButton
             android:id="@+id/actionCopy"
@@ -240,7 +245,8 @@
             android:layout_height="48dp"
             android:src="@drawable/ic_copy"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="复制" />
+            android:contentDescription="复制"
+            app:tint="@android:color/white" />
 
         <ImageButton
             android:id="@+id/actionDelete"
@@ -248,7 +254,8 @@
             android:layout_height="48dp"
             android:src="@drawable/ic_delete_white"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="删除" />
+            android:contentDescription="删除"
+            app:tint="@android:color/white" />
 
         <ImageButton
             android:id="@+id/actionCancelSelection"
@@ -256,10 +263,11 @@
             android:layout_height="48dp"
             android:src="@drawable/ic_close"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="取消选择" />
+            android:contentDescription="取消选择"
+            app:tint="@android:color/white" />
     </LinearLayout>
 
-    <!-- 新建文件夹 FAB（保持不变） -->
+    <!-- 新建文件夹 FAB -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/createFolderButton"
         android:layout_width="wrap_content"

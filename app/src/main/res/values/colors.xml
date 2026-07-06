@@ -78,4 +78,5 @@
     <color name="playing_highlight">#D0E5FF</color>
     <color name="selected_item_background">#2200A8FF</color>
     <color name="selection_bar_background">#1E1E1E</color>
+    <color name="icon_tint_dark">#333333</color>
 </resources>
