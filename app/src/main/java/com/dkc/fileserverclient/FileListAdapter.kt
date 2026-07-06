@@ -8,6 +8,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CheckBox
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
@@ -18,13 +19,16 @@ import androidx.recyclerview.widget.RecyclerView
 import coil.ImageLoader
 import coil.request.ImageRequest
 import coil.request.CachePolicy
+import androidx.core.content.ContextCompat
 
 class FileListAdapter(
     private val context: Context,
     private val serverUrl: String,
     private val onItemClick: (FileSystemItem) -> Unit,
     private val onDeleteClick: (FileSystemItem) -> Unit,
-    private val onDirectoryLongPress: (FileSystemItem) -> Unit
+    private val onDirectoryLongPress: (FileSystemItem) -> Unit,  // 文件夹长按（进入选择）
+    private val onItemLongPress: (FileSystemItem) -> Unit,       // 文件长按（进入选择）
+    private val onItemToggle: (FileSystemItem) -> Unit           // 选择模式下切换选中
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private val unsafeImageLoader by lazy {
@@ -33,12 +37,11 @@ class FileListAdapter(
             .build()
     }
 
-    // ---------- DiffUtil 回调 ----------
+    // ---------- DiffUtil ----------
     private val diffCallback = object : DiffUtil.ItemCallback<FileSystemItem>() {
         override fun areItemsTheSame(oldItem: FileSystemItem, newItem: FileSystemItem): Boolean {
             return oldItem.path == newItem.path
         }
-
         override fun areContentsTheSame(oldItem: FileSystemItem, newItem: FileSystemItem): Boolean {
             return oldItem.name == newItem.name &&
                     oldItem.isDirectory == newItem.isDirectory &&
@@ -46,31 +49,37 @@ class FileListAdapter(
                     oldItem.lastModified == newItem.lastModified
         }
     }
-
     private val differ = AsyncListDiffer(this, diffCallback)
 
-    // ---------- 对外提交数据 ----------
+    // ---------- 选择模式状态 ----------
+    private var selectionMode = false
+    private var selectedItems = setOf<FileSystemItem>()
+
+    fun setSelectionMode(mode: Boolean, items: Set<FileSystemItem>) {
+        selectionMode = mode
+        selectedItems = items
+        notifyDataSetChanged()
+    }
+
     fun submitList(list: List<FileSystemItem>) {
         differ.submitList(list)
     }
 
-    // ---------- 视图类型常量 ----------
+    // ---------- 视图类型 ----------
     companion object {
         private const val TYPE_DIRECTORY = 0
         private const val TYPE_FILE = 1
     }
 
-    // ---------- ViewHolder 基类 ----------
+    // ---------- Base ViewHolder ----------
     abstract class BaseViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-        abstract fun bind(item: FileSystemItem)
-        open fun clear() { /* 默认空实现 */ }
+        abstract fun bind(item: FileSystemItem, selectionMode: Boolean, isSelected: Boolean)
+        open fun clear() {}
     }
 
     // ---------- 文件夹 ViewHolder ----------
-    class DirectoryViewHolder(
-        view: View,
-        private val onDirectoryLongPress: (FileSystemItem) -> Unit
-    ) : BaseViewHolder(view) {
+    inner class DirectoryViewHolder(view: View) : BaseViewHolder(view) {
+        val checkBox: CheckBox = view.findViewById(R.id.checkBox)
         val fileIcon: ImageView = view.findViewById(R.id.fileIcon)
         val fileName: TextView = view.findViewById(R.id.fileName)
         val fileInfo: TextView = view.findViewById(R.id.fileInfo)
@@ -78,7 +87,7 @@ class FileListAdapter(
         val downloadButton: ImageButton = view.findViewById(R.id.downloadButton)
         val deleteButton: ImageButton = view.findViewById(R.id.deleteButton)
 
-        override fun bind(item: FileSystemItem) {
+        override fun bind(item: FileSystemItem, selectionMode: Boolean, isSelected: Boolean) {
             fileName.text = item.displayName
             fileInfo.text = "目录"
             fileIcon.setImageResource(R.drawable.ic_folder)
@@ -86,26 +95,33 @@ class FileListAdapter(
             downloadButton.visibility = View.GONE
             deleteButton.visibility = View.GONE
 
-            // 长按触发删除文件夹回调
+            // 选择模式显示
+            checkBox.visibility = if (selectionMode) View.VISIBLE else View.GONE
+            checkBox.isChecked = isSelected
+            itemView.setBackgroundColor(
+                if (selectionMode && isSelected) ContextCompat.getColor(context, R.color.selected_item_background)
+                else android.graphics.Color.TRANSPARENT
+            )
+
+            // 点击事件：选择模式切换选中，否则进入目录
+            itemView.setOnClickListener {
+                if (selectionMode) {
+                    onItemToggle(item)
+                } else {
+                    onItemClick(item)
+                }
+            }
+            // 长按：进入选择模式（如果尚未进入）
             itemView.setOnLongClickListener {
-                onDirectoryLongPress(item)
+                onItemLongPress(item)
                 true
             }
-        }
-
-        override fun clear() {
-            fileIcon.setImageDrawable(null)
         }
     }
 
     // ---------- 文件 ViewHolder ----------
-    class FileViewHolder(
-        view: View,
-        private val serverUrl: String,
-        private val imageLoader: ImageLoader,
-        private val onItemClick: (FileSystemItem) -> Unit,
-        private val onDeleteClick: (FileSystemItem) -> Unit
-    ) : BaseViewHolder(view) {
+    inner class FileViewHolder(view: View) : BaseViewHolder(view) {
+        val checkBox: CheckBox = view.findViewById(R.id.checkBox)
         val fileIcon: ImageView = view.findViewById(R.id.fileIcon)
         val fileName: TextView = view.findViewById(R.id.fileName)
         val fileInfo: TextView = view.findViewById(R.id.fileInfo)
@@ -115,9 +131,8 @@ class FileListAdapter(
 
         private var currentLoadPath: String? = null
 
-        override fun bind(item: FileSystemItem) {
+        override fun bind(item: FileSystemItem, selectionMode: Boolean, isSelected: Boolean) {
             currentLoadPath = item.path
-
             fileName.text = item.displayName
             fileInfo.text = "${item.sizeFormatted} • ${formatDate(item.lastModified)}"
 
@@ -132,19 +147,33 @@ class FileListAdapter(
                 fileIcon.setImageResource(getFileIconRes(item))
             }
 
-            // 设置按钮图标
-            previewButton.setImageResource(R.drawable.ic_preview)
-            downloadButton.setImageResource(R.drawable.ic_download)
-            deleteButton.setImageResource(R.drawable.ic_delete)
+            // 选择模式
+            checkBox.visibility = if (selectionMode) View.VISIBLE else View.GONE
+            checkBox.isChecked = isSelected
+            itemView.setBackgroundColor(
+                if (selectionMode && isSelected) ContextCompat.getColor(context, R.color.selected_item_background)
+                else android.graphics.Color.TRANSPARENT
+            )
 
-            // 点击事件
+            // 点击：选择模式切换选中，否则进入预览
             itemView.setOnClickListener {
-                if (item.isImage) {
-                    showPreview(item, itemView.context)
+                if (selectionMode) {
+                    onItemToggle(item)
                 } else {
-                    onItemClick(item)
+                    if (item.isImage) {
+                        showPreview(item, itemView.context)
+                    } else {
+                        onItemClick(item)
+                    }
                 }
             }
+            // 长按进入选择模式
+            itemView.setOnLongClickListener {
+                onItemLongPress(item)
+                true
+            }
+
+            // 按钮点击
             previewButton.setOnClickListener { showPreview(item, itemView.context) }
             downloadButton.setOnClickListener { downloadFile(item, itemView.context) }
             deleteButton.setOnClickListener { onDeleteClick(item) }
@@ -180,72 +209,61 @@ class FileListAdapter(
             try {
                 val fileType = FileTypeUtils.getFileType(item)
                 val fileUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/preview/${java.net.URLEncoder.encode(item.path, "UTF-8")}"
-
-                // 图片 → ImageActivity
-                if (fileType == "image") {
-                    val intent = Intent(context, ImageActivity::class.java).apply {
-                        putExtra("FILE_NAME", item.name)
-                        putExtra("FILE_URL", fileUrl)
-                        putExtra("FILE_TYPE", "image")
-                        putExtra("FILE_PATH", item.path)
-                        putExtra("SERVER_URL", serverUrl)
-                        putExtra("CURRENT_PATH", "")
+                when (fileType) {
+                    "image" -> {
+                        val intent = Intent(context, ImageActivity::class.java).apply {
+                            putExtra("FILE_NAME", item.name)
+                            putExtra("FILE_URL", fileUrl)
+                            putExtra("FILE_TYPE", "image")
+                            putExtra("FILE_PATH", item.path)
+                            putExtra("SERVER_URL", serverUrl)
+                            putExtra("CURRENT_PATH", "")
+                        }
+                        context.startActivity(intent)
                     }
-                    context.startActivity(intent)
-                    return
-                }
-
-                // 音频 → AudioPlayerActivity
-                if (fileType == "audio") {
-                    val audioTrack = AudioTrack.fromFileSystemItem(item, serverUrl)
-                    val intent = Intent(context, AudioPlayerActivity::class.java).apply {
-                        putExtra("AUDIO_TRACK", audioTrack)
-                        putExtra("AUDIO_TRACKS", arrayListOf(audioTrack))
-                        putExtra("CURRENT_INDEX", 0)
-                        putExtra("SERVER_URL", serverUrl)
-                        putExtra("FILE_PATH", item.path)
-                        putExtra("FILE_NAME", item.name)
-                        putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
+                    "audio" -> {
+                        val audioTrack = AudioTrack.fromFileSystemItem(item, serverUrl)
+                        val intent = Intent(context, AudioPlayerActivity::class.java).apply {
+                            putExtra("AUDIO_TRACK", audioTrack)
+                            putExtra("AUDIO_TRACKS", arrayListOf(audioTrack))
+                            putExtra("CURRENT_INDEX", 0)
+                            putExtra("SERVER_URL", serverUrl)
+                            putExtra("FILE_PATH", item.path)
+                            putExtra("FILE_NAME", item.name)
+                            putExtra(PlaylistDetailActivity.EXTRA_PLAY_MODE, PlaylistDetailActivity.MODE_LIST)
+                        }
+                        context.startActivity(intent)
                     }
-                    context.startActivity(intent)
-                    return
-                }
-
-                // 文本 → TextPreviewActivity
-                if (fileType == "text") {
-                    val intent = Intent(context, TextPreviewActivity::class.java).apply {
-                        putExtra("FILE_NAME", item.name)
-                        putExtra("FILE_URL", fileUrl)
-                        putExtra("FILE_PATH", item.path)
+                    "text" -> {
+                        val intent = Intent(context, TextPreviewActivity::class.java).apply {
+                            putExtra("FILE_NAME", item.name)
+                            putExtra("FILE_URL", fileUrl)
+                            putExtra("FILE_PATH", item.path)
+                        }
+                        context.startActivity(intent)
                     }
-                    context.startActivity(intent)
-                    return
-                }
-
-                // 视频 → VideoPlayerActivity
-                if (fileType == "video") {
-                    val intent = Intent(context, VideoPlayerActivity::class.java).apply {
-                        putExtra("FILE_NAME", item.name)
-                        putExtra("FILE_URL", fileUrl)
-                        putExtra("FILE_TYPE", "video")
-                        putExtra("FILE_PATH", item.path)
-                        putExtra("SERVER_URL", serverUrl)
-                        putExtra("AUTO_PLAY_ENABLED", false)
+                    "video" -> {
+                        val intent = Intent(context, VideoPlayerActivity::class.java).apply {
+                            putExtra("FILE_NAME", item.name)
+                            putExtra("FILE_URL", fileUrl)
+                            putExtra("FILE_TYPE", "video")
+                            putExtra("FILE_PATH", item.path)
+                            putExtra("SERVER_URL", serverUrl)
+                            putExtra("AUTO_PLAY_ENABLED", false)
+                        }
+                        context.startActivity(intent)
                     }
-                    context.startActivity(intent)
-                    return
+                    else -> {
+                        val intent = Intent(context, GeneralPreviewActivity::class.java).apply {
+                            putExtra("FILE_NAME", item.name)
+                            putExtra("FILE_URL", fileUrl)
+                            putExtra("FILE_TYPE", fileType)
+                            putExtra("FILE_PATH", item.path)
+                            putExtra("SERVER_URL", serverUrl)
+                        }
+                        context.startActivity(intent)
+                    }
                 }
-
-                // 通用文件 → GeneralPreviewActivity
-                val intent = Intent(context, GeneralPreviewActivity::class.java).apply {
-                    putExtra("FILE_NAME", item.name)
-                    putExtra("FILE_URL", fileUrl)
-                    putExtra("FILE_TYPE", fileType)
-                    putExtra("FILE_PATH", item.path)
-                    putExtra("SERVER_URL", serverUrl)
-                }
-                context.startActivity(intent)
-
             } catch (e: Exception) {
                 Log.e("FileListAdapter", "预览失败", e)
                 Toast.makeText(context, "预览失败: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -282,7 +300,7 @@ class FileListAdapter(
                     .memoryCachePolicy(CachePolicy.ENABLED)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .build()
-                imageLoader.enqueue(request)
+                unsafeImageLoader.enqueue(request)
             } catch (e: Exception) {
                 Log.e("ThumbnailDebug", "缩略图加载异常", e)
                 if (currentLoadPath == item.path) {
@@ -292,7 +310,7 @@ class FileListAdapter(
         }
     }
 
-    // ---------- Adapter 方法重写 ----------
+    // ---------- Adapter 重写 ----------
     override fun getItemViewType(position: Int): Int {
         return if (differ.currentList[position].isDirectory) TYPE_DIRECTORY else TYPE_FILE
     }
@@ -301,20 +319,18 @@ class FileListAdapter(
         val view = LayoutInflater.from(parent.context)
             .inflate(R.layout.item_file_list, parent, false)
         return when (viewType) {
-            TYPE_DIRECTORY -> DirectoryViewHolder(view, onDirectoryLongPress)
-            TYPE_FILE -> FileViewHolder(view, serverUrl, unsafeImageLoader, onItemClick, onDeleteClick)
+            TYPE_DIRECTORY -> DirectoryViewHolder(view)
+            TYPE_FILE -> FileViewHolder(view)
             else -> throw IllegalArgumentException("未知视图类型")
         }
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         val item = differ.currentList[position]
+        val isSelected = selectedItems.contains(item)
         when (holder) {
-            is DirectoryViewHolder -> {
-                holder.bind(item)
-                holder.itemView.setOnClickListener { onItemClick(item) }
-            }
-            is FileViewHolder -> holder.bind(item)
+            is DirectoryViewHolder -> holder.bind(item, selectionMode, isSelected)
+            is FileViewHolder -> holder.bind(item, selectionMode, isSelected)
         }
     }
 
@@ -322,8 +338,6 @@ class FileListAdapter(
 
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
         super.onViewRecycled(holder)
-        when (holder) {
-            is BaseViewHolder -> holder.clear()
-        }
+        (holder as? BaseViewHolder)?.clear()
     }
 }

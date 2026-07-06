@@ -601,4 +601,60 @@ class FileServerService(private val context: Context) {
             false
         }
     }
+    // ---------- 新增：重命名 ----------
+    suspend fun renameItem(
+        serverUrl: String,
+        oldPath: String,
+        newName: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedOld = URLEncoder.encode(oldPath, "UTF-8")
+            val encodedNew = URLEncoder.encode(newName, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/rename?oldPath=$encodedOld&newName=$encodedNew"
+            val request = Request.Builder().url(url).post(RequestBody.create(null, "")).build()
+            client.newCall(request).execute().isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "重命名失败", e)
+            false
+        }
+    }
+
+    // ---------- 新增：移动 ----------
+    suspend fun moveItem(
+        serverUrl: String,
+        sourcePath: String,
+        destPath: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedSrc = URLEncoder.encode(sourcePath, "UTF-8")
+            val encodedDst = URLEncoder.encode(destPath, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/move?sourcePath=$encodedSrc&destPath=$encodedDst"
+            val request = Request.Builder().url(url).post(RequestBody.create(null, "")).build()
+            client.newCall(request).execute().isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "移动失败", e)
+            false
+        }
+    }
+
+    // ---------- 新增：复制 ----------
+    suspend fun copyItem(
+        serverUrl: String,
+        sourcePath: String,
+        destPath: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedSrc = URLEncoder.encode(sourcePath, "UTF-8")
+            val encodedDst = URLEncoder.encode(destPath, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/copy?sourcePath=$encodedSrc&destPath=$encodedDst"
+            val request = Request.Builder().url(url).post(RequestBody.create(null, "")).build()
+            client.newCall(request).execute().isSuccessful
+        } catch (e: Exception) {
+            Log.e("FileServerService", "复制失败", e)
+            false
+        }
+    }
 }

@@ -17,7 +17,7 @@
         app:title="文件列表"
         app:titleTextColor="@android:color/white" />
 
-    <!-- 搜索和上传操作栏 -->
+    <!-- 搜索和操作栏 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -69,13 +69,24 @@
 
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- 新增：选择模式按钮 -->
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/selectFilesButton"
+            android:id="@+id/selectModeButton"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="选择"
             android:textSize="14sp"
+            app:cornerRadius="28dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/selectFilesButton"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="上传"
+            android:textSize="14sp"
+            android:layout_marginStart="8dp"
             app:cornerRadius="28dp"
             app:icon="@drawable/ic_attach_file"
             app:iconGravity="textStart"
@@ -83,7 +94,7 @@
 
     </LinearLayout>
 
-    <!-- 上传状态卡片 -->
+    <!-- 上传状态卡片（保持不变） -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/uploadStatusCard"
         android:layout_width="match_parent"
@@ -186,7 +197,69 @@
         android:textColor="?attr/colorOnSurface"
         android:padding="12dp" />
 
-    <!-- 新增：创建文件夹的 FAB -->
+    <!-- 新增：底部操作栏（选择模式） -->
+    <LinearLayout
+        android:id="@+id/selectionActionBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/selection_bar_background"
+        android:elevation="8dp"
+        android:padding="8dp"
+        android:visibility="gone"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/selectedCountText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="已选 0 项"
+            android:textColor="@android:color/white"
+            android:textSize="14sp" />
+
+        <ImageButton
+            android:id="@+id/actionRename"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_rename"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="重命名" />
+
+        <ImageButton
+            android:id="@+id/actionMove"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_move"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="移动" />
+
+        <ImageButton
+            android:id="@+id/actionCopy"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_copy"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="复制" />
+
+        <ImageButton
+            android:id="@+id/actionDelete"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_delete_white"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="删除" />
+
+        <ImageButton
+            android:id="@+id/actionCancelSelection"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_close"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="取消选择" />
+    </LinearLayout>
+
+    <!-- 新建文件夹 FAB（保持不变） -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/createFolderButton"
         android:layout_width="wrap_content"
