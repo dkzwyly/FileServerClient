@@ -46,7 +46,7 @@ class FileListActivity : AppCompatActivity() {
     private lateinit var uploadStatusCard: CardView
     private lateinit var fileCountText: TextView
     private lateinit var createFolderButton: FloatingActionButton
-    private lateinit var selectModeButton: Button  // 新增
+    private lateinit var selectModeButton: Button
 
     // ===== 新增：选择模式相关 =====
     private var isSelectionMode = false
@@ -58,6 +58,10 @@ class FileListActivity : AppCompatActivity() {
     private lateinit var actionCopy: ImageButton
     private lateinit var actionDelete: ImageButton
     private lateinit var actionCancelSelection: ImageButton
+
+    // ===== 目录选择器请求码 =====
+    private val PICK_DIRECTORY_REQUEST = 1001
+    private var pendingOperation = ""  // "move" or "copy"
 
     // ===== 其他成员 =====
     private val fileServerService by lazy { FileServerService(this) }
@@ -104,9 +108,9 @@ class FileListActivity : AppCompatActivity() {
         uploadStatusCard = findViewById(R.id.uploadStatusCard)
         fileCountText = findViewById(R.id.fileCountText)
         createFolderButton = findViewById(R.id.createFolderButton)
-        selectModeButton = findViewById(R.id.selectModeButton)  // 新增
+        selectModeButton = findViewById(R.id.selectModeButton)
 
-        // ===== 新增：操作栏 =====
+        // ===== 操作栏 =====
         selectionActionBar = findViewById(R.id.selectionActionBar)
         selectedCountText = findViewById(R.id.selectedCountText)
         actionRename = findViewById(R.id.actionRename)
@@ -127,10 +131,10 @@ class FileListActivity : AppCompatActivity() {
                 }
             },
             onDeleteClick = { item -> showDeleteConfirmation(item) },
-            onDirectoryLongPress = { item ->   // 目录长按
+            onDirectoryLongPress = { item ->
                 if (!isSelectionMode) enterSelectionMode(item)
             },
-            onItemLongPress = { item ->        // 文件长按
+            onItemLongPress = { item ->
                 if (!isSelectionMode) enterSelectionMode(item)
             },
             onItemToggle = { item -> toggleSelection(item) }
@@ -197,7 +201,7 @@ class FileListActivity : AppCompatActivity() {
             selectedItems.add(item)
         }
         updateSelectionUI()
-        adapter.setSelectionMode(true, selectedItems)  // 刷新选中状态
+        adapter.setSelectionMode(true, selectedItems)
         adapter.notifyItemChanged(fileList.indexOf(item))
     }
 
@@ -256,13 +260,14 @@ class FileListActivity : AppCompatActivity() {
                 }
                 coroutineScope.launch {
                     statusLabel.text = "正在重命名..."
-                    val success = fileServerService.renameItem(currentServerUrl, item.path, newName)
-                    if (success) {
+                    val result = fileServerService.renameItem(currentServerUrl, item.path, newName)
+                    if (result.success) {
                         exitSelectionMode()
                         loadCurrentDirectory(currentPath)
                         showToast("重命名成功")
                     } else {
-                        showToast("重命名失败，请检查名称是否重复")
+                        showToast("重命名失败: ${result.message}")
+                        statusLabel.text = "重命名失败"
                     }
                 }
             }
@@ -270,59 +275,86 @@ class FileListActivity : AppCompatActivity() {
             .show()
     }
 
+    // ===== 移动/复制：使用目录选择器 =====
     private fun moveSelected() {
-        showTargetPathDialog("移动") { targetPath ->
-            performMoveOrCopy(targetPath, isMove = true)
-        }
+        if (selectedItems.isEmpty()) return
+        pendingOperation = "move"
+        startDirectoryPicker()
     }
 
     private fun copySelected() {
-        showTargetPathDialog("复制") { targetPath ->
-            performMoveOrCopy(targetPath, isMove = false)
-        }
+        if (selectedItems.isEmpty()) return
+        pendingOperation = "copy"
+        startDirectoryPicker()
     }
 
-    private fun showTargetPathDialog(action: String, onConfirm: (String) -> Unit) {
-        val editText = EditText(this).apply {
-            hint = "输入目标路径（如 data/影视/第一季）"
-            setText(currentPath)
-        }
-        AlertDialog.Builder(this)
-            .setTitle("$action 到")
-            .setView(editText)
-            .setPositiveButton(action) { _, _ ->
-                val target = editText.text.toString().trim()
-                if (target.isEmpty()) {
-                    showToast("目标路径不能为空")
-                    return@setPositiveButton
-                }
-                onConfirm(target)
+    private fun startDirectoryPicker() {
+        val intent = Intent(this, DirectoryPickerActivity::class.java)
+        intent.putExtra("SERVER_URL", currentServerUrl)
+        startActivityForResult(intent, PICK_DIRECTORY_REQUEST)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == PICK_DIRECTORY_REQUEST && resultCode == RESULT_OK) {
+            val targetPath = data?.getStringExtra("SELECTED_PATH") ?: return
+            when (pendingOperation) {
+                "move" -> performMoveOrCopy(targetPath, isMove = true)
+                "copy" -> performMoveOrCopy(targetPath, isMove = false)
             }
-            .setNegativeButton("取消", null)
-            .show()
+            pendingOperation = ""
+        }
     }
 
     private fun performMoveOrCopy(targetPath: String, isMove: Boolean) {
         if (selectedItems.isEmpty()) return
+
+        // 校验：不能移动到自身或子目录
+        for (item in selectedItems) {
+            val dest = if (targetPath.isEmpty()) {
+                item.name  // 移动到根目录
+            } else {
+                "$targetPath/${item.name}".trimStart('/')
+            }
+            if (dest == item.path) {
+                showToast("目标路径与源路径相同，无法操作")
+                return
+            }
+            if (item.isDirectory && dest.startsWith(item.path + "/")) {
+                showToast("不能将文件夹移动到其自身子目录中")
+                return
+            }
+        }
+
         coroutineScope.launch {
             statusLabel.text = "正在${if (isMove) "移动" else "复制"}..."
             var allSuccess = true
+            var errorMessage = ""
             for (item in selectedItems) {
-                val dest = if (item.isDirectory) {
-                    targetPath
+                val dest = if (targetPath.isEmpty()) {
+                    item.name
                 } else {
                     "$targetPath/${item.name}".trimStart('/')
                 }
-                val success = if (isMove) {
+                val result = if (isMove) {
                     fileServerService.moveItem(currentServerUrl, item.path, dest)
                 } else {
                     fileServerService.copyItem(currentServerUrl, item.path, dest)
                 }
-                if (!success) allSuccess = false
+                if (!result.success) {
+                    allSuccess = false
+                    errorMessage = result.message ?: "未知错误"
+                    break
+                }
             }
             exitSelectionMode()
             loadCurrentDirectory(currentPath)
-            showToast(if (allSuccess) "${if (isMove) "移动" else "复制"}完成" else "部分操作失败")
+            if (allSuccess) {
+                showToast("${if (isMove) "移动" else "复制"}完成")
+            } else {
+                showToast("操作失败: $errorMessage")
+                statusLabel.text = "操作失败"
+            }
         }
     }
 

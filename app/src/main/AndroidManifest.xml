@@ -42,7 +42,10 @@
             android:name=".FileListActivity"
             android:exported="false"
             android:theme="@style/Theme.MaterialComponents.Light.NoActionBar" />
-
+        <activity
+            android:name=".DirectoryPickerActivity"
+            android:label="选择目标文件夹"
+            android:theme="@style/Theme.MaterialComponents.Light.NoActionBar" />   <!-- 改这里 -->
         <activity
             android:name=".TextPreviewActivity"
             android:label="文本预览"

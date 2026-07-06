@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.google.gson.JsonObject
 
 class FileServerService(private val context: Context) {
 
@@ -601,60 +602,94 @@ class FileServerService(private val context: Context) {
             false
         }
     }
-    // ---------- 新增：重命名 ----------
+    // ---------- 重命名 ----------
     suspend fun renameItem(
         serverUrl: String,
         oldPath: String,
         newName: String
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): OperationResult = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
             val encodedOld = URLEncoder.encode(oldPath, "UTF-8")
             val encodedNew = URLEncoder.encode(newName, "UTF-8")
             val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/rename?oldPath=$encodedOld&newName=$encodedNew"
             val request = Request.Builder().url(url).post(RequestBody.create(null, "")).build()
-            client.newCall(request).execute().isSuccessful
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                OperationResult(true)
+            } else {
+                val errorBody = response.body?.string()
+                val message = parseErrorMessage(errorBody) ?: "重命名失败 (HTTP ${response.code})"
+                OperationResult(false, message)
+            }
         } catch (e: Exception) {
-            Log.e("FileServerService", "重命名失败", e)
-            false
+            OperationResult(false, "网络异常: ${e.message}")
         }
     }
 
-    // ---------- 新增：移动 ----------
+    // ---------- 移动 ----------
     suspend fun moveItem(
         serverUrl: String,
         sourcePath: String,
         destPath: String
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): OperationResult = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
             val encodedSrc = URLEncoder.encode(sourcePath, "UTF-8")
             val encodedDst = URLEncoder.encode(destPath, "UTF-8")
             val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/move?sourcePath=$encodedSrc&destPath=$encodedDst"
             val request = Request.Builder().url(url).post(RequestBody.create(null, "")).build()
-            client.newCall(request).execute().isSuccessful
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                OperationResult(true)
+            } else {
+                val errorBody = response.body?.string()
+                val message = parseErrorMessage(errorBody) ?: "移动失败 (HTTP ${response.code})"
+                OperationResult(false, message)
+            }
         } catch (e: Exception) {
-            Log.e("FileServerService", "移动失败", e)
-            false
+            OperationResult(false, "网络异常: ${e.message}")
         }
     }
 
-    // ---------- 新增：复制 ----------
+    // ---------- 复制 ----------
     suspend fun copyItem(
         serverUrl: String,
         sourcePath: String,
         destPath: String
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): OperationResult = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)
             val encodedSrc = URLEncoder.encode(sourcePath, "UTF-8")
             val encodedDst = URLEncoder.encode(destPath, "UTF-8")
             val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/copy?sourcePath=$encodedSrc&destPath=$encodedDst"
             val request = Request.Builder().url(url).post(RequestBody.create(null, "")).build()
-            client.newCall(request).execute().isSuccessful
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                OperationResult(true)
+            } else {
+                val errorBody = response.body?.string()
+                val message = parseErrorMessage(errorBody) ?: "复制失败 (HTTP ${response.code})"
+                OperationResult(false, message)
+            }
         } catch (e: Exception) {
-            Log.e("FileServerService", "复制失败", e)
-            false
+            OperationResult(false, "网络异常: ${e.message}")
+        }
+    }
+    private fun parseErrorMessage(json: String?): String? {
+        if (json.isNullOrEmpty()) return null
+        return try {
+            val jsonObject = Gson().fromJson(json, JsonObject::class.java)
+            // 尝试提取 error 或 message 字段
+            jsonObject.get("error")?.asString
+                ?: jsonObject.get("message")?.asString
+                ?: jsonObject.get("Message")?.asString
+        } catch (e: Exception) {
+            null
         }
     }
 }
+data class OperationResult(
+    val success: Boolean,
+    val message: String? = null
+)
