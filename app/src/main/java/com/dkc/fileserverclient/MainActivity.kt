@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var quickActionsLayout: LinearLayout
     private lateinit var browseFilesButton: Button
     private lateinit var historyListView: ListView
+    private lateinit var trashButton: Button          // 新增
 
     private lateinit var mediaLibraryButton: Button
     private lateinit var textLibraryButton: Button
@@ -61,9 +62,7 @@ class MainActivity : AppCompatActivity() {
         createSolidWhiteDrawable()
     )
     private fun createSolidWhiteDrawable(): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(Color.WHITE)
-        }
+        return GradientDrawable().apply { setColor(Color.WHITE) }
     }
     private val PREF_GRADIENT_INDEX = "gradient_index"
     private lateinit var effectManager: BackgroundEffectManager
@@ -220,6 +219,7 @@ class MainActivity : AppCompatActivity() {
         quickActionsLayout = findViewById(R.id.quickActionsLayout)
         browseFilesButton = findViewById(R.id.browseFilesButton)
         historyListView = findViewById(R.id.historyListView)
+        trashButton = findViewById(R.id.trashButton)          // 新增
 
         mediaLibraryButton = findViewById(R.id.mediaLibraryButton)
         textLibraryButton = findViewById(R.id.textLibraryButton)
@@ -238,6 +238,18 @@ class MainActivity : AppCompatActivity() {
                     return@setOnClickListener
                 }
                 startActivity(Intent(this, AudioLibraryActivity::class.java).apply { putExtra("SERVER_URL", currentServerUrl) })
+                overrideActivityTransition()
+            } else {
+                showToast("请先连接到服务器")
+            }
+        }
+
+        // ========== 新增：回收站按钮点击事件 ==========
+        trashButton.setOnClickListener {
+            if (isConnected) {
+                startActivity(Intent(this, TrashActivity::class.java).apply {
+                    putExtra("SERVER_URL", currentServerUrl)
+                })
                 overrideActivityTransition()
             } else {
                 showToast("请先连接到服务器")

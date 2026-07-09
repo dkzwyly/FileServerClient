@@ -120,6 +120,10 @@
             android:configChanges="orientation|screenSize"
             android:exported="false" />
 
+        <activity android:name=".TrashActivity"
+            android:theme="@style/Theme.FileServerClient"
+            android:parentActivityName=".MainActivity" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
