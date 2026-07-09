@@ -24,7 +24,6 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.net.URLEncoder
 
-
 class AudioPlayerViewModel(application: Application) : AndroidViewModel(application),
     LyricsManager.LyricsStateListener, LyricsManager.TimeProvider, LyricsManager.PlayStateProvider {
 
@@ -47,7 +46,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     val lyricsFileSelection = MutableLiveData<List<FileServerService.LyricsFileInfo>?>()
     val finishEvent = MutableLiveData<Boolean>()
 
-    // ========== 频谱相关 ==========
+    // 频谱相关
     val spectrumData = MutableLiveData<FloatArray>()
     val visualizerEnabled = MutableLiveData(true)
     val visualizerActive = MutableLiveData(false)
@@ -70,6 +69,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val startIndex: Int
     )
     private var pendingChange: PendingPlaybackChange? = null
+
+    // ★ 新增：自定义流地址（来自回收站预览）
+    private var customStreamUrl: String? = null
 
     private val progressUpdater = object : Runnable {
         override fun run() {
@@ -97,20 +99,27 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun init(intent: Intent) {
-        // 尝试从 Intent 获取播放信息
+        // ★ 读取自定义音频流 URL（回收站预览用）
+        customStreamUrl = intent.getStringExtra("CUSTOM_AUDIO_URL")
+
         val track: AudioTrack? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
         } else {
             @Suppress("DEPRECATION") intent.getParcelableExtra("AUDIO_TRACK")
         }
 
-        // ★ 如果 Intent 中没有 track（例如点击通知进入），尝试从服务恢复
         if (track == null) {
             restoreFromExistingSession()
             return
         }
 
-        // 原有正常流程
+        // ★ 如果存在自定义 URL，则修改当前音轨的 URL
+        val effectiveTrack = if (customStreamUrl != null) {
+            track.copy(url = customStreamUrl!!)
+        } else {
+            track
+        }
+
         val tracks: ArrayList<AudioTrack>? =
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableArrayListExtra("AUDIO_TRACKS", AudioTrack::class.java)
@@ -120,11 +129,17 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         val index = intent.getIntExtra("CURRENT_INDEX", 0)
         serverUrl = intent.getStringExtra("SERVER_URL") ?: ""
-        songPath = intent.getStringExtra("FILE_PATH") ?: track?.path ?: ""
+        songPath = intent.getStringExtra("FILE_PATH") ?: effectiveTrack?.path ?: ""
 
-        currentTrack = track
+        currentTrack = effectiveTrack
         trackList.clear()
-        trackList.addAll(tracks ?: listOf(track))
+        trackList.addAll(tracks?.map { track ->
+            if (customStreamUrl != null && track.path == effectiveTrack.path) {
+                track.copy(url = customStreamUrl!!)
+            } else {
+                track
+            }
+        } ?: listOf(effectiveTrack))
 
         prefs.edit().putString("server_url", serverUrl).apply()
 
@@ -134,10 +149,6 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         connectToMediaService(index)
     }
 
-    /**
-     * 当 Intent 没有提供播放信息时（如点击通知进入），
-     * 尝试连接已存在的 MediaController，从中恢复当前播放的歌曲信息。
-     */
     /**
      * 当 Intent 没有提供播放信息时（如点击通知进入），
      * 从已运行的 MediaController 中恢复当前播放的歌曲信息。
@@ -196,10 +207,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 updateTrackInfo(restoredTrack)
                 loadCoverAndMetadata()
 
-                // ★ 修复点：重置歌词管理器状态，再加载
                 lyricsManager.stopLyricsUpdates()
                 lyricsManager.clear()
-                lyricsManager.setListener(this)   // 确保 listener 已绑定
+                lyricsManager.setListener(this)
                 lyricsManager.loadLyrics(serverUrl, songPath, restoredTrack.name)
 
                 handler.post(progressUpdater)
@@ -298,6 +308,9 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         mediaController?.play()
     }
 
+    /**
+     * ★ 修改：如果 customStreamUrl 不为空，则直接使用它作为 Uri，否则按原逻辑构建。
+     */
     private fun AudioTrack.toMediaItem(): MediaItem {
         val metadata = MediaMetadata.Builder()
             .setTitle(name ?: "")
@@ -306,12 +319,17 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
             .build()
 
         val mediaId = path
-        val uri = try {
-            val encodedPath = mediaId.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8") }
-            Uri.parse("$serverUrl/api/fileserver/stream/$encodedPath")
-        } catch (e: Exception) {
-            Log.e("AudioPlayerVM", "Failed to build URI for $mediaId", e)
-            Uri.EMPTY
+        val uri = if (customStreamUrl != null && customStreamUrl!!.isNotEmpty()) {
+            // 使用自定义流地址（如回收站预览端点）
+            Uri.parse(customStreamUrl)
+        } else {
+            try {
+                val encodedPath = mediaId.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8") }
+                Uri.parse("$serverUrl/api/fileserver/stream/$encodedPath")
+            } catch (e: Exception) {
+                Log.e("AudioPlayerVM", "Failed to build URI for $mediaId", e)
+                Uri.EMPTY
+            }
         }
 
         return MediaItem.Builder()
@@ -343,9 +361,7 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 ?: AudioTrack(
                     id = "audio_${mediaItem.mediaId.hashCode().toString().replace("-", "n")}",
                     name = mediaItem.mediaMetadata.title?.toString() ?: "未知歌曲",
-                    url = "${serverUrl.trimEnd('/')}/api/fileserver/stream/${
-                        URLEncoder.encode(mediaItem.mediaId, "UTF-8")
-                    }",
+                    url = "${serverUrl.trimEnd('/')}/api/fileserver/stream/${URLEncoder.encode(mediaItem.mediaId, "UTF-8")}",
                     serverUrl = serverUrl,
                     path = mediaItem.mediaId,
                     artist = mediaItem.mediaMetadata.artist?.toString(),
@@ -425,12 +441,21 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    /**
+     * ★ 更新 Intent 时，也处理 CUSTOM_AUDIO_URL
+     */
     fun updateIntent(intent: Intent) {
         val newTrack: AudioTrack = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra("AUDIO_TRACK", AudioTrack::class.java)
         } else {
             @Suppress("DEPRECATION") intent.getParcelableExtra("AUDIO_TRACK")
         } ?: return
+
+        // 更新自定义 URL
+        val newCustomUrl = intent.getStringExtra("CUSTOM_AUDIO_URL")
+        if (newCustomUrl != null) {
+            customStreamUrl = newCustomUrl
+        }
 
         val newFilePath = intent.getStringExtra("FILE_PATH") ?: newTrack.path
         if (newFilePath == songPath && currentTrack?.path == songPath) {
@@ -442,17 +467,31 @@ class AudioPlayerViewModel(application: Application) : AndroidViewModel(applicat
         serverUrl = newServerUrl
         prefs.edit().putString("server_url", serverUrl).apply()
 
-        val tracks = intent.getParcelableArrayListExtra<AudioTrack>("AUDIO_TRACKS") ?: arrayListOf(newTrack)
+        // 如果存在自定义 URL，覆盖新 track 的 url
+        val effectiveTrack = if (customStreamUrl != null) {
+            newTrack.copy(url = customStreamUrl!!)
+        } else {
+            newTrack
+        }
+
+        val tracks = intent.getParcelableArrayListExtra<AudioTrack>("AUDIO_TRACKS") ?: arrayListOf(effectiveTrack)
+        // 如果歌单中有相同路径的 track，也替换其 url
+        val modifiedTracks = tracks.map { track ->
+            if (track.path == effectiveTrack.path && customStreamUrl != null) {
+                track.copy(url = customStreamUrl!!)
+            } else {
+                track
+            }
+        }
         val index = intent.getIntExtra("CURRENT_INDEX", 0)
 
         if (mediaController == null) {
-            pendingChange = PendingPlaybackChange(newTrack, tracks, index)
+            pendingChange = PendingPlaybackChange(effectiveTrack, modifiedTracks, index)
         } else {
-            executePlaybackChange(newTrack, tracks, index)
+            executePlaybackChange(effectiveTrack, modifiedTracks, index)
         }
     }
 
-    // 其他原有方法保持不变（togglePlayback, playNext, playPrevious 等）
     fun togglePlayback() { mediaController?.let { if (it.isPlaying) it.pause() else it.play() } }
     fun playNext() { mediaController?.seekToNextMediaItem() }
     fun playPrevious() { mediaController?.seekToPreviousMediaItem() }

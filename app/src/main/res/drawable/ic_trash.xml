@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- 主体多边形：随机形状 -->
+    <path
+        android:pathData="M 8,15 L 40,12 L 37,42 L 11,39 Z"
+        android:fillColor="#C39BD3"
+        android:strokeColor="#2E4053"
+        android:strokeWidth="2.5"/>
+    <!-- 盖子：随机曲线，填充改为透明（但仍为有效颜色） -->
+    <path
+        android:pathData="M 13,12 Q 18,3 30,5 Q 36,6 35,12"
+        android:strokeColor="#E67E22"
+        android:strokeWidth="3.0"
+        android:fillColor="#00000000"/>
+    <!-- 内部随机装饰线 -->
+    <path
+        android:pathData="M 20,20 L 28,28 M 22,18 L 18,32 M 32,22 L 26,36"
+        android:strokeColor="#16A085"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"/>
+    <!-- 随机小圆点 -->
+    <path
+        android:pathData="M 36,30 A 4,4 0 1,0 38,30"
+        android:fillColor="#D35400"
+        android:strokeColor="#7D3C98"
+        android:strokeWidth="1.2"/>
+</vector>

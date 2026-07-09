@@ -380,10 +380,15 @@ class FileListActivity : AppCompatActivity() {
                 loadCurrentDirectory(currentPath)
                 true
             }
+            R.id.menu_trash -> {   // 新增
+                startActivity(Intent(this, TrashActivity::class.java).apply {
+                    putExtra("SERVER_URL", currentServerUrl)
+                })
+                true
+            }
             else -> super.onOptionsItemSelected(item)
         }
     }
-
     private fun setupBackPressedHandler() {
         val onBackPressedCallback = object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {

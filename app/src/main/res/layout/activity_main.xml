@@ -346,19 +346,6 @@
                         android:listSelector="@drawable/list_item_selector"
                         android:padding="4dp" />
 
-                    <Button
-                        android:id="@+id/trashButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:background="@drawable/primary_button_gradient"
-                        android:text="🗑️ 回收站"
-                        android:textAllCaps="false"
-                        android:textColor="@android:color/white"
-                        android:textSize="14sp"
-                        android:textStyle="bold"
-                        app:cornerRadius="20dp"
-                        android:padding="12dp" />
                 </LinearLayout>
 
                 <TextView
