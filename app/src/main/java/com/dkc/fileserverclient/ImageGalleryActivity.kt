@@ -174,6 +174,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         // 相册集列表设置（使用外部 AlbumSetAdapter）
         albumSetRecyclerView.layoutManager = LinearLayoutManager(this)
         albumSetAdapter = AlbumSetAdapter(
+            serverUrl = currentServerUrl,  // 传入
             albums = albumList,
             onAlbumClick = { album ->
                 val intent = Intent(this, AlbumDetailActivity::class.java).apply {

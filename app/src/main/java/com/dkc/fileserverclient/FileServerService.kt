@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.net.URLDecoder
 
 class FileServerService(private val context: Context) {
 
@@ -628,13 +629,20 @@ class FileServerService(private val context: Context) {
                 .build()
 
             val response = client.newCall(request).execute()
-            if (response.isSuccessful) {
-                val json = response.body?.string() ?: "{}"
-                val type = object : TypeToken<Map<String, SongMetadata>>() {}.type
-                gson.fromJson(json, type) ?: emptyMap()
-            } else {
-                Log.e(TAG, "获取批量歌曲元数据失败: ${response.code}")
-                emptyMap()
+            val responseBody = response.body?.string() ?: "{}"
+            Log.d("BatchMetadata", "Raw response: $responseBody")
+
+            // 解析为 Map<String, SongMetadata>
+            val type = object : TypeToken<Map<String, SongMetadata>>() {}.type
+            val rawMap: Map<String, SongMetadata> = gson.fromJson(responseBody, type) ?: emptyMap()
+
+            // 核心修复：将键进行 URL 解码，还原为原始路径
+            return@withContext rawMap.mapKeys { (key, _) ->
+                try {
+                    URLDecoder.decode(key, "UTF-8")
+                } catch (e: Exception) {
+                    key // 解码失败时保留原样
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "获取批量歌曲元数据异常", e)

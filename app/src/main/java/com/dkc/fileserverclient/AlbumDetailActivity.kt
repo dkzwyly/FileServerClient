@@ -35,6 +35,9 @@ class AlbumDetailActivity : AppCompatActivity() {
     private lateinit var selectedCountText: TextView
     private lateinit var removeSelectedButton: Button
 
+    // 缓存相册内每张图片的拍摄日期，避免重复请求
+    private val dateCache = mutableMapOf<String, String?>()
+
     private val imageGalleryRoot = "data/图片"
     private val fileServerService by lazy { FileServerService(this) }
     private lateinit var adapter: ImageGalleryAdapter
@@ -138,7 +141,7 @@ class AlbumDetailActivity : AppCompatActivity() {
         loadAlbumImages()
     }
 
-    // 根据本地路径列表加载图片信息（需要获取文件大小、修改时间等，从服务器获取单个文件信息）
+    // ================== 修改：loadAlbumImages 优先使用缓存 ==================
     private fun loadAlbumImages() {
         val paths = currentAlbum?.imagePaths ?: emptyList()
         if (paths.isEmpty()) {
@@ -149,7 +152,7 @@ class AlbumDetailActivity : AppCompatActivity() {
         coroutineScope.launch {
             statusText.text = "加载中..."
             try {
-                // 1. 获取图片根目录下所有文件（通常相册中的图片都来自该目录）
+                // 1. 获取图片根目录下所有文件（用于获取FileSystemItem）
                 val allItems = withContext(Dispatchers.IO) {
                     fileServerService.getFileList(currentServerUrl, imageGalleryRoot, "name", "asc")
                 }
@@ -157,7 +160,7 @@ class AlbumDetailActivity : AppCompatActivity() {
                     .filter { !it.isDirectory && it.isImage }
                     .associateBy { it.path }
 
-                // 2. 筛选出相册中包含的图片（保持 paths 顺序以便后续排序）
+                // 2. 筛选出相册中包含的图片
                 val validItems = paths.mapNotNull { allImageMap[it] }
                 if (validItems.isEmpty()) {
                     statusText.text = "相册中的图片已失效"
@@ -165,19 +168,22 @@ class AlbumDetailActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // 3. 批量获取拍摄日期
-                val dateMap = withContext(Dispatchers.IO) {
-                    fileServerService.getBatchDateTaken(currentServerUrl, paths)
+                // 3. 检查哪些路径还没有日期缓存，只请求缺失的
+                val missingPaths = paths.filter { !dateCache.containsKey(it) }
+                if (missingPaths.isNotEmpty()) {
+                    val newDates = withContext(Dispatchers.IO) {
+                        fileServerService.getBatchDateTaken(currentServerUrl, missingPaths)
+                    }
+                    dateCache.putAll(newDates)
                 }
 
-                // 4. 按拍摄日期降序排序（空日期排末尾）
+                // 4. 现在所有路径都有日期了，直接排序
                 val sortedItems = validItems.sortedWith(compareByDescending { item ->
-                    val date = dateMap[item.path] ?: ""
-                    if (date.isBlank()) "0000" else date
+                    dateCache[item.path] ?: ""
                 })
 
                 // 5. 分组生成带日期头的列表
-                val grouped = groupByDateTaken(sortedItems, dateMap)
+                val grouped = groupByDateTaken(sortedItems, dateCache)
                 adapter.submitList(grouped)
                 statusText.text = "共 ${sortedItems.size} 张"
             } catch (e: Exception) {
@@ -248,7 +254,6 @@ class AlbumDetailActivity : AppCompatActivity() {
 
     // 从服务器已有图片中选择并添加
     private fun pickFromServerImages() {
-        // 启动 ImagePickerActivity 并获取返回结果
         val intent = Intent(this, ImagePickerActivity::class.java).apply {
             putExtra(ImageGalleryActivity.EXTRA_SERVER_URL, currentServerUrl)
         }
@@ -385,15 +390,50 @@ class AlbumDetailActivity : AppCompatActivity() {
 
     // ==================== 修改本地相册数据 ====================
     private fun addPathToAlbum(path: String) {
-        currentAlbum?.imagePaths?.add(path)
-        saveAlbum()
-        loadAlbumImages()
+        addPathsToAlbum(listOf(path))
     }
 
+    // ================== 修改：增量添加并排序 ==================
     private fun addPathsToAlbum(paths: List<String>) {
-        currentAlbum?.imagePaths?.addAll(paths)
-        saveAlbum()
-        loadAlbumImages()
+        if (paths.isEmpty()) return
+        if (currentAlbum == null) return
+
+        coroutineScope.launch {
+            statusText.text = "更新相册..."
+            try {
+                // 1. 过滤出尚未在相册中的路径
+                val newPaths = paths.filter { !currentAlbum!!.imagePaths.contains(it) }
+                if (newPaths.isEmpty()) {
+                    statusText.text = "已存在，无需添加"
+                    return@launch
+                }
+
+                // 2. 只请求新增路径的日期
+                val newDateMap = withContext(Dispatchers.IO) {
+                    fileServerService.getBatchDateTaken(currentServerUrl, newPaths)
+                }
+                dateCache.putAll(newDateMap)
+
+                // 3. 合并并排序（基于现有缓存）
+                val allPaths = (currentAlbum!!.imagePaths + newPaths).distinct()
+                allPaths.sortedWith(compareByDescending { dateCache[it] ?: "" })
+                    .let { sorted ->
+                        currentAlbum!!.imagePaths.clear()
+                        currentAlbum!!.imagePaths.addAll(sorted)
+                    }
+
+                // 4. 保存并刷新UI
+                saveAlbum()
+                // 调用 loadAlbumImages 刷新适配器（此时 dateCache 已包含所有路径，不会重复请求日期）
+                loadAlbumImages()
+                statusText.text = "共 ${currentAlbum!!.imagePaths.size} 张"
+                Toast.makeText(this@AlbumDetailActivity, "已添加 ${newPaths.size} 张", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "增量更新相册失败", e)
+                statusText.text = "更新失败"
+                Toast.makeText(this@AlbumDetailActivity, "更新失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun removePathsFromAlbum(paths: Collection<String>) {
