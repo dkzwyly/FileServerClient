@@ -14,15 +14,14 @@
         android:background="@android:color/transparent">   
 
         <com.google.android.material.appbar.MaterialToolbar
-             android:id="@+id/toolbar"
-             android:layout_width="match_parent"
-             android:layout_height="?attr/actionBarSize"
-             android:background="#4DFFFFFF"
-             android:elevation="4dp"
-             android:theme="@style/ThemeOverlay.MaterialComponents.Light"
-             app:title="文件空间"
-             app:titleTextColor="@color/accent_color"
-             app:navigationIconTint="@color/text_primary" />
+                 android:id="@+id/toolbar"
+                 android:layout_width="match_parent"
+                 android:layout_height="?attr/actionBarSize"
+                 android:background="@android:color/transparent"
+                 android:theme="@style/ThemeOverlay.MaterialComponents.Light"
+                 app:title="文件空间"
+                 app:titleTextColor="@color/accent_color"
+                 app:navigationIconTint="@color/text_primary" />
 
         <ScrollView
             android:id="@+id/scrollView"
