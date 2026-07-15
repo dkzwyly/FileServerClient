@@ -151,6 +151,16 @@
                 android:minWidth="36dp" />
 
             <ImageButton
+                android:id="@+id/subtitleButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/ic_subtitle"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="字幕"
+                android:layout_marginStart="12dp"
+                app:tint="#FFFFFF" />
+
+            <ImageButton
                 android:id="@+id/fullscreenToggleButton"
                 android:layout_width="40dp"
                 android:layout_height="40dp"

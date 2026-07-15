@@ -186,7 +186,7 @@ class TrashActivity : AppCompatActivity() {
                     })
                 }
                 "video" -> {
-                    startActivity(Intent(this, VideoPlayerActivity::class.java).apply {
+                    startActivity(Intent(this, VideoPlayerActivityV2::class.java).apply {
                         putExtra("FILE_NAME", fileName)
                         putExtra("FILE_URL", previewUrl)
                         putExtra("FILE_TYPE", "video")

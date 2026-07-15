@@ -41,88 +41,73 @@
         <activity
             android:name=".FileListActivity"
             android:exported="false"
-            android:theme="@style/Theme.MaterialComponents.Light.NoActionBar" />
+            android:theme="@style/Theme.MaterialComponents.Light.NoActionBar.OptOut" />
         <activity
             android:name=".DirectoryPickerActivity"
             android:label="选择目标文件夹"
-            android:theme="@style/Theme.MaterialComponents.Light.NoActionBar" />   <!-- 改这里 -->
+            android:theme="@style/Theme.MaterialComponents.Light.NoActionBar.OptOut" />
         <activity
             android:name=".TextPreviewActivity"
             android:label="文本预览"
-            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
-
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar.OptOut" />
         <activity
             android:name=".ImageGalleryActivity"
             android:label="图片库"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar.OptOut"
             android:screenOrientation="portrait" />
-
-        <!-- 新增：相册详情页 -->
         <activity
             android:name=".AlbumDetailActivity"
             android:label="相册详情"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar.OptOut"
             android:screenOrientation="portrait" />
-
-        <!-- 新增：从服务器选择图片 -->
         <activity
             android:name=".ImagePickerActivity"
             android:label="选择图片"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
-
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar.OptOut" />
         <activity
             android:name=".TextLibraryActivity"
             android:label="文本库"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar.OptOut"
             android:screenOrientation="portrait" />
-
         <activity
             android:name=".TextLibraryDetailActivity"
             android:label="文本详情"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar.OptOut"
             android:screenOrientation="portrait" />
-
         <activity
             android:name=".VideoLibraryActivity"
             android:label="视频库"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar.OptOut"
             android:screenOrientation="portrait" />
-
         <activity
             android:name=".AudioLibraryActivity"
             android:label="音频库"
-            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
-
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar.OptOut" />
         <activity
             android:name=".SettingsActivity"
             android:label="设置"
-            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
-
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar.OptOut" />
         <activity
             android:name=".ImageActivity"
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:theme="@style/Theme.AppCompat.NoActionBar" />
-
+            android:theme="@style/Theme.AppCompat.NoActionBar.OptOut" />
         <activity
             android:name=".PlaylistDetailActivity"
-            android:theme="@style/Theme.AppCompat.NoActionBar" />
-
+            android:theme="@style/Theme.AppCompat.NoActionBar.OptOut" />
         <activity
-            android:name=".VideoPlayerActivity"
+            android:name=".VideoPlayerActivityV2"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+            android:theme="@style/Theme.AppCompat.NoActionBar.OptOut" />
 
         <activity
             android:name=".AudioPlayerActivity"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize"
             android:exported="false" />
-
         <activity android:name=".SingleImageActivity" />
-
-        <activity android:name=".TrashActivity"
+        <activity
+            android:name=".TrashActivity"
             android:theme="@style/Theme.FileServerClient"
             android:parentActivityName=".MainActivity" />
 
@@ -140,7 +125,6 @@
             android:name=".AudiobookService"
             android:foregroundServiceType="mediaPlayback"
             android:exported="false" />
-
         <service
             android:name=".MusicService"
             android:exported="true"

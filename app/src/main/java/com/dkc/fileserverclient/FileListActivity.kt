@@ -607,7 +607,7 @@ class FileListActivity : AppCompatActivity() {
                 setupAutoPlay(item)
                 val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
                 val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
-                val intent = Intent(this, VideoPlayerActivity::class.java).apply {
+                val intent = Intent(this, VideoPlayerActivityV2::class.java).apply {
                     putExtra("FILE_NAME", item.name)
                     putExtra("FILE_URL", fileUrl)
                     putExtra("FILE_TYPE", "video")

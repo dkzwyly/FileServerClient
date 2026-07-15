@@ -243,7 +243,7 @@ class FileListAdapter(
                         context.startActivity(intent)
                     }
                     "video" -> {
-                        val intent = Intent(context, VideoPlayerActivity::class.java).apply {
+                        val intent = Intent(context, VideoPlayerActivityV2::class.java).apply {
                             putExtra("FILE_NAME", item.name)
                             putExtra("FILE_URL", fileUrl)
                             putExtra("FILE_TYPE", "video")

@@ -3,23 +3,26 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/rootFrame"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true">
 
     <LinearLayout
         android:id="@+id/rootLayout"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:background="@android:color/transparent">   <!-- 关键：改为透明 -->
+        android:background="@android:color/transparent">   
 
         <com.google.android.material.appbar.MaterialToolbar
-            android:id="@+id/toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
-            android:background="?attr/colorPrimary"
-            android:theme="@style/ThemeOverlay.MaterialComponents.Light"
-            app:title="文件空间"
-            app:titleTextColor="@android:color/white" />
+             android:id="@+id/toolbar"
+             android:layout_width="match_parent"
+             android:layout_height="?attr/actionBarSize"
+             android:background="#4DFFFFFF"
+             android:elevation="4dp"
+             android:theme="@style/ThemeOverlay.MaterialComponents.Light"
+             app:title="文件空间"
+             app:titleTextColor="@color/accent_color"
+             app:navigationIconTint="@color/text_primary" />
 
         <ScrollView
             android:id="@+id/scrollView"

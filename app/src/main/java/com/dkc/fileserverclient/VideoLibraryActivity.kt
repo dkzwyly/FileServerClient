@@ -272,7 +272,7 @@ class VideoLibraryActivity : AppCompatActivity() {
 
             val currentIndex = allVideosInFolder.indexOfFirst { it.path == videoItem.path }
 
-            val intent = Intent(this, VideoPlayerActivity::class.java).apply {
+            val intent = Intent(this, VideoPlayerActivityV2::class.java).apply {
                 putExtra("FILE_NAME", videoItem.name)
                 putExtra("FILE_URL", fileUrl)
                 putExtra("FILE_TYPE", "video")

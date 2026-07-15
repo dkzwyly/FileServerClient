@@ -5,6 +5,7 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="?attr/colorSurface"
+    android:fitsSystemWindows="true"
     android:padding="16dp">
 
     <!-- 顶部 Toolbar -->
