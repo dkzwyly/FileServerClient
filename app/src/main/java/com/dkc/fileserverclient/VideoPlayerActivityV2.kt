@@ -2,6 +2,7 @@ package com.dkc.fileserverclient
 
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.graphics.Color
 import android.media.AudioManager
 import android.net.Uri
@@ -9,6 +10,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.SpannableStringBuilder
+import android.text.SpannedString
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
@@ -25,14 +28,11 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.*
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.net.URLEncoder
 import java.util.*
 
-/**
- * 基于官方 Media3/ExoPlayer 的视频播放器
- * 直接持有 ExoPlayer，无任何自定义封装层
- * 纯净版：无录音权限请求，无频谱，无多余功能
- */
 class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
 
     // ==================== UI 组件 ====================
@@ -43,7 +43,7 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
     private lateinit var backButton: Button
     private lateinit var fileNameTextView: TextView
     private lateinit var fileTypeTextView: TextView
-    private lateinit var downloadButton: Button
+    private lateinit var settingsButton: Button
     private lateinit var subtitleButton: ImageButton
     private lateinit var mediaControls: LinearLayout
     private lateinit var playPauseButton: ImageButton
@@ -53,6 +53,9 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
     private lateinit var seekBar: SeekBar
     private lateinit var currentTimeTextView: TextView
     private lateinit var durationTextView: TextView
+
+    // 自定义 ASS 字幕视图
+    private lateinit var customSubtitleView: TextView
 
     // 手势控制覆盖层
     private lateinit var controlOverlay: TextView
@@ -80,6 +83,18 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
     private var currentSubtitlePath: String? = null
     private var isAppInBackground = false
 
+    // ==================== ASS 字幕数据 ====================
+    private var assStyles: Map<String, AssStyle> = emptyMap()
+    private var assDialogues: List<AssDialogue> = emptyList()
+    private var lastDisplayedDialogues: List<AssDialogue> = emptyList()
+
+    // ==================== 字幕样式设置 ====================
+    private var subtitleTextSize = 16f          // 自定义 ASS 字幕的绝对 SP 大小
+    private var subtitleFraction = 1.0f         // 内嵌字幕的缩放比例（基准 16sp → 1.0）
+    private var subtitleTextColor = Color.WHITE
+    private lateinit var sharedPrefs: SharedPreferences
+    private var controlBarHeight = 0
+
     // ==================== 手势相关 ====================
     private lateinit var gestureDetector: GestureDetector
     private var isLongPressDetected = false
@@ -96,7 +111,8 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
                 currentTimeTextView.text = formatTime(position)
                 durationTextView.text = formatTime(duration)
             }
-            handler.postDelayed(this, 1000)
+            updateAssSubtitle(position)
+            handler.postDelayed(this, 100)
         }
     }
 
@@ -105,24 +121,16 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_video_player)
 
-        // 注册返回事件处理器（兼容手势返回和按钮返回）
-        onBackPressedDispatcher.addCallback(
-            this,
-            object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    // 如果全屏模式，先退出全屏
-                    if (fullscreenManager.onBackPressed()) return
-
-                    // 退出时通知自动连播状态（如有需要）
-                    val resultIntent = Intent().apply {
-                        if (autoPlayManager.isAutoPlayEnabled()) putExtra("ACTION", "EXIT_AUTO_PLAY")
-                    }
-                    setResult(RESULT_OK, resultIntent)
-                    // 执行真正的返回操作
-                    finish()
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (fullscreenManager.onBackPressed()) return
+                val resultIntent = Intent().apply {
+                    if (autoPlayManager.isAutoPlayEnabled()) putExtra("ACTION", "EXIT_AUTO_PLAY")
                 }
+                setResult(RESULT_OK, resultIntent)
+                finish()
             }
-        )
+        })
 
         initViews()
         setupIntentData()
@@ -131,6 +139,8 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         setupGestureDetector()
         setupEventListeners()
         initializePlayer()
+        addCustomSubtitleView()
+        loadSubtitlePreferences()
         loadVideo()
     }
 
@@ -168,7 +178,7 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         backButton = findViewById(R.id.backButton)
         fileNameTextView = findViewById(R.id.fileNameTextView)
         fileTypeTextView = findViewById(R.id.fileTypeTextView)
-        downloadButton = findViewById(R.id.downloadButton)
+        settingsButton = findViewById(R.id.settingsButton)
         subtitleButton = findViewById(R.id.subtitleButton)
         mediaControls = findViewById(R.id.mediaControls)
         playPauseButton = findViewById(R.id.playPauseButton)
@@ -199,6 +209,52 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         })
     }
 
+    private fun addCustomSubtitleView() {
+        customSubtitleView = TextView(this).apply {
+            id = View.generateViewId()
+            setTextColor(subtitleTextColor)
+            setShadowLayer(3f, 1f, 1f, Color.BLACK)
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            textSize = subtitleTextSize
+        }
+        val container = findViewById<FrameLayout>(R.id.mediaContainer)
+        val params = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        )
+        container.addView(customSubtitleView, params)
+
+        // 监听控制栏布局变化，获取实际高度
+        mediaControls.viewTreeObserver.addOnGlobalLayoutListener {
+            val newHeight = mediaControls.height
+            if (newHeight != controlBarHeight) {
+                controlBarHeight = newHeight
+                updateSubtitlePosition()
+            }
+        }
+
+        updateSubtitlePosition()
+    }
+
+    private fun updateSubtitlePosition() {
+        val lp = customSubtitleView.layoutParams as? FrameLayout.LayoutParams ?: return
+        val isFull = fullscreenManager.isFullscreen()
+        val controlsVisible = mediaControls.visibility == View.VISIBLE
+
+        lp.bottomMargin = when {
+            isFull -> dpToPx(40)
+            controlsVisible && controlBarHeight > 0 -> controlBarHeight + dpToPx(16)
+            else -> dpToPx(100)
+        }
+        customSubtitleView.layoutParams = lp
+    }
+
+    private fun dpToPx(dp: Int): Int {
+        return (dp * resources.displayMetrics.density).toInt()
+    }
+
     private fun setupIntentData() {
         currentFileName = intent.getStringExtra("FILE_NAME") ?: "未知视频"
         currentFileUrl = intent.getStringExtra("FILE_URL") ?: ""
@@ -220,6 +276,10 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
             fileTypeTextView = fileTypeTextView,
             fullscreenToggleButton = fullscreenToggleButton
         )
+
+        fullscreenManager.setFullscreenChangeListener { isFullscreen ->
+            updateSubtitlePosition()
+        }
 
         autoPlayManager = AutoPlayManager(handler, coroutineScope)
         autoPlayManager.setAutoPlayListener(object : AutoPlayManager.AutoPlayListener {
@@ -291,18 +351,15 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
                     durationTextView.text = formatTime(duration)
                 }
             }
-
             override fun onControlOverlayShow(text: String, iconRes: Int) {
                 controlContainer.bringToFront()
             }
-
             override fun onSeekBarProgressUpdate(position: Long, duration: Long) {
                 seekBar.progress = (position * 1000 / duration).toInt()
                 currentTimeTextView.text = formatTime(position)
                 durationTextView.text = formatTime(duration)
             }
         })
-
         gestureControlManager.setupAudioManager()
     }
 
@@ -361,12 +418,12 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
             mediaControls.visibility = View.VISIBLE
             mediaControls.bringToFront()
         }
+        updateSubtitlePosition()
     }
 
     private fun setupEventListeners() {
-        // 返回按钮触发统一的返回事件处理器
         backButton.setOnClickListener { onBackPressedDispatcher.onBackPressed() }
-        downloadButton.setOnClickListener { downloadFile() }
+        settingsButton.setOnClickListener { showSubtitleSettingsDialog() }
         subtitleButton.setOnClickListener { showSubtitleSelectionMenu() }
         playPauseButton.setOnClickListener {
             exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }
@@ -376,7 +433,121 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         fullscreenToggleButton.setOnClickListener {
             if (fullscreenManager.isFullscreen()) fullscreenManager.exitFullscreen()
             else fullscreenManager.enterFullscreen()
+            updateSubtitlePosition()
         }
+    }
+
+    // ==================== 字幕设置相关 ====================
+    private fun loadSubtitlePreferences() {
+        sharedPrefs = getSharedPreferences("subtitle_prefs", MODE_PRIVATE)
+        subtitleTextSize = sharedPrefs.getFloat("text_size", 16f)
+        subtitleFraction = sharedPrefs.getFloat("text_fraction", 1.0f)
+        subtitleTextColor = sharedPrefs.getInt("text_color", Color.WHITE)
+
+        customSubtitleView.textSize = subtitleTextSize
+        customSubtitleView.setTextColor(subtitleTextColor)
+
+        // 应用到 ExoPlayer 内嵌字幕视图
+        applyEmbeddedSubtitleStyle()
+    }
+
+    /**
+     * 设置内嵌字幕的样式：背景透明 + 统一缩放比例
+     */
+    private fun applyEmbeddedSubtitleStyle() {
+        playerView.subtitleView?.apply {
+            setBackgroundColor(Color.TRANSPARENT)
+
+            // 使用分数缩放调整字体大小（替换私有 setTextSize）
+            setFractionalTextSize(subtitleFraction)
+
+            val style = CaptionStyleCompat(
+                Color.WHITE,
+                Color.TRANSPARENT,
+                Color.TRANSPARENT,
+                CaptionStyleCompat.EDGE_TYPE_NONE,
+                Color.BLACK,
+                null
+            )
+            setStyle(style)
+            setApplyEmbeddedStyles(true)
+        }
+    }
+
+    private fun showSubtitleSettingsDialog() {
+        val builder = AlertDialog.Builder(this)
+        val inflater = layoutInflater
+        val view = inflater.inflate(R.layout.dialog_subtitle_settings, null)
+        val sizeSeekBar = view.findViewById<SeekBar>(R.id.seekBarSize)
+        val sizeValueText = view.findViewById<TextView>(R.id.textSizeValue)
+        val colorWhite = view.findViewById<View>(R.id.colorWhite)
+        val colorYellow = view.findViewById<View>(R.id.colorYellow)
+        val colorGreen = view.findViewById<View>(R.id.colorGreen)
+        val colorCyan = view.findViewById<View>(R.id.colorCyan)
+        val colorRed = view.findViewById<View>(R.id.colorRed)
+
+        sizeSeekBar.progress = ((subtitleTextSize - 10) * 10).toInt()
+        sizeValueText.text = "${subtitleTextSize.toInt()}sp"
+
+        sizeSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val newSize = 10f + progress / 10f
+                sizeValueText.text = "${newSize.toInt()}sp"
+
+                // 更新自定义 ASS 字幕大小
+                customSubtitleView.textSize = newSize
+
+                // 更新内嵌字幕缩放比例（基准 16sp）
+                val newFraction = newSize / 16f
+                playerView.subtitleView?.setFractionalTextSize(newFraction)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        val colorClickListener = View.OnClickListener { v ->
+            val color = when (v.id) {
+                R.id.colorWhite -> Color.WHITE
+                R.id.colorYellow -> Color.YELLOW
+                R.id.colorGreen -> Color.GREEN
+                R.id.colorCyan -> Color.CYAN
+                R.id.colorRed -> Color.RED
+                else -> Color.WHITE
+            }
+            customSubtitleView.setTextColor(color)
+        }
+
+        colorWhite.setOnClickListener(colorClickListener)
+        colorYellow.setOnClickListener(colorClickListener)
+        colorGreen.setOnClickListener(colorClickListener)
+        colorCyan.setOnClickListener(colorClickListener)
+        colorRed.setOnClickListener(colorClickListener)
+
+        builder.setView(view)
+            .setTitle("字幕样式设置")
+            .setPositiveButton("保存") { _, _ ->
+                subtitleTextSize = customSubtitleView.textSize / resources.displayMetrics.scaledDensity
+                subtitleFraction = subtitleTextSize / 16f
+                subtitleTextColor = customSubtitleView.currentTextColor
+
+                sharedPrefs.edit()
+                    .putFloat("text_size", subtitleTextSize)
+                    .putFloat("text_fraction", subtitleFraction)
+                    .putInt("text_color", subtitleTextColor)
+                    .apply()
+
+                // 确保内嵌字幕最终状态
+                applyEmbeddedSubtitleStyle()
+                Toast.makeText(this, "字幕样式已保存", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("取消") { dialog, _ ->
+                // 恢复先前值
+                customSubtitleView.textSize = subtitleTextSize
+                customSubtitleView.setTextColor(subtitleTextColor)
+                playerView.subtitleView?.setFractionalTextSize(subtitleFraction)
+                dialog.dismiss()
+            }
+            .show()
     }
 
     // ==================== ExoPlayer 初始化 ====================
@@ -391,7 +562,8 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
                 playerView.player = this
                 addListener(this@VideoPlayerActivityV2)
             }
-        playerView.subtitleView?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        // 初始应用透明背景和字体缩放
+        applyEmbeddedSubtitleStyle()
     }
 
     // ==================== 加载视频 ====================
@@ -436,11 +608,7 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         errorTextView.visibility = View.VISIBLE
     }
 
-    private fun downloadFile() {
-        Toast.makeText(this, "开始下载: $currentFileName", Toast.LENGTH_SHORT).show()
-    }
-
-    // ==================== 字幕功能 ====================
+    // ==================== 字幕功能（ASS/SSA 双语支持） ====================
     private fun isSubtitleFile(fileName: String): Boolean {
         val ext = fileName.substringAfterLast('.', "").lowercase()
         return ext in setOf("srt", "vtt", "ass", "ssa")
@@ -460,12 +628,8 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
                     !item.isDirectory && isSubtitleFile(item.name) &&
                             item.name.substringBeforeLast('.') == baseName
                 }
-                matching?.let {
-                    loadSubtitle(it.path)
-                }
-            } catch (_: Exception) {
-                // 静默失败，不干扰播放
-            }
+                matching?.let { loadSubtitle(it.path) }
+            } catch (_: Exception) { }
         }
     }
 
@@ -484,18 +648,15 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
                 val subtitleFiles = items.filter { item ->
                     !item.isDirectory && isSubtitleFile(item.name)
                 }
-
                 if (subtitleFiles.isEmpty()) {
                     Toast.makeText(this@VideoPlayerActivityV2, "该目录没有字幕文件", Toast.LENGTH_SHORT).show()
                     return@launch
                 }
-
                 val names = subtitleFiles.map { it.name }.toTypedArray()
                 AlertDialog.Builder(this@VideoPlayerActivityV2)
                     .setTitle("选择字幕")
                     .setItems(names) { _, which ->
-                        val selected = subtitleFiles[which]
-                        loadSubtitle(selected.path)
+                        loadSubtitle(subtitleFiles[which].path)
                     }
                     .setNegativeButton("取消", null)
                     .show()
@@ -506,6 +667,41 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
     }
 
     private fun loadSubtitle(subtitlePath: String) {
+        val ext = subtitlePath.substringAfterLast('.').lowercase()
+        if (ext !in setOf("ass", "ssa")) {
+            loadSubtitleViaExoPlayer(subtitlePath)
+            return
+        }
+
+        val encodedPath = URLEncoder.encode(subtitlePath, "UTF-8")
+        val subtitleUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/stream/$encodedPath"
+
+        coroutineScope.launch {
+            try {
+                mediaLoadingProgress.visibility = View.VISIBLE
+                val content = withContext(Dispatchers.IO) {
+                    val request = Request.Builder().url(subtitleUrl).build()
+                    client.newCall(request).execute().body?.string() ?: ""
+                }
+                val (styles, dialogues) = AssParser.parse(content)
+                assStyles = styles
+                assDialogues = dialogues
+                lastDisplayedDialogues = emptyList()
+                currentSubtitlePath = subtitlePath
+
+                playerView.subtitleView?.visibility = View.GONE
+                customSubtitleView.visibility = if (dialogues.isNotEmpty()) View.VISIBLE else View.GONE
+
+                Toast.makeText(this@VideoPlayerActivityV2, "ASS字幕加载 (${dialogues.size}条)", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this@VideoPlayerActivityV2, "加载ASS失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                mediaLoadingProgress.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun loadSubtitleViaExoPlayer(subtitlePath: String) {
         val player = exoPlayer ?: return
         val currentMediaItem = player.currentMediaItem ?: return
         val currentPosition = player.currentPosition
@@ -516,53 +712,66 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
 
         val mimeType = when (subtitlePath.substringAfterLast('.').lowercase()) {
             "vtt" -> MimeTypes.TEXT_VTT
-            "ass", "ssa" -> "text/x-ssa"
             else -> MimeTypes.APPLICATION_SUBRIP
         }
 
-        // 1. 构建字幕配置（不再禁用样式）
         val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(subtitleUri)
             .setMimeType(mimeType)
             .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
             .build()
 
-        // 2. 构建新的 MediaItem
         val newMediaItem = MediaItem.Builder()
             .setUri(videoUri)
             .setSubtitleConfigurations(listOf(subtitleConfig))
             .build()
 
-        // 3. 替换播放项（保持当前进度）
         player.setMediaItem(newMediaItem, currentPosition)
         player.prepare()
         player.playWhenReady = true
 
-        // 4. ★★★ 关键修改：不禁用 ASS 样式，只覆盖背景色 ★★★
-        playerView.subtitleView?.apply {
-            // 删除或注释掉 setApplyEmbeddedStyles(false)  ← 这行必须移除
+        customSubtitleView.visibility = View.GONE
+        playerView.subtitleView?.visibility = View.VISIBLE
 
-            // 创建自定义样式：仅背景透明，其余保留 ASS 定义
-            val customStyle = CaptionStyleCompat(
-                Color.WHITE,                        // 文字颜色（ASS 会覆盖此值）
-                Color.TRANSPARENT,                  // 背景颜色（完全透明）
-                Color.TRANSPARENT,                  // 窗口颜色
-                CaptionStyleCompat.EDGE_TYPE_NONE,  // 边缘类型（ASS 会覆盖）
-                Color.BLACK,                        // 边缘颜色
-                null                                // 字体（ASS 会覆盖）
-            )
-            setStyle(customStyle)  // 应用样式
+        Toast.makeText(this, "字幕已加载", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateAssSubtitle(positionMs: Long) {
+        if (assDialogues.isEmpty()) {
+            customSubtitleView.visibility = View.GONE
+            return
         }
 
-        currentSubtitlePath = subtitlePath
-        Toast.makeText(this, "字幕已加载", Toast.LENGTH_SHORT).show()
+        val currentDialogues = assDialogues.filter { positionMs in it.startMs until it.endMs }
+        if (currentDialogues.isEmpty()) {
+            customSubtitleView.text = ""
+            customSubtitleView.visibility = View.GONE
+            return
+        }
+
+        if (currentDialogues == lastDisplayedDialogues) return
+        lastDisplayedDialogues = currentDialogues
+
+        val builder = SpannableStringBuilder()
+        for ((index, dialogue) in currentDialogues.withIndex()) {
+            if (index > 0) builder.append("\n")
+            val baseStyle = assStyles[dialogue.styleName] ?: AssStyle()
+            val spanned: SpannedString = renderAssText(
+                raw = dialogue.rawText,
+                baseStyle = baseStyle,
+                styleMap = assStyles,
+                forceTextColor = subtitleTextColor
+            )
+            builder.append(spanned)
+        }
+
+        customSubtitleView.text = builder
+        customSubtitleView.visibility = View.VISIBLE
     }
 
     // ==================== Player.Listener 实现 ====================
     override fun onPlaybackStateChanged(playbackState: Int) {
         when (playbackState) {
-            Player.STATE_BUFFERING -> {
-                mediaLoadingProgress.visibility = View.VISIBLE
-            }
+            Player.STATE_BUFFERING -> mediaLoadingProgress.visibility = View.VISIBLE
             Player.STATE_READY -> {
                 mediaLoadingProgress.visibility = View.GONE
                 updatePlayPauseButton()
@@ -573,9 +782,7 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
                     handler.postDelayed({ autoPlayManager.playNextMedia() }, 1000)
                 }
             }
-            Player.STATE_IDLE -> {
-                mediaLoadingProgress.visibility = View.GONE
-            }
+            Player.STATE_IDLE -> mediaLoadingProgress.visibility = View.GONE
         }
     }
 
