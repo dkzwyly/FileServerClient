@@ -1,5 +1,6 @@
 package com.dkc.fileserverclient
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
@@ -9,6 +10,7 @@ import androidx.appcompat.widget.Toolbar
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.*
+import java.net.URLEncoder
 
 class VideoFolderDetailActivity : AppCompatActivity() {
 
@@ -61,9 +63,12 @@ class VideoFolderDetailActivity : AppCompatActivity() {
     }
 
     private fun createEpisodeAdapter(): EpisodeAdapter {
-        return EpisodeAdapter(serverUrl, episodeList) { clickedVideo ->
-            updatePreview(clickedVideo)
-        }
+        return EpisodeAdapter(
+            serverUrl,
+            episodeList,
+            onItemClick = { clickedVideo -> updatePreview(clickedVideo) },
+            onPlayClick = { video -> playVideo(video) }   // 新增播放回调
+        )
     }
 
     private fun createFolderAdapter(): FolderAdapter {
@@ -72,6 +77,34 @@ class VideoFolderDetailActivity : AppCompatActivity() {
             currentPath = clickedFolder.path
             loadContent()
         }
+    }
+
+    /**
+     * 启动视频播放器，支持自动连播
+     */
+    private fun playVideo(video: FileSystemItem) {
+        val encodedPath = URLEncoder.encode(video.path, "UTF-8")
+        val fileUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/stream/$encodedPath"
+
+        // 获取当前视频在列表中的位置（按当前排序）
+        val currentIndex = episodeList.indexOf(video)
+        if (currentIndex == -1) {
+            // 安全兜底
+            return
+        }
+
+        val intent = Intent(this, VideoPlayerActivityV2::class.java).apply {
+            putExtra("FILE_NAME", video.name)
+            putExtra("FILE_URL", fileUrl)
+            putExtra("FILE_PATH", video.path)
+            putExtra("SERVER_URL", serverUrl)
+            putExtra("CURRENT_PATH", currentPath)          // 当前目录，用于加载同名字幕
+            putExtra("CURRENT_INDEX", currentIndex)
+            putExtra("AUTO_PLAY_ENABLED", true)            // 启用自动连播
+            // 传递当前目录下的所有视频列表（用于连播）
+            putParcelableArrayListExtra("MEDIA_FILE_LIST", ArrayList(episodeList))
+        }
+        startActivity(intent)
     }
 
     private fun loadContent() {

@@ -37,7 +37,16 @@
             android:layout_height="wrap_content"
             android:textSize="12sp"
             android:textColor="#666666" />
-
     </LinearLayout>
+
+    <!-- 播放按钮，仅对视频显示 -->
+    <ImageButton
+        android:id="@+id/btnPlay"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:src="@drawable/ic_play"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:visibility="gone"
+        android:contentDescription="播放" />
 
 </LinearLayout>
