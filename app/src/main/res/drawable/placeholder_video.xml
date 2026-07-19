@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="80dp"
+    android:viewportWidth="120"
+    android:viewportHeight="80">
+    <!-- 背景灰色矩形 -->
+    <path
+        android:fillColor="#CCCCCC"
+        android:pathData="M0,0 h120 v80 h-120 z" />
+    <!-- 播放三角形 -->
+    <path
+        android:fillColor="#555555"
+        android:pathData="M45,25 L45,55 L70,40 Z" />
+</vector>
