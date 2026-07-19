@@ -96,6 +96,11 @@
             android:name=".PlaylistDetailActivity"
             android:theme="@style/Theme.AppCompat.NoActionBar.OptOut" />
         <activity
+            android:name=".VideoFolderDetailActivity"
+            android:parentActivityName=".VideoLibraryActivity"
+            android:theme="@style/Theme.AppCompat.NoActionBar.OptOut"
+            android:exported="false" />
+        <activity
             android:name=".VideoPlayerActivityV2"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.AppCompat.NoActionBar.OptOut" />

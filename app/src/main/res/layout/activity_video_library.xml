@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:fitsSystemWindows="true"
     android:background="#F5F5F5">
 
-    <!-- 标题栏 - 固定高度 -->
+    <!-- 标题栏 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
@@ -36,103 +37,57 @@
             android:gravity="center"
             android:textColor="@android:color/black" />
 
-        <View
+        <!-- 视图切换按钮 -->
+        <ImageButton
+            android:id="@+id/switchToListButton"
             android:layout_width="48dp"
-            android:layout_height="48dp" />
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_list_view"
+            android:contentDescription="列表视图"
+            android:visibility="visible" />
+
+        <ImageButton
+            android:id="@+id/switchToGridButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_grid_view"
+            android:contentDescription="网格视图"
+            android:visibility="gone" />
 
     </LinearLayout>
 
-    <!-- 状态提示 - 固定高度 -->
+    <!-- 搜索栏 -->
+    <androidx.appcompat.widget.SearchView
+        android:id="@+id/searchView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="8dp"
+        android:background="@android:color/white"
+        android:elevation="2dp"
+        app:queryHint="搜索影视库..."
+        app:iconifiedByDefault="false" />
+
+    <!-- 状态提示 -->
     <TextView
         android:id="@+id/videoLibraryStatusText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="8dp"
+        android:padding="4dp"
         android:text="正在加载..."
         android:textSize="14sp"
         android:textColor="#666666"
         android:gravity="center" />
 
-    <!-- 主要内容区域 - 占据剩余所有空间 -->
-    <LinearLayout
+    <!-- 文件夹列表（占满剩余空间） -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/foldersRecyclerView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:orientation="vertical"
-        android:padding="8dp">
-
-        <!-- 最近观看区域 - 占据主要内容区域的1/3 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:background="@android:color/white"
-            android:elevation="2dp"
-            android:padding="8dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="最近观看"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:padding="8dp"
-                android:textColor="@android:color/black" />
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/recentWatchedRecyclerView"
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:clipToPadding="false"
-                android:paddingHorizontal="8dp"
-                android:paddingVertical="4dp" />
-
-        </LinearLayout>
-
-        <!-- 影视文件夹区域 - 占据主要内容区域的1/3，让内容居中 -->
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:background="@android:color/white"
-            android:elevation="2dp"
-            android:layout_marginTop="8dp"
-            android:padding="4dp">
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/foldersRecyclerView"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:clipToPadding="false"
-                android:paddingHorizontal="8dp"
-                android:paddingVertical="4dp" />
-
-        </FrameLayout>
-
-        <!-- 视频文件区域 - 占据主要内容区域的1/3 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:background="@android:color/white"
-            android:elevation="2dp"
-            android:layout_marginTop="8dp"
-            android:padding="4dp">
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/videosRecyclerView"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:clipToPadding="false"
-                android:paddingHorizontal="8dp"
-                android:paddingVertical="4dp" />
-
-        </LinearLayout>
-
-    </LinearLayout>
+        android:clipToPadding="false"
+        android:padding="4dp"
+        android:background="@android:color/white" />
 
 </LinearLayout>
