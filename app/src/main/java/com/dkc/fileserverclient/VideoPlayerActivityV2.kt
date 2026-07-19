@@ -66,7 +66,6 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
     private var exoPlayer: ExoPlayer? = null
     private lateinit var fullscreenManager: FullscreenManager
     private lateinit var gestureControlManager: GestureControlManager
-    private lateinit var autoPlayManager: AutoPlayManager
 
     private val fileServerService by lazy { FileServerService(this) }
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -82,6 +81,11 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
     private var currentVideoIndex = -1
     private var currentSubtitlePath: String? = null
     private var isAppInBackground = false
+
+    // ==================== 连播管理 ====================
+    private var mediaFileList: List<FileSystemItem>? = null
+    private var currentPlayIndex: Int = -1
+    private var autoPlayEnabled: Boolean = false
 
     // ==================== ASS 字幕数据 ====================
     private var assStyles: Map<String, AssStyle> = emptyMap()
@@ -124,10 +128,7 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (fullscreenManager.onBackPressed()) return
-                val resultIntent = Intent().apply {
-                    if (autoPlayManager.isAutoPlayEnabled()) putExtra("ACTION", "EXIT_AUTO_PLAY")
-                }
-                setResult(RESULT_OK, resultIntent)
+                setResult(RESULT_OK)
                 finish()
             }
         })
@@ -263,6 +264,17 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         currentDirectoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
         currentVideoIndex = intent.getIntExtra("CURRENT_INDEX", -1)
 
+        autoPlayEnabled = intent.getBooleanExtra("AUTO_PLAY_ENABLED", false)
+        if (autoPlayEnabled) {
+            mediaFileList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableArrayListExtra("MEDIA_FILE_LIST", FileSystemItem::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableArrayListExtra("MEDIA_FILE_LIST")
+            }
+            currentPlayIndex = currentVideoIndex
+        }
+
         fileNameTextView.text = currentFileName
         fileTypeTextView.text = "视频"
     }
@@ -281,26 +293,11 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
             updateSubtitlePosition()
         }
 
-        autoPlayManager = AutoPlayManager(handler, coroutineScope)
-        autoPlayManager.setAutoPlayListener(object : AutoPlayManager.AutoPlayListener {
-            override fun onLoadMediaFile(fileName: String, fileUrl: String, fileType: String, index: Int, filePath: String) {
-                currentFileName = fileName
-                currentFileUrl = fileUrl
-                currentFilePath = filePath
-                fileNameTextView.text = currentFileName
-                loadVideo()
-            }
-            override fun onLoadAudioTrack(track: AudioTrack, index: Int) {}
-            override fun onAutoPlayError(message: String) {
-                Toast.makeText(this@VideoPlayerActivityV2, message, Toast.LENGTH_SHORT).show()
-            }
-        })
-
         controlOverlay = TextView(this).apply {
-            setTextColor(android.graphics.Color.WHITE)
+            setTextColor(Color.WHITE)
             textSize = 16f
             gravity = Gravity.CENTER
-            setShadowLayer(2f, 1f, 1f, android.graphics.Color.BLACK)
+            setShadowLayer(2f, 1f, 1f, Color.BLACK)
         }
         controlIcon = ImageView(this)
         controlContainer = LinearLayout(this).apply {
@@ -428,8 +425,12 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         playPauseButton.setOnClickListener {
             exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }
         }
-        previousButton.setOnClickListener { autoPlayManager.playPreviousMedia() }
-        nextButton.setOnClickListener { autoPlayManager.playNextMedia() }
+        previousButton.setOnClickListener {
+            if (autoPlayEnabled) playPreviousVideo()
+        }
+        nextButton.setOnClickListener {
+            if (autoPlayEnabled) playNextVideo()
+        }
         fullscreenToggleButton.setOnClickListener {
             if (fullscreenManager.isFullscreen()) fullscreenManager.exitFullscreen()
             else fullscreenManager.enterFullscreen()
@@ -581,24 +582,6 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         exoPlayer?.prepare()
         exoPlayer?.playWhenReady = true
 
-        val autoPlayEnabled = intent.getBooleanExtra("AUTO_PLAY_ENABLED", false)
-        val mediaFileList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableArrayListExtra("MEDIA_FILE_LIST", FileSystemItem::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableArrayListExtra("MEDIA_FILE_LIST")
-        }
-        if (autoPlayEnabled && mediaFileList != null) {
-            autoPlayManager.setupAutoPlay(
-                enabled = true,
-                fileList = mediaFileList,
-                audioTracks = null,
-                currentIndex = currentVideoIndex,
-                serverUrl = currentServerUrl,
-                directoryPath = currentDirectoryPath
-            )
-        }
-
         findAndLoadMatchingSubtitle()
     }
 
@@ -606,6 +589,46 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         mediaLoadingProgress.visibility = View.GONE
         errorTextView.text = message
         errorTextView.visibility = View.VISIBLE
+    }
+
+    // ==================== 连播控制 ====================
+    private fun playNextVideo() {
+        val list = mediaFileList ?: return
+        if (list.isEmpty()) return
+        val nextIndex = currentPlayIndex + 1
+        if (nextIndex >= list.size) {
+            Toast.makeText(this, "已是最后一集", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val nextVideo = list[nextIndex]
+        currentPlayIndex = nextIndex
+        playVideoItem(nextVideo)
+    }
+
+    private fun playPreviousVideo() {
+        val list = mediaFileList ?: return
+        if (list.isEmpty()) return
+        val prevIndex = currentPlayIndex - 1
+        if (prevIndex < 0) {
+            Toast.makeText(this, "已是第一集", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val prevVideo = list[prevIndex]
+        currentPlayIndex = prevIndex
+        playVideoItem(prevVideo)
+    }
+
+    private fun playVideoItem(video: FileSystemItem) {
+        val encodedPath = URLEncoder.encode(video.path, "UTF-8")
+        currentFileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/stream/$encodedPath"
+        currentFileName = video.name
+        currentFilePath = video.path
+        fileNameTextView.text = currentFileName
+        // 重置字幕状态
+        assDialogues = emptyList()
+        customSubtitleView.visibility = View.GONE
+        lastDisplayedDialogues = emptyList()
+        loadVideo()
     }
 
     // ==================== 字幕功能（ASS/SSA 双语支持） ====================
@@ -778,8 +801,10 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
             }
             Player.STATE_ENDED -> {
                 mediaLoadingProgress.visibility = View.GONE
-                if (autoPlayManager.isAutoPlayEnabled()) {
-                    handler.postDelayed({ autoPlayManager.playNextMedia() }, 1000)
+                if (autoPlayEnabled && mediaFileList != null) {
+                    handler.postDelayed({
+                        playNextVideo()
+                    }, 1000)
                 }
             }
             Player.STATE_IDLE -> mediaLoadingProgress.visibility = View.GONE
