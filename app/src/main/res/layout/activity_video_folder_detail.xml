@@ -57,15 +57,16 @@
                     android:src="@drawable/ic_video_placeholder"
                     android:background="#E0E0E0" />
 
-                <!-- 播放按钮：右下角 -->
+                <!-- 播放按钮：右下角，图标填充按钮区域 -->
                 <ImageButton
                     android:id="@+id/btnPlayCurrent"
-                    android:layout_width="54dp"
-                    android:layout_height="54dp"
+                    android:layout_width="72dp"
+                    android:layout_height="72dp"
                     android:layout_gravity="bottom|end"
                     android:layout_margin="8dp"
                     android:background="@null"
                     android:padding="4dp"
+                    android:scaleType="centerCrop"
                     android:src="@drawable/ic_play_circle" />
             </FrameLayout>
 
