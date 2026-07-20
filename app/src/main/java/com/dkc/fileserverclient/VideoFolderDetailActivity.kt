@@ -1,13 +1,17 @@
 package com.dkc.fileserverclient
 
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
-import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.*
 import java.net.URLEncoder
@@ -15,24 +19,39 @@ import java.net.URLEncoder
 class VideoFolderDetailActivity : AppCompatActivity() {
 
     private lateinit var toolbar: Toolbar
-    private lateinit var previewImage: ImageView
+    private lateinit var currentThumbnail: ImageView
+    private lateinit var btnPlayCurrent: ImageButton
+    private lateinit var currentVideoTitle: TextView
+    private lateinit var currentVideoSize: TextView
+    private lateinit var currentVideoDate: TextView
+    private lateinit var recentThumbnail: ImageView
+    private lateinit var btnPlayRecent: ImageButton
+    private lateinit var recentCard: View                // 改为 View，避免 CardView 类型转换
     private lateinit var recyclerView: RecyclerView
-    private lateinit var adapter: RecyclerView.Adapter<*>  // 动态切换
+    private lateinit var adapter: RecyclerView.Adapter<*>
 
     private val episodeList = mutableListOf<FileSystemItem>()
     private val folderList = mutableListOf<FileSystemItem>()
     private var serverUrl = ""
-    private var currentPath = ""  // 当前浏览路径
-    private var rootPath = ""    // 进入时的根路径（剧集路径）
+    private var currentPath = ""
+    private var rootPath = ""
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val fileServerService by lazy { FileServerService(this) }
+
+    private lateinit var prefs: SharedPreferences
+    private val PREF_RECENT_VIDEO_PATH = "recent_video_path"
 
     private enum class SortType { NAME, SIZE, DATE }
     private var currentSort = SortType.NAME
 
+    private var currentVideo: FileSystemItem? = null
+    private var recentVideo: FileSystemItem? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_video_folder_detail)
+
+        prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
 
         serverUrl = intent.getStringExtra("SERVER_URL") ?: run { finish(); return }
         val folderItem = intent.getParcelableExtra<FileSystemItem>("FOLDER_ITEM")
@@ -53,11 +72,21 @@ class VideoFolderDetailActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.title = "加载中..."
 
-        previewImage = findViewById(R.id.folderPreviewImage)
-        recyclerView = findViewById(R.id.episodeRecyclerView)
-        recyclerView.layoutManager = LinearLayoutManager(this)
+        currentThumbnail = findViewById(R.id.currentThumbnail)
+        btnPlayCurrent = findViewById(R.id.btnPlayCurrent)
+        currentVideoTitle = findViewById(R.id.currentVideoTitle)
+        currentVideoSize = findViewById(R.id.currentVideoSize)
+        currentVideoDate = findViewById(R.id.currentVideoDate)
+        recentThumbnail = findViewById(R.id.recentThumbnail)
+        btnPlayRecent = findViewById(R.id.btnPlayRecent)
+        recentCard = findViewById(R.id.recentCard)   // 类型为 View，可安全转换
 
-        // 默认显示空列表
+        btnPlayCurrent.setOnClickListener { currentVideo?.let { playVideo(it) } }
+        btnPlayRecent.setOnClickListener { recentVideo?.let { playVideo(it) } }
+
+        recyclerView = findViewById(R.id.episodeRecyclerView)
+        recyclerView.layoutManager = GridLayoutManager(this, 5)
+
         adapter = createEpisodeAdapter()
         recyclerView.adapter = adapter
     }
@@ -66,45 +95,79 @@ class VideoFolderDetailActivity : AppCompatActivity() {
         return EpisodeAdapter(
             serverUrl,
             episodeList,
-            onItemClick = { clickedVideo -> updatePreview(clickedVideo) },
-            onPlayClick = { video -> playVideo(video) }   // 新增播放回调
+            onItemClick = { clickedVideo ->
+                updateCurrentPreview(clickedVideo)
+            }
         )
     }
 
     private fun createFolderAdapter(): FolderAdapter {
         return FolderAdapter(serverUrl, folderList) { clickedFolder ->
-            // 进入子目录
             currentPath = clickedFolder.path
             loadContent()
         }
     }
 
-    /**
-     * 启动视频播放器，支持自动连播
-     */
     private fun playVideo(video: FileSystemItem) {
         val encodedPath = URLEncoder.encode(video.path, "UTF-8")
         val fileUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/stream/$encodedPath"
 
-        // 获取当前视频在列表中的位置（按当前排序）
         val currentIndex = episodeList.indexOf(video)
-        if (currentIndex == -1) {
-            // 安全兜底
-            return
-        }
+        if (currentIndex == -1) return
+
+        // 持久化最近观看
+        prefs.edit().putString(PREF_RECENT_VIDEO_PATH, video.path).apply()
+        updateRecentView(video)
 
         val intent = Intent(this, VideoPlayerActivityV2::class.java).apply {
             putExtra("FILE_NAME", video.name)
             putExtra("FILE_URL", fileUrl)
             putExtra("FILE_PATH", video.path)
             putExtra("SERVER_URL", serverUrl)
-            putExtra("CURRENT_PATH", currentPath)          // 当前目录，用于加载同名字幕
+            putExtra("CURRENT_PATH", currentPath)
             putExtra("CURRENT_INDEX", currentIndex)
-            putExtra("AUTO_PLAY_ENABLED", true)            // 启用自动连播
-            // 传递当前目录下的所有视频列表（用于连播）
+            putExtra("AUTO_PLAY_ENABLED", true)
             putParcelableArrayListExtra("MEDIA_FILE_LIST", ArrayList(episodeList))
         }
         startActivity(intent)
+    }
+
+    private fun updateCurrentPreview(video: FileSystemItem?) {
+        currentVideo = video
+        if (video != null) {
+            currentVideoTitle.text = video.name
+            currentVideoSize.text = "大小: ${video.sizeFormatted}"
+            currentVideoDate.text = "修改: ${video.lastModified}"
+            ThumbnailLoader.loadVideoThumbnail(
+                imageView = currentThumbnail,
+                serverUrl = serverUrl,
+                videoPath = video.path,
+                width = 320,
+                height = 180
+            )
+        } else {
+            currentVideoTitle.text = "无视频"
+            currentVideoSize.text = ""
+            currentVideoDate.text = ""
+            currentThumbnail.setImageResource(R.drawable.ic_video_placeholder)
+        }
+    }
+
+    private fun updateRecentView(video: FileSystemItem?) {
+        recentVideo = video
+        if (video != null) {
+            ThumbnailLoader.loadVideoThumbnail(
+                imageView = recentThumbnail,
+                serverUrl = serverUrl,
+                videoPath = video.path,
+                width = 320,
+                height = 180
+            )
+            recentCard.visibility = View.VISIBLE
+        } else {
+            recentThumbnail.setImageResource(R.drawable.ic_video_placeholder)
+            recentCard.visibility = View.GONE
+        }
     }
 
     private fun loadContent() {
@@ -115,15 +178,12 @@ class VideoFolderDetailActivity : AppCompatActivity() {
                     fileServerService.getFileList(serverUrl, currentPath)
                 }
 
-                // 分离目录和视频
                 val dirs = items.filter { it.isDirectory && it.name != ".." }
                 val videos = items.filter { it.isVideo }
 
                 if (dirs.isNotEmpty()) {
-                    // 有子目录，显示目录列表（季文件夹）
                     folderList.clear()
                     folderList.addAll(dirs)
-                    // 切换到 FolderAdapter
                     val newAdapter = createFolderAdapter()
                     if (adapter != newAdapter) {
                         recyclerView.adapter = newAdapter
@@ -131,27 +191,35 @@ class VideoFolderDetailActivity : AppCompatActivity() {
                     }
                     newAdapter.notifyDataSetChanged()
                     supportActionBar?.title = "选择季"
-                    previewImage.setImageResource(R.drawable.ic_video_placeholder)
+                    updateCurrentPreview(null)
+                    updateRecentView(null)
                 } else if (videos.isNotEmpty()) {
-                    // 没有子目录，显示视频列表
                     episodeList.clear()
                     episodeList.addAll(videos)
-                    // 切换到 EpisodeAdapter
+                    sortEpisodes(currentSort)
                     val newAdapter = createEpisodeAdapter()
                     if (adapter != newAdapter) {
                         recyclerView.adapter = newAdapter
                         adapter = newAdapter
                     }
-                    sortEpisodes(currentSort)
                     newAdapter.notifyDataSetChanged()
                     supportActionBar?.title = "视频列表"
-                    if (episodeList.isNotEmpty()) {
-                        updatePreview(episodeList.first())
+                    val first = episodeList.firstOrNull()
+                    updateCurrentPreview(first)
+
+                    // 恢复最近观看
+                    val recentPath = prefs.getString(PREF_RECENT_VIDEO_PATH, null)
+                    if (recentPath != null) {
+                        val recentItem = episodeList.find { it.path == recentPath }
+                        if (recentItem != null) {
+                            updateRecentView(recentItem)
+                        } else {
+                            updateRecentView(null)
+                        }
                     } else {
-                        previewImage.setImageResource(R.drawable.ic_video_placeholder)
+                        updateRecentView(null)
                     }
                 } else {
-                    // 空目录
                     episodeList.clear()
                     folderList.clear()
                     val newAdapter = createEpisodeAdapter()
@@ -161,7 +229,8 @@ class VideoFolderDetailActivity : AppCompatActivity() {
                     }
                     newAdapter.notifyDataSetChanged()
                     supportActionBar?.title = "空目录"
-                    previewImage.setImageResource(R.drawable.ic_video_placeholder)
+                    updateCurrentPreview(null)
+                    updateRecentView(null)
                 }
             } catch (e: Exception) {
                 supportActionBar?.title = "加载失败"
@@ -169,17 +238,6 @@ class VideoFolderDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun updatePreview(video: FileSystemItem) {
-        ThumbnailLoader.loadVideoThumbnail(
-            imageView = previewImage,
-            serverUrl = serverUrl,
-            videoPath = video.path,
-            width = 320,
-            height = 180
-        )
-    }
-
-    // 排序（仅对视频列表有效）
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_folder_detail, menu)
         return true
@@ -188,7 +246,6 @@ class VideoFolderDetailActivity : AppCompatActivity() {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
             android.R.id.home -> {
-                // 如果当前不在根目录，返回上一层
                 if (currentPath != rootPath) {
                     currentPath = currentPath.substringBeforeLast('/')
                     loadContent()
@@ -197,21 +254,9 @@ class VideoFolderDetailActivity : AppCompatActivity() {
                 }
                 return true
             }
-            R.id.sort_by_name -> {
-                currentSort = SortType.NAME
-                sortEpisodes(SortType.NAME)
-                return true
-            }
-            R.id.sort_by_size -> {
-                currentSort = SortType.SIZE
-                sortEpisodes(SortType.SIZE)
-                return true
-            }
-            R.id.sort_by_date -> {
-                currentSort = SortType.DATE
-                sortEpisodes(SortType.DATE)
-                return true
-            }
+            R.id.sort_by_name -> { currentSort = SortType.NAME; sortEpisodes(SortType.NAME) }
+            R.id.sort_by_size -> { currentSort = SortType.SIZE; sortEpisodes(SortType.SIZE) }
+            R.id.sort_by_date -> { currentSort = SortType.DATE; sortEpisodes(SortType.DATE) }
         }
         return super.onOptionsItemSelected(item)
     }
