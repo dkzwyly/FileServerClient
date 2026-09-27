@@ -74,6 +74,9 @@ class FileListActivity : AppCompatActivity() {
     private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private lateinit var adapter: FileListAdapter
 
+    // 每个目录的滚动位置（以首个可见项的 position 记录），key 为目录 path
+    private val scrollPositions = mutableMapOf<String, Int>()
+
     // 自动连播相关
     private var autoPlayEnabled = false
     private var currentPlayingIndex = -1
@@ -424,8 +427,16 @@ class FileListActivity : AppCompatActivity() {
     }
 
     private fun loadCurrentDirectory(path: String = "") {
+        // 保存离开当前目录时的滚动位置（刷新同一目录时也会保存→恢复，位置不变）
+        val lm = filesRecyclerView.layoutManager as? LinearLayoutManager
+        val prevPos = lm?.findFirstVisibleItemPosition() ?: RecyclerView.NO_POSITION
+        if (prevPos != RecyclerView.NO_POSITION) {
+            scrollPositions[currentPath] = prevPos
+        }
+
         currentPath = path
         supportActionBar?.subtitle = if (path.isEmpty()) "根目录" else path
+
         coroutineScope.launch {
             statusLabel.text = "正在加载文件列表..."
             invalidateOptionsMenu()
@@ -435,9 +446,22 @@ class FileListActivity : AppCompatActivity() {
                 }
                 fileList.clear()
                 fileList.addAll(items)
-                adapter.submitList(ArrayList(fileList))
+                // 提交列表后恢复滚动位置
+                adapter.submitList(ArrayList(fileList)) {
+                    val restorePos = scrollPositions[path] ?: 0
+                    val lm2 = filesRecyclerView.layoutManager as? LinearLayoutManager
+                    if (restorePos > 0 && lm2 != null) {
+                        lm2.scrollToPositionWithOffset(restorePos, 0)
+                    } else {
+                        filesRecyclerView.scrollToPosition(0)
+                    }
+                }
                 fileCountText.text = "${items.size} 个项目"
-                statusLabel.text = if (path.isEmpty()) "根目录 - ${items.size} 个项目" else "当前路径: $path - ${items.size} 个项目"
+                statusLabel.text = if (path.isEmpty()) {
+                    "根目录 - ${items.size} 个项目"
+                } else {
+                    "当前路径: $path - ${items.size} 个项目"
+                }
                 resetAutoPlay()
                 if (isSelectionMode) exitSelectionMode()
             } catch (e: Exception) {

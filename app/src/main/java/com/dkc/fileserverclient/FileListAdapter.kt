@@ -61,8 +61,8 @@ class FileListAdapter(
         notifyDataSetChanged()
     }
 
-    fun submitList(list: List<FileSystemItem>) {
-        differ.submitList(list)
+    fun submitList(list: List<FileSystemItem>, commitCallback: Runnable? = null) {
+        differ.submitList(list, commitCallback)
     }
 
     // ---------- 视图类型 ----------
