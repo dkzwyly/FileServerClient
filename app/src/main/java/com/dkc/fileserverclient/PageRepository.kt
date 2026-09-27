@@ -78,7 +78,6 @@ class PageRepository private constructor(private val appContext: Context) {
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + exceptionHandler)
 
-    // 统一使用默认客户端，移除所有网络绑定相关逻辑
     private val defaultClient: OkHttpClient = UnsafeHttpClient.createUnsafeOkHttpClient()
         .newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -86,7 +85,6 @@ class PageRepository private constructor(private val appContext: Context) {
         .writeTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    // 请求去重 + 并发限制
     private val activeFetchJobs = ConcurrentHashMap<String, Deferred<String>>()
     private val requestSemaphore = Semaphore(3)
 
@@ -163,9 +161,13 @@ class PageRepository private constructor(private val appContext: Context) {
 
         if (needRelayout && windowBlocks.isNotEmpty()) {
             scope.launch {
+                val currentOffset = _pageContent.value?.state?.absoluteCharOffset
                 invalidateAllLayouts()
                 rebuildGlobalLines()
-                recalculatePageBreaks()
+                recalculatePageBreaks(currentOffset)
+                if (currentOffset != null) {
+                    currentPageIndex = findPageForAbsoluteOffset(currentOffset)
+                }
                 updateCurrentPage()
                 adjustWindow()
             }
@@ -174,24 +176,28 @@ class PageRepository private constructor(private val appContext: Context) {
         }
     }
 
-    suspend fun nextPage() {
-        if (!isInitialized()) return
+    suspend fun nextPage(): Boolean {
+        if (!isInitialized()) return false
         var target = currentPageIndex + 1
         while (target < pageBreaks.size && isPageBlank(target)) target++
         if (target < pageBreaks.size) {
             currentPageIndex = target
             updateCurrentPage()
+            return true
         }
+        return false
     }
 
-    suspend fun previousPage() {
-        if (!isInitialized()) return
+    suspend fun previousPage(): Boolean {
+        if (!isInitialized()) return false
         var target = currentPageIndex - 1
         while (target >= 0 && isPageBlank(target)) target--
         if (target >= 0) {
             currentPageIndex = target
             updateCurrentPage()
+            return true
         }
+        return false
     }
 
     suspend fun restorePosition(blockPage: Int, absoluteOffset: Int) {
@@ -233,7 +239,11 @@ class PageRepository private constructor(private val appContext: Context) {
                 _chapters.value = list
                 _chaptersLoadedEvent.emit(Unit)
                 if (isInitialized()) {
-                    recalculatePageBreaks()
+                    val currentOffset = _pageContent.value?.state?.absoluteCharOffset
+                    recalculatePageBreaks(currentOffset)
+                    if (currentOffset != null) {
+                        currentPageIndex = findPageForAbsoluteOffset(currentOffset)
+                    }
                     if (currentPageIndex >= pageBreaks.size) {
                         currentPageIndex = (pageBreaks.size - 1).coerceAtLeast(0)
                     }
@@ -319,7 +329,7 @@ class PageRepository private constructor(private val appContext: Context) {
 
             windowBlocks = pagesToLoad.mapNotNull { blockCache[it] }.sortedBy { it.blockPage }
             rebuildGlobalLines()
-            recalculatePageBreaks()
+            recalculatePageBreaks(targetOffset)
             currentPageIndex = targetOffset?.let { findPageForAbsoluteOffset(it) } ?: 0
             updateCurrentPage()
             adjustWindow()
@@ -401,16 +411,28 @@ class PageRepository private constructor(private val appContext: Context) {
         }
     }
 
-    private fun recalculatePageBreaks() {
+    /**
+     * 以 anchorOffset 所在行为锚点重新切页：
+     * 锚点行必然是某一页的页首，避免窗口滑动 / 字体变化 / 章节加载后
+     * 分页边界平移导致当前页回跳到“包含该 offset 的上一页”。
+     */
+    private fun recalculatePageBreaks(anchorOffset: Int? = null) {
         if (globalLines.isEmpty()) { pageBreaks = emptyList(); return }
         val breaks = mutableListOf<Int>()
         var start = 0
+        val anchorLine = anchorOffset?.let { findLineForAbsoluteOffset(it) }
+
         while (start < globalLines.size) {
             var end = min(start + linesPerPage, globalLines.size)
             for (i in (start + 1) until end) {
                 if (chapterStartOffsetSet.contains(globalLines[i].absoluteStartChar)) {
                     end = i; break
                 }
+            }
+            if (anchorLine != null && anchorLine > start && anchorLine < end) {
+                breaks.add(start)
+                start = anchorLine
+                continue
             }
             breaks.add(start)
             start = end
@@ -468,6 +490,8 @@ class PageRepository private constructor(private val appContext: Context) {
 
     private suspend fun adjustWindow() {
         val currentBlock = _pageContent.value?.state?.blockPage ?: return
+        val currentOffset = _pageContent.value?.state?.absoluteCharOffset
+
         val minBlock = (currentBlock - WINDOW_HALF).coerceAtLeast(1)
         val maxBlock = minBlock + WINDOW_SIZE - 1
         val idealRange = (minBlock..maxBlock).toSet()
@@ -511,9 +535,10 @@ class PageRepository private constructor(private val appContext: Context) {
 
         if (toRemove.isNotEmpty() || toAdd.isNotEmpty()) {
             rebuildGlobalLines()
-            recalculatePageBreaks()
-            val currentOffset = _pageContent.value?.state?.absoluteCharOffset ?: return
-            currentPageIndex = findPageForAbsoluteOffset(currentOffset)
+            recalculatePageBreaks(currentOffset)
+            if (currentOffset != null) {
+                currentPageIndex = findPageForAbsoluteOffset(currentOffset)
+            }
             refreshPageDisplay()
         }
     }

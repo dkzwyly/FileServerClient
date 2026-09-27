@@ -163,10 +163,8 @@ class TextPreviewActivity : AppCompatActivity() {
             width, textContentTextView.paint,
             textContentTextView.lineSpacingExtra, textContentTextView.lineSpacingMultiplier, lines
         )
-        audiobookService?.updateDisplayParams(
-            width, textContentTextView.paint,
-            textContentTextView.lineSpacingExtra, textContentTextView.lineSpacingMultiplier, lines
-        )
+        // 已删除 audiobookService?.updateDisplayParams(...)，
+        // 分页完全由 PageRepository 持有，service 不再重复接收显示参数。
     }
 
     private fun calculateLinesPerPage(): Int {
