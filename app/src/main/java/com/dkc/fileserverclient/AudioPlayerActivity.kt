@@ -18,6 +18,8 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import java.io.File
 import java.util.*
+import android.text.Editable
+import android.text.TextWatcher
 
 class AudioPlayerActivity : AppCompatActivity() {
 
@@ -258,18 +260,72 @@ class AudioPlayerActivity : AppCompatActivity() {
     }
 
     private fun showLyricsFileSelectionDialog(files: List<FileServerService.LyricsFileInfo>) {
-        val names = files.map { it.name }.toMutableList().also { it.add("无歌词（如纯音乐）") }
-        AlertDialog.Builder(this)
+        val view = layoutInflater.inflate(R.layout.dialog_lyrics_search, null)
+        val searchInput = view.findViewById<EditText>(R.id.searchLyricsInput)
+        val listView = view.findViewById<ListView>(R.id.lyricsFileListView)
+
+        val noLyricsLabel = "无歌词（如纯音乐）"
+        // 完整列表（只构建一次）
+        val allItems: List<String> = files.map { it.name } + noLyricsLabel
+
+        // 普通 ArrayAdapter，禁用其内置 Filter
+        val adapter = object : ArrayAdapter<String>(
+            this, android.R.layout.simple_list_item_1, allItems.toMutableList()
+        ) {
+            override fun getFilter(): Filter = object : Filter() {
+                override fun performFiltering(c: CharSequence?) = FilterResults()
+                @Suppress("UNCHECKED_CAST")
+                override fun publishResults(c: CharSequence?, r: FilterResults?) {}
+            }
+        }
+        listView.adapter = adapter
+
+        val dialog = AlertDialog.Builder(this)
             .setTitle("选择歌词文件")
-            .setItems(names.toTypedArray()) { _, i ->
-                if (i == names.size - 1) {
-                    viewModel.markAsNoLyrics()
-                } else {
-                    viewModel.selectLyricsFile(files[i]) { viewModel.reloadLyrics() }
+            .setView(view)
+            .setNegativeButton("取消", null)
+            .create()
+
+        listView.setOnItemClickListener { _, _, position, _ ->
+            val selected = adapter.getItem(position) ?: return@setOnItemClickListener
+            if (selected == noLyricsLabel) {
+                viewModel.markAsNoLyrics()
+            } else {
+                files.firstOrNull { it.name == selected }?.let {
+                    viewModel.selectLyricsFile(it) { viewModel.reloadLyrics() }
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+            dialog.dismiss()
+        }
+
+        // ★ 同步过滤：直接改数据源，不走 Filter 线程
+        fun applyFilter(key: String) {
+            val k = key.trim().lowercase(Locale.getDefault())
+            val result = if (k.isEmpty()) {
+                allItems
+            } else {
+                allItems.filter {
+                    it == noLyricsLabel || it.lowercase(Locale.getDefault()).contains(k)
+                }
+            }
+            adapter.clear()
+            adapter.addAll(result)
+            adapter.notifyDataSetChanged()
+        }
+
+        searchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {
+                applyFilter(s?.toString() ?: "")
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        dialog.show()
+        searchInput.requestFocus()
+        dialog.window?.setSoftInputMode(
+            android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+        )
     }
 
     private fun showEditMetadataDialog() {
