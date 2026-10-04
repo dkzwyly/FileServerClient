@@ -24,7 +24,30 @@
         android:fontFamily="monospace"
         android:scrollbars="none" />
 
+    <!-- 右下角状态：时间 + 电量（位于设置按钮上方，纯展示，不拦截触摸） -->
+
     <!-- 章节跳转按钮（右上角透明） -->
+
+    <TextView
+        android:id="@+id/statusInfoTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentRight="true"
+        android:layout_alignParentBottom="true"
+        android:layout_marginRight="12dp"
+        android:layout_marginBottom="7dp"
+        android:clickable="false"
+        android:duplicateParentState="false"
+        android:focusable="false"
+        android:includeFontPadding="false"
+        android:longClickable="false"
+        android:padding="2dp"
+        android:text="--:--  --%"
+        android:textColor="#80FFFFFF"
+        android:textIsSelectable="false"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
     <ImageButton
         android:id="@+id/chapterButton"
         android:layout_width="48dp"

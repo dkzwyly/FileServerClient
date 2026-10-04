@@ -1,11 +1,15 @@
 package com.dkc.fileserverclient
 
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.graphics.Color
+import android.os.BatteryManager
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.view.*
@@ -15,6 +19,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class TextPreviewActivity : AppCompatActivity() {
 
@@ -31,6 +38,7 @@ class TextPreviewActivity : AppCompatActivity() {
     private lateinit var progressTextView: TextView
     private lateinit var statusLabel: TextView
     private lateinit var voiceMenuButton: ImageButton
+    private lateinit var statusInfoTextView: TextView
 
     private var audiobookService: AudiobookService? = null
     private var isBound = false
@@ -50,6 +58,22 @@ class TextPreviewActivity : AppCompatActivity() {
     private val minClickInterval = 200L
 
     private lateinit var repository: PageRepository
+
+    // ---- 状态栏（时间 + 电量）相关 ----
+    private var batteryPercent = -1
+    private var statusReceiverRegistered = false
+    private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+    private val statusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_BATTERY_CHANGED) {
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                if (level >= 0 && scale > 0) batteryPercent = level * 100 / scale
+            }
+            updateStatusInfo()
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -143,9 +167,19 @@ class TextPreviewActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        registerStatusReceiver()
+    }
+
     override fun onResume() {
         super.onResume()
         updatePlayStateUI()
+    }
+
+    override fun onStop() {
+        unregisterStatusReceiver()
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -155,6 +189,44 @@ class TextPreviewActivity : AppCompatActivity() {
         }
         super.onDestroy()
     }
+
+    // ---------------- 时间 + 电量 ----------------
+
+    private fun registerStatusReceiver() {
+        if (statusReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_TIME_TICK)
+            addAction(Intent.ACTION_TIME_CHANGED)
+            addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            addAction(Intent.ACTION_BATTERY_CHANGED)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(statusReceiver, filter)
+        }
+        statusReceiverRegistered = true
+        updateStatusInfo()
+    }
+
+    private fun unregisterStatusReceiver() {
+        if (!statusReceiverRegistered) return
+        try {
+            unregisterReceiver(statusReceiver)
+        } catch (_: IllegalArgumentException) {
+        }
+        statusReceiverRegistered = false
+    }
+
+    private fun updateStatusInfo() {
+        if (!::statusInfoTextView.isInitialized) return
+        val time = timeFormat.format(Date())
+        val battery = if (batteryPercent in 0..100) "$batteryPercent%" else "--%"
+        statusInfoTextView.text = "$time  $battery"
+    }
+
+    // ---------------- 分页与显示参数 ----------------
 
     private fun updateServiceDisplayParams() {
         val width = textContentTextView.width - textContentTextView.paddingLeft - textContentTextView.paddingRight
@@ -201,6 +273,8 @@ class TextPreviewActivity : AppCompatActivity() {
         progressTextView.text = String.format("%.2f%%", progress)
     }
 
+    // ---------------- 视图初始化 ----------------
+
     private fun initViews() {
         textContentTextView = findViewById(R.id.textContentTextView)
         loadingProgress = findViewById(R.id.loadingProgress)
@@ -211,10 +285,12 @@ class TextPreviewActivity : AppCompatActivity() {
         progressTextView = findViewById(R.id.progressTextView)
         statusLabel = findViewById(R.id.statusLabel)
         voiceMenuButton = findViewById(R.id.voiceMenuButton)
+        statusInfoTextView = findViewById(R.id.statusInfoTextView)
         supportActionBar?.hide()
         chapterButton.setOnClickListener { showChapterDialog() }
         settingsButton.setOnClickListener { showAppearanceDialog() }
         voiceMenuButton.setOnClickListener { showVoiceMenu() }
+        updateStatusInfo()
     }
 
     private fun setupIntentData() {
@@ -262,6 +338,8 @@ class TextPreviewActivity : AppCompatActivity() {
             if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
         )
     }
+
+    // ---------------- 菜单与对话框 ----------------
 
     private fun showVoiceMenu() {
         PopupMenu(this, voiceMenuButton).apply {
@@ -407,6 +485,8 @@ class TextPreviewActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    // ---------------- 外观 ----------------
+
     private fun loadAppearancePrefs() {
         currentFontSize = prefs.getFloat("font_size", 16f)
         currentBackgroundColor = prefs.getInt("bg_color", Color.WHITE)
@@ -420,6 +500,7 @@ class TextPreviewActivity : AppCompatActivity() {
         textContentTextView.textSize = currentFontSize
         rootLayout.setBackgroundColor(currentBackgroundColor)
         progressTextView.setTextColor(getContrastColor(currentBackgroundColor))
+        statusInfoTextView.setTextColor(getContrastColor(currentBackgroundColor))
     }
 
     private fun getContrastColor(bg: Int): Int {
@@ -431,6 +512,8 @@ class TextPreviewActivity : AppCompatActivity() {
         window.decorView.systemUiVisibility =
             View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
     }
+
+    // ---------------- 状态显示 ----------------
 
     private fun showLoadingState(msg: String?) {
         loadingProgress.isVisible = true; textContentTextView.isVisible = false; errorTextView.isVisible = false
