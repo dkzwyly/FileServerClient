@@ -1,19 +1,19 @@
 package com.dkc.fileserverclient
 
 import android.app.Application
-import coil.Coil
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.request.CachePolicy
 import okhttp3.OkHttpClient
+import com.dkc.fileserverclient.backup.BuiltinBackups
 
 /**
  * 统一持有安全的 OkHttpClient，避免重复创建
  */
 object UnsafeHttpClientHolder {
     val client: OkHttpClient by lazy {
-        UnsafeHttpClient.createUnsafeOkHttpClient()  // 你现有的信任所有证书的客户端
+        UnsafeHttpClient.createUnsafeOkHttpClient()
     }
 }
 
@@ -24,6 +24,9 @@ class MusicApplication : Application(), ImageLoaderFactory {
 
         // 初始化封面本地存储（使用统一的 OkHttpClient）
         CoverImageStorage.init(this, UnsafeHttpClientHolder.client)
+
+        // 注册所有需要参与备份/恢复的数据源
+        BuiltinBackups.registerAll()
 
         // 无需手动调用 Coil.setImageLoader，实现 ImageLoaderFactory 后 Coil 会自动获取
     }
@@ -40,7 +43,7 @@ class MusicApplication : Application(), ImageLoaderFactory {
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("coil_cache"))
-                    .maxSizePercent(0.02)  // 最多占磁盘 2%
+                    .maxSizePercent(0.02)
                     .build()
             }
             .build()
