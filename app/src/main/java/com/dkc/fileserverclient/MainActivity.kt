@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var browseFilesButton: Button
     private lateinit var historyListView: ListView
 
+    private lateinit var discoverButton: Button
     private lateinit var mediaLibraryButton: Button
     private lateinit var textLibraryButton: Button
     private lateinit var videoLibraryButton: Button
@@ -237,6 +238,8 @@ class MainActivity : AppCompatActivity() {
         browseFilesButton = findViewById(R.id.browseFilesButton)
         historyListView = findViewById(R.id.historyListView)
 
+        discoverButton = findViewById(R.id.discoverButton)
+        discoverButton.setOnClickListener { startDiscovery() }
 
         mediaLibraryButton = findViewById(R.id.mediaLibraryButton)
         textLibraryButton = findViewById(R.id.textLibraryButton)
@@ -309,7 +312,55 @@ class MainActivity : AppCompatActivity() {
             overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
         }
     }
+    private fun startDiscovery() {
+        discoverButton.isEnabled = false
+        discoverButton.text = "搜索中..."
 
+        coroutineScope.launch {
+            try {
+                val servers = com.dkc.fileserverclient.discovery.LanDiscovery.discover()
+                when {
+                    servers.isEmpty() -> {
+                        showToast("未发现服务器，请确认在同一网络")
+                    }
+                    servers.size == 1 -> {
+                        val s = servers.first()
+                        serverUrlEditText.setText(s.toEditableAddress())
+                        showToast("发现: ${s.name}")
+                        connectToServer(isSilent = false)
+                    }
+                    else -> {
+                        showServerSelectionDialog(servers)
+                    }
+                }
+            } catch (e: Exception) {
+                showToast("搜索失败: ${e.message}")
+            } finally {
+                discoverButton.isEnabled = true
+                discoverButton.text = "搜索局域网"
+            }
+        }
+    }
+
+    private fun showServerSelectionDialog(
+        servers: List<com.dkc.fileserverclient.discovery.DiscoveredServer>
+    ) {
+        val labels = servers.map {
+            val port = if (it.httpsPort > 0) it.httpsPort else it.httpPort
+            val tag = if (it.httpsPort > 0) "HTTPS" else "HTTP"
+            "${it.name}\n${it.host}:$port  ($tag)"
+        }.toTypedArray()
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("发现 ${servers.size} 台服务器")
+            .setItems(labels) { _, which ->
+                val s = servers[which]
+                serverUrlEditText.setText(s.toEditableAddress())
+                connectToServer(isSilent = false)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
     private fun openFileList(fileType: String) {
         if (isConnected) {
             startActivity(Intent(this, FileListActivity::class.java).apply {
