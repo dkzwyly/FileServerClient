@@ -28,6 +28,11 @@ import com.dkc.fileserverclient.transfer.ServerTaskPoller
 import java.util.concurrent.atomic.AtomicInteger
 // 如果在同一个包，可以不用 import；否则
 import com.dkc.fileserverclient.transfer.TransferManager
+import com.google.android.material.badge.BadgeDrawable
+import com.google.android.material.badge.BadgeUtils
+import androidx.core.content.ContextCompat
+import android.graphics.Color
+import androidx.core.view.isVisible
 
 class FileListActivity : AppCompatActivity() {
 
@@ -51,6 +56,9 @@ class FileListActivity : AppCompatActivity() {
     private lateinit var fileCountText: TextView
     private lateinit var createFolderButton: FloatingActionButton
     private lateinit var selectModeButton: Button
+
+    // ===== 新增：任务列表角标 =====
+    private var taskBadge: BadgeDrawable? = null
 
     // ===== 新增：选择模式相关 =====
     private var isSelectionMode = false
@@ -101,6 +109,11 @@ class FileListActivity : AppCompatActivity() {
         setupToolbar()
         setupBackPressedHandler()
         loadCurrentDirectory("")
+        coroutineScope.launch {
+            com.dkc.fileserverclient.transfer.TransferManager.tasks.collect {
+                refreshTaskBadge()
+            }
+        }
     }
 
     private fun initViews() {
@@ -394,9 +407,38 @@ class FileListActivity : AppCompatActivity() {
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_file_list, menu)
+
+        // 等菜单项真正渲染到 Toolbar 后再附加 badge
+        toolbar.post {
+            if (taskBadge == null) {
+                val badge = BadgeDrawable.create(this).apply {
+                    maxCharacterCount = 99            // 超过 99 显示 "99+"
+                    backgroundColor = ContextCompat.getColor(
+                        this@FileListActivity, R.color.primary_color
+                    )
+                    badgeTextColor = Color.WHITE
+                    isVisible = false                 // 初始隐藏
+                }
+                BadgeUtils.attachBadgeDrawable(badge, toolbar, R.id.menu_task_list)
+                taskBadge = badge
+
+                // 立即同步一次当前数量
+                refreshTaskBadge()
+            }
+        }
         return true
     }
-
+    private fun refreshTaskBadge() {
+        val badge = taskBadge ?: return
+        val active = com.dkc.fileserverclient.transfer.TransferManager
+            .tasks.value.count { it.isActive }
+        if (active > 0) {
+            badge.number = active
+            badge.isVisible = true
+        } else {
+            badge.isVisible = false
+        }
+    }
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
             android.R.id.home -> {
@@ -407,7 +449,12 @@ class FileListActivity : AppCompatActivity() {
                 loadCurrentDirectory(currentPath)
                 true
             }
-            R.id.menu_trash -> {   // 新增
+            R.id.menu_task_list -> {
+                // 任务列表是本地队列，不需要服务器连接
+                startActivity(Intent(this, TaskListActivity::class.java))
+                true
+            }
+            R.id.menu_trash -> {
                 startActivity(Intent(this, TrashActivity::class.java).apply {
                     putExtra("SERVER_URL", currentServerUrl)
                 })

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+
+    <!-- 三条横线：表示列表条目 -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M22,7h-9v2h9V7z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M22,15h-9v2h9V15z" />
+
+    <!-- 两个勾选框：表示已完成的任务 -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M5.54,11L2,7.46l1.41,-1.41l2.12,2.12l4.24,-4.24l1.41,1.41L5.54,11z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M5.54,19L2,15.46l1.41,-1.41l2.12,2.12l4.24,-4.24l1.41,1.41L5.54,19z" />
+</vector>

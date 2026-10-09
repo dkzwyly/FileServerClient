@@ -7,6 +7,11 @@
         android:icon="@drawable/ic_refresh"
         app:showAsAction="ifRoom" />
     <item
+        android:id="@+id/menu_task_list"
+        android:title="任务列表"
+        android:icon="@drawable/ic_task_list"
+        app:showAsAction="ifRoom" />
+    <item
         android:id="@+id/menu_trash"
         android:title="回收站"
         android:icon="@drawable/ic_trash"
