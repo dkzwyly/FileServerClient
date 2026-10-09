@@ -633,31 +633,29 @@ class ImageGalleryActivity : AppCompatActivity() {
     }
 
     private fun uploadSelectedFiles(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+
         coroutineScope.launch {
-            statusText.text = "准备上传 (${uris.size} 张)..."
-            var successCount = 0
-            val tempFiles = mutableListOf<File>()
-            try {
-                for (uri in uris) {
-                    val tempFile = createTempImageFile(uri) ?: continue
-                    tempFiles.add(tempFile)
-                    val result = withContext(Dispatchers.IO) {
-                        fileServerService.uploadFiles(
-                            currentServerUrl,
-                            listOf(tempFile to tempFile.name),
-                            imageGalleryPath
-                        )
-                    }
-                    if (result.success) successCount++
-                }
-                Toast.makeText(this@ImageGalleryActivity, "上传成功 $successCount / ${uris.size} 张", Toast.LENGTH_LONG).show()
-                if (successCount > 0) loadImages()
-            } catch (e: Exception) {
-                Toast.makeText(this@ImageGalleryActivity, "上传异常: ${e.message}", Toast.LENGTH_SHORT).show()
-            } finally {
-                tempFiles.forEach { if (it.exists()) it.delete() }
-                statusText.text = if (adapter.itemCount == 0) "无图片" else "共 ${adapter.itemCount} 张"
+            statusText.text = "准备入队 (${uris.size} 张)..."
+
+            var queuedCount = 0
+            for (uri in uris) {
+                val tempFile = createTempImageFile(uri) ?: continue
+                com.dkc.fileserverclient.transfer.TransferManager.enqueueUpload(
+                    serverUrl = currentServerUrl,
+                    localFile = tempFile,
+                    remoteDir = imageGalleryPath
+                )
+                queuedCount++
             }
+
+            Toast.makeText(
+                this@ImageGalleryActivity,
+                "已加入上传队列 $queuedCount / ${uris.size} 张",
+                Toast.LENGTH_LONG
+            ).show()
+
+            statusText.text = if (adapter.itemCount == 0) "无图片" else "共 ${adapter.itemCount} 张"
         }
     }
 

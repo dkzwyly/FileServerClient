@@ -3,6 +3,7 @@ package com.dkc.fileserverclient
 import android.content.ContentValues.TAG
 import android.content.Context
 import android.util.Log
+import com.dkc.fileserverclient.transfer.ProgressRequestBody
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
@@ -462,7 +463,145 @@ class FileServerService(private val context: Context) {
             false
         }
     }
+    // ========== rs ==========
+    data class MoveCopyResult(
+        val success: Boolean,
+        val taskId: String?,
+        val message: String?
+    )// ========== 移动（异步任务版，返回 taskId） ==========
+    suspend fun moveItemAsync(
+        serverUrl: String,
+        sourcePath: String,
+        destPath: String
+    ): MoveCopyResult = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedSrc = URLEncoder.encode(sourcePath, "UTF-8")
+            val encodedDst = URLEncoder.encode(destPath, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/move" +
+                    "?sourcePath=$encodedSrc&destPath=$encodedDst"
+            val request = Request.Builder()
+                .url(url)
+                .post(RequestBody.create(null, ""))
+                .build()
+            val response = client.newCall(request).execute()
 
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: ""
+                val obj = gson.fromJson(json, JsonObject::class.java)
+                val taskId = obj.get("taskId")?.asString
+                val message = obj.get("message")?.asString
+                MoveCopyResult(true, taskId, message)
+            } else {
+                val errorBody = response.body?.string()
+                val message = parseErrorMessage(errorBody) ?: "移动失败 (HTTP ${response.code})"
+                MoveCopyResult(false, null, message)
+            }
+        } catch (e: Exception) {
+            MoveCopyResult(false, null, "网络异常: ${e.message}")
+        }
+    }
+
+    // ========== 复制（异步任务版，返回 taskId） ==========
+    suspend fun copyItemAsync(
+        serverUrl: String,
+        sourcePath: String,
+        destPath: String
+    ): MoveCopyResult = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val encodedSrc = URLEncoder.encode(sourcePath, "UTF-8")
+            val encodedDst = URLEncoder.encode(destPath, "UTF-8")
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/copy" +
+                    "?sourcePath=$encodedSrc&destPath=$encodedDst"
+            val request = Request.Builder()
+                .url(url)
+                .post(RequestBody.create(null, ""))
+                .build()
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: ""
+                val obj = gson.fromJson(json, JsonObject::class.java)
+                val taskId = obj.get("taskId")?.asString
+                val message = obj.get("message")?.asString
+                MoveCopyResult(true, taskId, message)
+            } else {
+                val errorBody = response.body?.string()
+                val message = parseErrorMessage(errorBody) ?: "复制失败 (HTTP ${response.code})"
+                MoveCopyResult(false, null, message)
+            }
+        } catch (e: Exception) {
+            MoveCopyResult(false, null, "网络异常: ${e.message}")
+        }
+    }
+
+    // ========== 取消服务端任务 ==========
+    suspend fun cancelServerTask(
+        serverUrl: String,
+        taskId: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/task/$taskId/cancel"
+            val request = Request.Builder()
+                .url(url)
+                .post(RequestBody.create(null, ""))
+                .build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            Log.e(TAG, "取消服务端任务失败: $taskId", e)
+            false
+        }
+    }
+
+    suspend fun uploadFileWithProgress(
+        serverUrl: String,
+        file: File,
+        targetPath: String,
+        onProgress: (written: Long, total: Long) -> Unit
+    ): UploadResult = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val uploadUrl = if (targetPath.isEmpty()) {
+                "${formattedUrl.removeSuffix("/")}/api/fileserver/upload"
+            } else {
+                val encoded = targetPath.split("/").joinToString("/") {
+                    URLEncoder.encode(it, "UTF-8")
+                }
+                "${formattedUrl.removeSuffix("/")}/api/fileserver/upload/$encoded"
+            }
+
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "files",
+                    file.name,
+                    ProgressRequestBody(file, "application/octet-stream".toMediaType(), onProgress)
+                )
+                .build()
+
+            val customClient = client.newBuilder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(60, TimeUnit.SECONDS)
+                .build()
+
+            val response = customClient.newCall(
+                Request.Builder().url(uploadUrl).post(body).build()
+            ).execute()
+
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: ""
+                gson.fromJson(json, UploadResult::class.java)
+            } else {
+                UploadResult(success = false, message = "上传失败: HTTP ${response.code}")
+            }
+        } catch (e: Exception) {
+            UploadResult(success = false, message = "上传异常: ${e.message}")
+        }
+    }
     // ========== 歌曲元数据相关（原有） ==========
     data class SongMetadataResponse(
         val path: String,

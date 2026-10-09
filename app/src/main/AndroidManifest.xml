@@ -105,7 +105,10 @@
             android:name=".VideoPlayerActivityV2"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.AppCompat.NoActionBar.OptOut" />
-
+        <activity
+            android:name=".TaskListActivity"
+            android:label="任务列表"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
         <activity
             android:name=".AudioPlayerActivity"
             android:launchMode="singleTop"

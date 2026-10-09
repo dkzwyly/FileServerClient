@@ -212,12 +212,35 @@ data class TrashRecord(
 @Parcelize
 data class TaskStatus(
     @SerializedName("taskId") val taskId: String = "",
-    @SerializedName("status") val status: String = "",          // Queued, Processing, Completed, Failed
+    @SerializedName("status") val status: String = "",
     @SerializedName("progressPercent") val progressPercent: Int = 0,
     @SerializedName("errorMessage") val errorMessage: String? = null,
     @SerializedName("queueTime") val queueTime: String = "",
-    @SerializedName("completeTime") val completeTime: String? = null
-) : Parcelable
+    @SerializedName("completeTime") val completeTime: String? = null,
+
+    // ===== 新增字段（对应服务端 FileOperationJob） =====
+    @SerializedName("retryCount") val retryCount: Int = 0,
+    @SerializedName("cancelRequested") val cancelRequested: Boolean = false,
+    @SerializedName("totalBytes") val totalBytes: Long = 0,
+    @SerializedName("copiedBytes") val copiedBytes: Long = 0
+) : Parcelable {
+
+    /** 是否已经结束（成功 / 失败 / 取消） */
+    val isFinished: Boolean
+        get() = status in setOf("Completed", "Failed", "Cancelled")
+
+    /** 是否成功完成 */
+    val isSuccess: Boolean
+        get() = status == "Completed"
+
+    /** 是否排队中 */
+    val isQueued: Boolean
+        get() = status == "Queued"
+
+    /** 是否正在执行 */
+    val isProcessing: Boolean
+        get() = status == "Processing"
+}
 
 // ==================== 章节索引 ====================
 @Parcelize

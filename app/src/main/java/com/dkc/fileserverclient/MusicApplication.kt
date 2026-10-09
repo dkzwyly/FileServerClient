@@ -27,7 +27,7 @@ class MusicApplication : Application(), ImageLoaderFactory {
 
         // 注册所有需要参与备份/恢复的数据源
         BuiltinBackups.registerAll()
-
+        com.dkc.fileserverclient.transfer.TransferManager.init(this)
         // 无需手动调用 Coil.setImageLoader，实现 ImageLoaderFactory 后 Coil 会自动获取
     }
 

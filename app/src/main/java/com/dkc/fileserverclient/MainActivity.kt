@@ -22,6 +22,8 @@ import androidx.core.content.edit
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
+import com.dkc.fileserverclient.transfer.TransferManager
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -36,6 +38,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var textLibraryButton: Button
     private lateinit var videoLibraryButton: Button
     private lateinit var audioLibraryButton: Button
+
+    private lateinit var taskListEntryCard: View
+    private lateinit var taskListSubtitle: TextView
 
     private val fileServerService by lazy { FileServerService(this) }
     private val connectionHistory = mutableListOf<ConnectionHistory>()
@@ -117,6 +122,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         effectManager.onResume()
+        updateTaskListSubtitle()
     }
 
     override fun onPause() {
@@ -164,7 +170,19 @@ class MainActivity : AppCompatActivity() {
             connectToServer(lastConnection.url, isSilent = true)
         }
     }
-
+    private fun updateTaskListSubtitle() {
+        coroutineScope.launch {
+            TransferManager.tasks.collect { tasks ->
+                val active = tasks.count { it.isActive }
+                val total = tasks.size
+                taskListSubtitle.text = when {
+                    active > 0 -> "$active 个进行中 · 共 $total 个"
+                    total > 0 -> "共 $total 个任务（无进行中）"
+                    else -> "暂无任务"
+                }
+            }
+        }
+    }
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_main, menu)
         return true
@@ -224,6 +242,14 @@ class MainActivity : AppCompatActivity() {
         textLibraryButton = findViewById(R.id.textLibraryButton)
         videoLibraryButton = findViewById(R.id.videoLibraryButton)
         audioLibraryButton = findViewById(R.id.audioLibraryButton)
+        taskListEntryCard = findViewById(R.id.taskListEntryCard)
+        taskListSubtitle = findViewById(R.id.taskListSubtitle)
+
+// 任务列表是本地队列，不需要服务器连接，随时可打开
+        taskListEntryCard.setOnClickListener {
+            startActivity(Intent(this, TaskListActivity::class.java))
+            overrideActivityTransition()
+        }
 
         connectButton.setOnClickListener { connectToServer(isSilent = false) }
         browseFilesButton.setOnClickListener { openFileList("all") }

@@ -24,7 +24,10 @@ import kotlinx.coroutines.*
 import java.io.File
 import android.os.Handler
 import android.os.Looper
-
+import com.dkc.fileserverclient.transfer.ServerTaskPoller
+import java.util.concurrent.atomic.AtomicInteger
+// 如果在同一个包，可以不用 import；否则
+import com.dkc.fileserverclient.transfer.TransferManager
 
 class FileListActivity : AppCompatActivity() {
 
@@ -313,10 +316,10 @@ class FileListActivity : AppCompatActivity() {
     private fun performMoveOrCopy(targetPath: String, isMove: Boolean) {
         if (selectedItems.isEmpty()) return
 
-        // 校验：不能移动到自身或子目录
+        // 校验（原逻辑保留）
         for (item in selectedItems) {
             val dest = if (targetPath.isEmpty()) {
-                item.name  // 移动到根目录
+                item.name
             } else {
                 "$targetPath/${item.name}".trimStart('/')
             }
@@ -330,35 +333,55 @@ class FileListActivity : AppCompatActivity() {
             }
         }
 
+        val items = selectedItems.toList()
+        val actionName = if (isMove) "移动" else "复制"
+        val opType = if (isMove) {
+            com.dkc.fileserverclient.transfer.TransferType.SERVER_MOVE
+        } else {
+            com.dkc.fileserverclient.transfer.TransferType.SERVER_COPY
+        }
+
         coroutineScope.launch {
-            statusLabel.text = "正在${if (isMove) "移动" else "复制"}..."
-            var allSuccess = true
-            var errorMessage = ""
-            for (item in selectedItems) {
+            statusLabel.text = "正在提交${actionName}任务..."
+
+            var submitted = 0
+            for (item in items) {
                 val dest = if (targetPath.isEmpty()) {
                     item.name
                 } else {
                     "$targetPath/${item.name}".trimStart('/')
                 }
+
                 val result = if (isMove) {
-                    fileServerService.moveItem(currentServerUrl, item.path, dest)
+                    fileServerService.moveItemAsync(currentServerUrl, item.path, dest)
                 } else {
-                    fileServerService.copyItem(currentServerUrl, item.path, dest)
+                    fileServerService.copyItemAsync(currentServerUrl, item.path, dest)
                 }
-                if (!result.success) {
-                    allSuccess = false
-                    errorMessage = result.message ?: "未知错误"
-                    break
+
+                if (result.success && result.taskId != null) {
+                    com.dkc.fileserverclient.transfer.TransferManager.registerServerTask(
+                        serverUrl = currentServerUrl,
+                        serverTaskId = result.taskId,
+                        fileName = item.name,
+                        operationType = opType,
+                        remotePath = dest
+                    )
+                    submitted++
+                } else {
+                    showToast("提交失败: ${result.message ?: "未知错误"}")
+                    statusLabel.text = "提交失败"
+                    return@launch
                 }
             }
+
             exitSelectionMode()
-            loadCurrentDirectory(currentPath)
-            if (allSuccess) {
-                showToast("${if (isMove) "移动" else "复制"}完成")
-            } else {
-                showToast("操作失败: $errorMessage")
-                statusLabel.text = "操作失败"
+
+            if (submitted > 0) {
+                showToast("已提交 $submitted 个${actionName}任务，可在任务列表查看")
+                statusLabel.text = "已提交 $submitted 个${actionName}任务"
             }
+
+            // 不立刻刷新目录：任务还在服务端跑，等完成后用户下拉刷新
         }
     }
 
@@ -504,32 +527,22 @@ class FileListActivity : AppCompatActivity() {
             showToast("请先选择要上传的文件")
             return
         }
-        val uploadedFileNames = selectedFiles.map { it.second }
-        coroutineScope.launch {
-            uploadButton.isEnabled = false
-            statusLabel.text = "正在上传 ${selectedFiles.size} 个文件..."
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    fileServerService.uploadFiles(currentServerUrl, selectedFiles, currentPath)
-                }
-                if (result.success) {
-                    showToast("上传成功，正在刷新缩略图...")
-                    selectedFiles.clear()
-                    uploadStatusCard.visibility = View.GONE
-                    uploadButton.isEnabled = false
-                    loadCurrentDirectory(currentPath)
-                    startThumbnailPolling(uploadedFileNames)
-                } else {
-                    showToast("上传失败: ${result.message}")
-                    uploadButton.isEnabled = true
-                }
-            } catch (e: Exception) {
-                showToast("上传异常: ${e.message}")
-                uploadButton.isEnabled = true
-            } finally {
-                statusLabel.text = "上传完成"
-            }
+
+        val count = selectedFiles.size
+        selectedFiles.forEach { (file, _) ->
+            com.dkc.fileserverclient.transfer.TransferManager.enqueueUpload(
+                serverUrl = currentServerUrl,
+                localFile = file,
+                remoteDir = currentPath
+            )
         }
+
+        selectedFiles.clear()
+        uploadStatusCard.visibility = View.GONE
+        uploadButton.isEnabled = false
+        selectedFilesLabel.text = "未选择文件"
+        statusLabel.text = "已加入上传队列"
+        showToast("已加入上传队列（$count 个），可在任务列表查看")
     }
 
     private fun startThumbnailPolling(uploadedFileNames: List<String>) {

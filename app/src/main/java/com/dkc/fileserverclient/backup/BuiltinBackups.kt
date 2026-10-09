@@ -28,8 +28,9 @@ object BuiltinBackups {
     /** 需要备份的 filesDir 子目录 */
     private val DIRS_TO_BACKUP = listOf(
         "reading_history",  // 文本阅读进度
-        "audio_covers"      // 歌曲封面
+        "audio_covers",     // 歌曲封面
         // 说明：thumbnails / coil_cache 都是 cacheDir，不备份
+        "transfer"
     )
 
     /** 在 Application.onCreate() 里调用一次 */
