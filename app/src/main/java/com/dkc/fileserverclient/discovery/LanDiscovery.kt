@@ -24,9 +24,11 @@ data class DiscoveredServer(
         return "$scheme://$host:$port"
     }
 
-    // ===== 修改：优先 https 端口，没有就退回 http =====
+    // ===== 方案 A：直接返回带协议的地址 =====
+    // 优先 https 端口，没有就退回 http，始终带上 scheme，避免下游 OkHttp 报
+    // "Expected URL scheme 'http' or 'https' but no scheme was found"。
     fun toEditableAddress(): String {
-        return if (httpsPort > 0) "$host:$httpsPort" else "$host:$httpPort"
+        return if (httpsPort > 0) "https://$host:$httpsPort" else "http://$host:$httpPort"
     }
 }
 

@@ -124,10 +124,22 @@ class TextLibraryDetailActivity : AppCompatActivity() {
         }
     }
 
+    private fun formatServerUrl(url: String): String {
+        var formattedUrl = url.trim()
+        if (!formattedUrl.startsWith("http://") && !formattedUrl.startsWith("https://")) {
+            formattedUrl = "https://$formattedUrl"
+        }
+        if (!formattedUrl.contains(":") || formattedUrl.matches(Regex("https?://[^:]+$"))) {
+            formattedUrl += if (formattedUrl.startsWith("https://")) ":443" else ":8080"
+        }
+        return formattedUrl
+    }
+
     private fun previewTextFile(textItem: FileSystemItem) {
         try {
             val encodedPath = java.net.URLEncoder.encode(textItem.path, "UTF-8")
-            val fileUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+            val baseUrl = formatServerUrl(currentServerUrl).removeSuffix("/")
+            val fileUrl = "$baseUrl/api/fileserver/preview/$encodedPath"
 
             Log.d(TAG, "预览文本: ${textItem.name}, URL: $fileUrl")
 
