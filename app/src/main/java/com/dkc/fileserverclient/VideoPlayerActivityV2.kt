@@ -1,3 +1,4 @@
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.dkc.fileserverclient
 
 import android.content.Context
@@ -32,6 +33,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
 import java.util.*
+import android.graphics.drawable.ColorDrawable
+import android.view.ViewGroup
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 
 class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
 
@@ -47,12 +52,15 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
     private lateinit var subtitleButton: ImageButton
     private lateinit var mediaControls: LinearLayout
     private lateinit var playPauseButton: ImageButton
+    private lateinit var episodeListButton: ImageButton   // ← 新增
     private lateinit var previousButton: ImageButton
     private lateinit var nextButton: ImageButton
     private lateinit var fullscreenToggleButton: ImageButton
     private lateinit var seekBar: SeekBar
     private lateinit var currentTimeTextView: TextView
     private lateinit var durationTextView: TextView
+    private lateinit var episodeListButtonFullscreen: ImageButton
+    private var episodePopup: PopupWindow? = null
 
     // 自定义 ASS 字幕视图
     private lateinit var customSubtitleView: TextView
@@ -165,6 +173,8 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
+        episodePopup?.dismiss()
+        episodePopup = null
         exoPlayer?.release()
         exoPlayer = null
         coroutineScope.cancel()
@@ -186,6 +196,8 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         previousButton = findViewById(R.id.previousButton)
         nextButton = findViewById(R.id.nextButton)
         fullscreenToggleButton = findViewById(R.id.fullscreenToggleButton)
+        episodeListButton = findViewById(R.id.episodeListButton)   // ← 新增
+        episodeListButtonFullscreen = findViewById(R.id.episodeListButtonFullscreen)
         seekBar = findViewById(R.id.seekBar)
         currentTimeTextView = findViewById(R.id.currentTimeTextView)
         durationTextView = findViewById(R.id.durationTextView)
@@ -275,7 +287,11 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
             currentPlayIndex = currentVideoIndex
         }
 
-        fileNameTextView.text = currentFileName
+        fileNameTextView.text = if (autoPlayEnabled && !mediaFileList.isNullOrEmpty() && currentPlayIndex >= 0) {
+            "[${currentPlayIndex + 1}/${mediaFileList!!.size}] $currentFileName"
+        } else {
+            currentFileName
+        }
         fileTypeTextView.text = "视频"
     }
 
@@ -291,6 +307,10 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
 
         fullscreenManager.setFullscreenChangeListener { isFullscreen ->
             updateSubtitlePosition()
+            updateEpisodeButtonsVisibility()
+            if (isFullscreen) {
+                episodeListButtonFullscreen.bringToFront()
+            }
         }
 
         controlOverlay = TextView(this).apply {
@@ -312,7 +332,22 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         }
         findViewById<FrameLayout>(R.id.mediaContainer).addView(controlContainer)
     }
+    /**
+     * 根据是否有连播列表 + 是否全屏 + 控制栏是否显示，统一控制两个选集按钮
+     */
+    private fun updateEpisodeButtonsVisibility() {
+        val hasEpisodes = autoPlayEnabled && !mediaFileList.isNullOrEmpty()
+        val isFullscreen = fullscreenManager.isFullscreen()
+        val controlsVisible = mediaControls.visibility == View.VISIBLE
 
+        // 非全屏：标题栏按钮
+        episodeListButton.visibility =
+            if (hasEpisodes && !isFullscreen) View.VISIBLE else View.GONE
+
+        // 全屏：仅当控制栏可见时显示浮动按钮
+        episodeListButtonFullscreen.visibility =
+            if (hasEpisodes && isFullscreen && controlsVisible) View.VISIBLE else View.GONE
+    }
     private fun setupGestureControlManager() {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val displayWidth = resources.displayMetrics.widthPixels
@@ -415,6 +450,10 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
             mediaControls.visibility = View.VISIBLE
             mediaControls.bringToFront()
         }
+        updateEpisodeButtonsVisibility()
+        if (fullscreenManager.isFullscreen()) {
+            episodeListButtonFullscreen.bringToFront()
+        }
         updateSubtitlePosition()
     }
 
@@ -431,10 +470,17 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         nextButton.setOnClickListener {
             if (autoPlayEnabled) playNextVideo()
         }
+
+        // 选集按钮（两个共用弹窗逻辑）
+        episodeListButton.setOnClickListener { showEpisodeSelectionDialog() }
+        episodeListButtonFullscreen.setOnClickListener { showEpisodeSelectionDialog() }
+        updateEpisodeButtonsVisibility()
+
         fullscreenToggleButton.setOnClickListener {
             if (fullscreenManager.isFullscreen()) fullscreenManager.exitFullscreen()
             else fullscreenManager.enterFullscreen()
             updateSubtitlePosition()
+            updateEpisodeButtonsVisibility()
         }
     }
 
@@ -592,6 +638,114 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
     }
 
     // ==================== 连播控制 ====================
+
+    /**
+     * 显示选集弹窗：列出所有剧集，当前集以 ▶ 标记，点击直接切换
+     */
+    // ==================== 选集弹窗 ====================
+
+    private fun showEpisodeSelectionDialog() {
+        val list = mediaFileList
+        if (list.isNullOrEmpty()) {
+            Toast.makeText(this, "无可选剧集", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 关闭旧弹窗
+        episodePopup?.dismiss()
+
+        val recyclerView = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@VideoPlayerActivityV2)
+            setBackgroundColor(Color.parseColor("#E6000000"))
+            adapter = EpisodeSelectionAdapter(list, currentPlayIndex) { index ->
+                if (index == currentPlayIndex) {
+                    Toast.makeText(
+                        this@VideoPlayerActivityV2,
+                        "已经是当前集",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    currentPlayIndex = index
+                    playVideoItem(list[index])
+                }
+                episodePopup?.dismiss()
+            }
+        }
+
+        // 弹窗尺寸：宽 220dp，高随内容自适应，最多 60% 屏幕高
+        val width = dpToPx(220)
+        val itemHeight = dpToPx(60)
+        val maxHeight = (resources.displayMetrics.heightPixels * 0.6).toInt()
+        val contentHeight = minOf(list.size * itemHeight, maxHeight)
+
+        episodePopup = PopupWindow(recyclerView, width, contentHeight, true).apply {
+            isOutsideTouchable = true
+            isFocusable = true
+            elevation = dpToPx(8).toFloat()
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        }
+
+        // 选锚点：全屏用浮动按钮，非全屏用标题栏按钮
+        val anchor = if (fullscreenManager.isFullscreen() &&
+            episodeListButtonFullscreen.visibility == View.VISIBLE
+        ) {
+            episodeListButtonFullscreen
+        } else {
+            episodeListButton
+        }
+
+        // 显示在锚点下方，右对齐（列表靠右）
+        episodePopup?.showAsDropDown(anchor, 0, dpToPx(4), Gravity.END)
+
+        // 滚动定位到当前集
+        recyclerView.post {
+            (recyclerView.layoutManager as? LinearLayoutManager)
+                ?.scrollToPositionWithOffset(currentPlayIndex, 0)
+        }
+    }
+
+    /**
+     * 选集列表适配器：每项带间隔，当前集高亮
+     */
+    private inner class EpisodeSelectionAdapter(
+        private val items: List<FileSystemItem>,
+        private val selectedIndex: Int,
+        private val onItemClick: (Int) -> Unit
+    ) : RecyclerView.Adapter<EpisodeSelectionAdapter.VH>() {
+
+        inner class VH(val text: TextView) : RecyclerView.ViewHolder(text)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+            val tv = TextView(parent.context).apply {
+                layoutParams = RecyclerView.LayoutParams(
+                    RecyclerView.LayoutParams.MATCH_PARENT,
+                    RecyclerView.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = dpToPx(6)
+                }
+                setPadding(dpToPx(20), dpToPx(18), dpToPx(20), dpToPx(18))
+                textSize = 15f
+                // 完全换行：不限制行数，不省略
+                maxLines = Int.MAX_VALUE
+                ellipsize = null
+                gravity = Gravity.CENTER_VERTICAL
+                background = getDrawable(android.R.drawable.list_selector_background)
+            }
+            return VH(tv)
+        }
+
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            val name = items[position].name.substringBeforeLast('.')
+            holder.text.text = if (position == selectedIndex) "▶  $name" else "    $name"
+            holder.text.setTextColor(
+                if (position == selectedIndex) Color.parseColor("#FFD700") else Color.WHITE
+            )
+            holder.text.setOnClickListener { onItemClick(position) }
+        }
+
+        override fun getItemCount(): Int = items.size
+    }
+
     private fun playNextVideo() {
         val list = mediaFileList ?: return
         if (list.isEmpty()) return
@@ -624,6 +778,7 @@ class VideoPlayerActivityV2 : AppCompatActivity(), Player.Listener {
         currentFileName = video.name
         currentFilePath = video.path
         fileNameTextView.text = currentFileName
+
         // 重置字幕状态
         assDialogues = emptyList()
         customSubtitleView.visibility = View.GONE

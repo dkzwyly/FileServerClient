@@ -6,48 +6,60 @@
     android:fitsSystemWindows="true"
     android:background="#000000">
 
-    <!-- 顶部标题栏 -->
-    <LinearLayout
-        android:id="@+id/titleBar"
-        android:layout_width="match_parent"
+<!-- 顶部标题栏 -->
+<LinearLayout
+    android:id="@+id/titleBar"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="#80000000"
+    android:orientation="horizontal"
+    android:padding="16dp"
+    android:gravity="center_vertical">
+
+    <Button
+        android:id="@+id/backButton"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:background="#80000000"
-        android:orientation="horizontal"
-        android:padding="16dp"
-        android:gravity="center_vertical">
+        android:text="返回"
+        android:background="@android:color/transparent"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp" />
 
-        <Button
-            android:id="@+id/backButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="返回"
-            android:background="@android:color/transparent"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp" />
+    <TextView
+        android:id="@+id/fileNameTextView"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="视频名称"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:ellipsize="end"
+        android:singleLine="true" />
 
-        <TextView
-            android:id="@+id/fileNameTextView"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="视频名称"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:ellipsize="end"
-            android:singleLine="true" />
+    <ImageButton
+        android:id="@+id/episodeListButton"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@android:drawable/ic_menu_sort_by_size"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="选集"
+        android:layout_marginEnd="8dp"
+        android:visibility="gone"
+        app:tint="#FFFFFF" />
 
-        <Button
-            android:id="@+id/settingsButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="设置"
-            android:background="@android:color/transparent"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp" />
+    <Button
+        android:id="@+id/settingsButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="设置"
+        android:background="@android:color/transparent"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp" />
 
-    </LinearLayout>
+</LinearLayout>
+
 
     <!-- 文件类型指示 -->
     <TextView
@@ -64,117 +76,130 @@
         android:padding="8dp"
         android:visibility="visible" />
 
-    <!-- 视频播放容器 -->
-    <FrameLayout
-        android:id="@+id/mediaContainer"
+<!-- 视频播放容器 -->
+<FrameLayout
+    android:id="@+id/mediaContainer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layout_below="@id/titleBar">
+
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/playerView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_below="@id/titleBar">
+        android:background="#000000" />
 
-        <androidx.media3.ui.PlayerView
-            android:id="@+id/playerView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="#000000" />
+    <ProgressBar
+        android:id="@+id/mediaLoadingProgress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:indeterminate="true" />
 
-        <ProgressBar
-            android:id="@+id/mediaLoadingProgress"
+    <!-- 控制栏 -->
+    <LinearLayout
+        android:id="@+id/mediaControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#80000000"
+        android:orientation="horizontal"
+        android:paddingVertical="12dp"
+        android:paddingHorizontal="16dp"
+        android:gravity="center_vertical"
+        android:visibility="visible">
+
+        <ImageButton
+            android:id="@+id/previousButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@android:drawable/ic_media_previous"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="上一个"
+            app:tint="#FFFFFF" />
+
+        <ImageButton
+            android:id="@+id/playPauseButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@android:drawable/ic_media_play"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="播放/暂停"
+            app:tint="#FFFFFF" />
+
+        <ImageButton
+            android:id="@+id/nextButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@android:drawable/ic_media_next"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="下一个"
+            app:tint="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/currentTimeTextView"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:indeterminate="true" />
+            android:text="0:00"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:layout_marginStart="12dp"
+            android:minWidth="36dp" />
 
-        <!-- 控制栏 -->
-        <LinearLayout
-            android:id="@+id/mediaControls"
-            android:layout_width="match_parent"
+        <SeekBar
+            android:id="@+id/seekBar"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom"
-            android:background="#80000000"
-            android:orientation="horizontal"
-            android:paddingVertical="12dp"
-            android:paddingHorizontal="16dp"
-            android:gravity="center_vertical"
-            android:visibility="visible">
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp" />
 
-            <ImageButton
-                android:id="@+id/previousButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:src="@android:drawable/ic_media_previous"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="上一个"
-                app:tint="#FFFFFF" />
+        <TextView
+            android:id="@+id/durationTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0:00"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:minWidth="36dp" />
 
-            <ImageButton
-                android:id="@+id/playPauseButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:src="@android:drawable/ic_media_play"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="播放/暂停"
-                app:tint="#FFFFFF" />
+        <ImageButton
+            android:id="@+id/subtitleButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_subtitle"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="字幕"
+            android:layout_marginStart="12dp"
+            app:tint="#FFFFFF" />
 
-            <ImageButton
-                android:id="@+id/nextButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:src="@android:drawable/ic_media_next"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="下一个"
-                app:tint="#FFFFFF" />
+        <ImageButton
+            android:id="@+id/fullscreenToggleButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_fullscreen"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="全屏"
+            android:layout_marginStart="12dp"
+            app:tint="#FFFFFF" />
 
-            <TextView
-                android:id="@+id/currentTimeTextView"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="0:00"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp"
-                android:layout_marginStart="12dp"
-                android:minWidth="36dp" />
+    </LinearLayout>
 
-            <SeekBar
-                android:id="@+id/seekBar"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="12dp"
-                android:layout_marginEnd="12dp" />
+    <!-- 全屏选集按钮：右上角浮动 -->
+    <ImageButton
+        android:id="@+id/episodeListButtonFullscreen"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:src="@android:drawable/ic_menu_sort_by_size"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="选集"
+        android:visibility="gone"
+        app:tint="#FFFFFF" />
 
-            <TextView
-                android:id="@+id/durationTextView"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="0:00"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp"
-                android:minWidth="36dp" />
-
-            <ImageButton
-                android:id="@+id/subtitleButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:src="@drawable/ic_subtitle"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="字幕"
-                android:layout_marginStart="12dp"
-                app:tint="#FFFFFF" />
-
-            <ImageButton
-                android:id="@+id/fullscreenToggleButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:src="@drawable/ic_fullscreen"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="全屏"
-                android:layout_marginStart="12dp"
-                app:tint="#FFFFFF" />
-
-        </LinearLayout>
-
-    </FrameLayout>
-
+</FrameLayout>
     <!-- 错误提示 -->
     <TextView
         android:id="@+id/errorTextView"
