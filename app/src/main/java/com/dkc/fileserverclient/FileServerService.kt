@@ -88,7 +88,8 @@ class FileServerService(private val context: Context) {
         serverUrl: String,
         path: String = "",
         sortBy: String = "name",
-        sortOrder: String = "asc"
+        sortOrder: String = "asc",
+        forceRefresh: Boolean = false
     ): List<FileSystemItem> = withContext(Dispatchers.IO) {
         try {
             val formattedUrl = formatServerUrl(serverUrl)

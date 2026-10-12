@@ -57,6 +57,8 @@ class FileListActivity : AppCompatActivity() {
     private lateinit var createFolderButton: FloatingActionButton
     private lateinit var selectModeButton: Button
 
+    private var isRefreshing = false
+
     // ===== 新增：任务列表角标 =====
     private var taskBadge: BadgeDrawable? = null
 
@@ -254,7 +256,7 @@ class FileListActivity : AppCompatActivity() {
                         if (!result) allSuccess = false
                     }
                     exitSelectionMode()
-                    loadCurrentDirectory(currentPath)
+                    loadCurrentDirectory(currentPath, forceRefresh = false)
                     showToast(if (allSuccess) "删除完成" else "部分删除失败")
                 }
             }
@@ -283,8 +285,7 @@ class FileListActivity : AppCompatActivity() {
                     val result = fileServerService.renameItem(currentServerUrl, item.path, newName)
                     if (result.success) {
                         exitSelectionMode()
-                        loadCurrentDirectory(currentPath)
-                        showToast("重命名成功")
+                        loadCurrentDirectory(currentPath, forceRefresh = false)
                     } else {
                         showToast("重命名失败: ${result.message}")
                         statusLabel.text = "重命名失败"
@@ -446,11 +447,10 @@ class FileListActivity : AppCompatActivity() {
                 true
             }
             R.id.menu_refresh -> {
-                loadCurrentDirectory(currentPath)
+                loadCurrentDirectory(currentPath, forceRefresh = true)   // ★ 手动刷新：强刷
                 true
             }
             R.id.menu_task_list -> {
-                // 任务列表是本地队列，不需要服务器连接
                 startActivity(Intent(this, TaskListActivity::class.java))
                 true
             }
@@ -497,8 +497,16 @@ class FileListActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadCurrentDirectory(path: String = "") {
-        // 保存离开当前目录时的滚动位置（刷新同一目录时也会保存→恢复，位置不变）
+    private fun loadCurrentDirectory(path: String = "", forceRefresh: Boolean = false) {
+        // ★ 强刷防抖：如果上一次强刷还没完成，忽略新请求
+        if (forceRefresh && isRefreshing) {
+            showToast("正在刷新中，请稍候")
+            return
+        }
+
+        if (forceRefresh) isRefreshing = true
+
+        // 保存离开当前目录时的滚动位置
         val lm = filesRecyclerView.layoutManager as? LinearLayoutManager
         val prevPos = lm?.findFirstVisibleItemPosition() ?: RecyclerView.NO_POSITION
         if (prevPos != RecyclerView.NO_POSITION) {
@@ -509,15 +517,21 @@ class FileListActivity : AppCompatActivity() {
         supportActionBar?.subtitle = if (path.isEmpty()) "根目录" else path
 
         coroutineScope.launch {
-            statusLabel.text = "正在加载文件列表..."
-            invalidateOptionsMenu()
             try {
+                statusLabel.text = if (forceRefresh) "正在刷新文件列表..." else "正在加载文件列表..."
+                invalidateOptionsMenu()
+
                 val items = withContext(Dispatchers.IO) {
-                    fileServerService.getFileList(currentServerUrl, path)
+                    fileServerService.getFileList(
+                        serverUrl = currentServerUrl,
+                        path = path,
+                        forceRefresh = forceRefresh          // ★ 关键：把开关透传给网络层
+                    )
                 }
+
                 fileList.clear()
                 fileList.addAll(items)
-                // 提交列表后恢复滚动位置
+
                 adapter.submitList(ArrayList(fileList)) {
                     val restorePos = scrollPositions[path] ?: 0
                     val lm2 = filesRecyclerView.layoutManager as? LinearLayoutManager
@@ -527,12 +541,14 @@ class FileListActivity : AppCompatActivity() {
                         filesRecyclerView.scrollToPosition(0)
                     }
                 }
+
                 fileCountText.text = "${items.size} 个项目"
                 statusLabel.text = if (path.isEmpty()) {
                     "根目录 - ${items.size} 个项目"
                 } else {
                     "当前路径: $path - ${items.size} 个项目"
                 }
+
                 resetAutoPlay()
                 if (isSelectionMode) exitSelectionMode()
             } catch (e: Exception) {
@@ -540,6 +556,7 @@ class FileListActivity : AppCompatActivity() {
                 showToast("加载文件列表失败")
             } finally {
                 invalidateOptionsMenu()
+                if (forceRefresh) isRefreshing = false
             }
         }
     }
@@ -871,7 +888,7 @@ class FileListActivity : AppCompatActivity() {
                 }
                 if (result) {
                     showToast("文件删除成功")
-                    loadCurrentDirectory(currentPath)
+                    loadCurrentDirectory(currentPath, forceRefresh = false)
                     if (autoPlayEnabled && mediaFileList.any { it.path == item.path }) {
                         mediaFileList.removeAll { it.path == item.path }
                         if (mediaFileList.isEmpty()) {
@@ -916,7 +933,7 @@ class FileListActivity : AppCompatActivity() {
             }
             if (success) {
                 showToast("文件夹创建成功")
-                loadCurrentDirectory(currentPath)
+                loadCurrentDirectory(currentPath, forceRefresh = false)
             } else {
                 showToast("创建失败，请检查权限或名称是否重复")
                 statusLabel.text = "创建失败"
