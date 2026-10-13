@@ -1,9 +1,10 @@
-package com.dkc.fileserverclient
+package com.dkc.fileserverclient.effect
 
 import android.app.Activity
 import android.util.Log
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import com.dkc.fileserverclient.SunbeamView
 
 class BackgroundEffectManager(private val activity: Activity) {
 

@@ -1,4 +1,4 @@
-package com.dkc.fileserverclient
+package com.dkc.fileserverclient.effect
 
 import android.animation.ValueAnimator
 import android.content.Context
@@ -10,6 +10,7 @@ import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.View
 import android.view.animation.LinearInterpolator
+import kotlin.math.sin
 
 /**
  * 月光：朦胧柔和的冷白光晕，不带条纹。
@@ -71,7 +72,7 @@ class MoonlightView @JvmOverloads constructor(
         if (viewWidth == 0 || viewHeight == 0) return
 
         // 呼吸：8 秒一次，只做轻微明暗变化
-        val breathe = 0.90f + 0.10f * kotlin.math.sin(phase * 2f * Math.PI.toFloat())
+        val breathe = 0.90f + 0.10f * sin(phase * 2f * Math.PI.toFloat())
 
         // 多层柔光叠加，形成朦胧感
         drawSoftGlow(canvas, moonRadius * 3.0f, (45 * breathe).toInt())

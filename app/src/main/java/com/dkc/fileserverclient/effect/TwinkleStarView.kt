@@ -1,4 +1,4 @@
-package com.dkc.fileserverclient
+package com.dkc.fileserverclient.effect
 
 import android.animation.ValueAnimator
 import android.content.Context
