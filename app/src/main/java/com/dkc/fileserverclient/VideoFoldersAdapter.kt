@@ -1,11 +1,13 @@
 package com.dkc.fileserverclient
 
+import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.cardview.widget.CardView
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 
 class VideoFoldersAdapter(
@@ -68,16 +70,17 @@ class VideoFoldersAdapter(
             // 列表模式：隐藏卡片背景/阴影，隐藏图标，调整内边距
             holder.folderCardView.cardElevation = 0f
             holder.folderCardView.radius = 0f
-            holder.folderCardView.setCardBackgroundColor(android.graphics.Color.TRANSPARENT)
+            holder.folderCardView.setCardBackgroundColor(Color.TRANSPARENT)
             holder.folderIcon.visibility = View.GONE
-            // 调整内部布局为水平方向，但为简化，保持垂直但去掉图标间距
-            // 可设置最小高度较小
             holder.itemView.layoutParams?.height = ViewGroup.LayoutParams.WRAP_CONTENT
         } else {
             // 网格模式：显示卡片样式
             holder.folderCardView.cardElevation = 4f
             holder.folderCardView.radius = 8f
-            holder.folderCardView.setCardBackgroundColor(android.graphics.Color.WHITE)
+            // 关键修复：从资源读取语义色，跟随深色模式
+            holder.folderCardView.setCardBackgroundColor(
+                ContextCompat.getColor(context, R.color.card_background)
+            )
             holder.folderIcon.visibility = View.VISIBLE
         }
 

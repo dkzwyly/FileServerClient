@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -58,17 +59,71 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rootFrame: FrameLayout
     private lateinit var rootLayout: LinearLayout
     private var currentGradientIndex = 0
-    private val gradientList = listOf(
-        createGradientDrawable(intArrayOf(0xFFFCE4EC.toInt(), 0xFFFFF0F5.toInt(), 0xFFF8BBD0.toInt()), GradientDrawable.Orientation.TL_BR),
-        createGradientDrawable(intArrayOf(0xFFE8F0FE.toInt(), 0xFFD4E4FC.toInt(), 0xFFBBDEFB.toInt()), GradientDrawable.Orientation.TL_BR),
-        createGradientDrawable(intArrayOf(0xFFE0F7FA.toInt(), 0xFFB2EBF2.toInt(), 0xFF80DEEA.toInt()), GradientDrawable.Orientation.TOP_BOTTOM),
-        createGradientDrawable(intArrayOf(0xFFF3E5F5.toInt(), 0xFFE1BEE7.toInt(), 0xFFCE93D8.toInt()), GradientDrawable.Orientation.LEFT_RIGHT),
-        createGradientDrawable(intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()), GradientDrawable.Orientation.BL_TR),
-        createSolidWhiteDrawable()
-    )
-    private fun createSolidWhiteDrawable(): GradientDrawable {
-        return GradientDrawable().apply { setColor(Color.WHITE) }
+
+    // ---------- 浅色模式渐变 ----------
+    private val lightGradients by lazy {
+        listOf(
+            createGradientDrawable(
+                intArrayOf(0xFFFCE4EC.toInt(), 0xFFFFF0F5.toInt(), 0xFFF8BBD0.toInt()),
+                GradientDrawable.Orientation.TL_BR
+            ),
+            createGradientDrawable(
+                intArrayOf(0xFFE8F0FE.toInt(), 0xFFD4E4FC.toInt(), 0xFFBBDEFB.toInt()),
+                GradientDrawable.Orientation.TL_BR
+            ),
+            createGradientDrawable(
+                intArrayOf(0xFFE0F7FA.toInt(), 0xFFB2EBF2.toInt(), 0xFF80DEEA.toInt()),
+                GradientDrawable.Orientation.TOP_BOTTOM
+            ),
+            createGradientDrawable(
+                intArrayOf(0xFFF3E5F5.toInt(), 0xFFE1BEE7.toInt(), 0xFFCE93D8.toInt()),
+                GradientDrawable.Orientation.LEFT_RIGHT
+            ),
+            createGradientDrawable(
+                intArrayOf(0xFFFFF3E0.toInt(), 0xFFFFE0B2.toInt(), 0xFFFFCC80.toInt()),
+                GradientDrawable.Orientation.BL_TR
+            ),
+            createSolidDrawable(Color.WHITE)
+        )
     }
+
+    // ---------- 深色模式渐变 ----------
+    private val darkGradients by lazy {
+        listOf(
+            // 0 粉色 → 深粉夜色
+            createGradientDrawable(
+                intArrayOf(0xFF2A1B24.toInt(), 0xFF3A2430.toInt(), 0xFF4A2C3A.toInt()),
+                GradientDrawable.Orientation.TL_BR
+            ),
+            // 1 冷蓝 → 深蓝夜色（保持不动）
+            createGradientDrawable(
+                intArrayOf(0xFF0D1B2A.toInt(), 0xFF1B263B.toInt(), 0xFF415A77.toInt()),
+                GradientDrawable.Orientation.TL_BR
+            ),
+            // 2 青色 → 适配黑夜：深青灰，安静不刺眼
+            createGradientDrawable(
+                intArrayOf(0xFF0A1518.toInt(), 0xFF122226.toInt(), 0xFF1A3036.toInt()),
+                GradientDrawable.Orientation.TOP_BOTTOM
+            ),
+            // 3 紫色 → 星空：深紫黑
+            createGradientDrawable(
+                intArrayOf(0xFF0A0616.toInt(), 0xFF1A0F2E.toInt(), 0xFF2A1B45.toInt()),
+                GradientDrawable.Orientation.TL_BR
+            ),
+            // 4 日落橙 → 月光：深蓝夜空，衬托朦胧月光
+            createGradientDrawable(
+                intArrayOf(0xFF060B18.toInt(), 0xFF0F1B33.toInt(), 0xFF1C2E4A.toInt()),
+                GradientDrawable.Orientation.BL_TR
+            ),
+            // 5 纯色 → 纯黑，无特效
+            createSolidDrawable(0xFF000000.toInt())
+        )
+    }
+
+    private fun createSolidDrawable(color: Int): GradientDrawable {
+        return GradientDrawable().apply { setColor(color) }
+    }
+
     private val PREF_GRADIENT_INDEX = "gradient_index"
     private lateinit var effectManager: BackgroundEffectManager
 
@@ -76,6 +131,17 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val PREF_AUTO_CONNECT = "auto_connect_enabled"
     }
+
+    // ---------- 判断是否深色模式 ----------
+    private fun isNightMode(): Boolean {
+        return (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+    }
+
+    private fun getGradients(): List<GradientDrawable> =
+        if (isNightMode()) darkGradients else lightGradients
+
+    private fun getGradientCount(): Int = getGradients().size
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,7 +203,18 @@ class MainActivity : AppCompatActivity() {
         coroutineScope.cancel()
     }
 
-    private fun createGradientDrawable(colors: IntArray, orientation: GradientDrawable.Orientation): GradientDrawable {
+    // ---------- 深色模式切换时重新应用 ----------
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 重新应用渐变和特效
+        currentGradientIndex = currentGradientIndex.coerceIn(0, getGradientCount() - 1)
+        applyGradient(currentGradientIndex)
+    }
+
+    private fun createGradientDrawable(
+        colors: IntArray,
+        orientation: GradientDrawable.Orientation
+    ): GradientDrawable {
         return GradientDrawable(orientation, colors).apply {
             gradientType = GradientDrawable.LINEAR_GRADIENT
         }
@@ -145,20 +222,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyGradient(index: Int) {
         currentGradientIndex = index
-        if (index == 5) {
-            rootFrame.setBackgroundColor(Color.WHITE)
-        } else if (index in gradientList.indices) {
-            rootFrame.background = gradientList[index]
+        val gradients = getGradients()
+        if (index in gradients.indices) {
+            rootFrame.background = gradients[index]
         } else {
-            rootFrame.background = gradientList[0]
+            rootFrame.background = gradients[0]
         }
         rootLayout.setBackgroundColor(Color.TRANSPARENT)
-        effectManager.applyEffectForGradient(index)
+        effectManager.applyEffectForGradient(index, isNightMode())
         sharedPreferences.edit { putInt(PREF_GRADIENT_INDEX, currentGradientIndex) }
     }
 
     private fun cycleGradient() {
-        currentGradientIndex = (currentGradientIndex + 1) % gradientList.size
+        currentGradientIndex = (currentGradientIndex + 1) % getGradientCount()
         applyGradient(currentGradientIndex)
     }
 
@@ -171,6 +247,7 @@ class MainActivity : AppCompatActivity() {
             connectToServer(lastConnection.url, isSilent = true)
         }
     }
+
     private fun updateTaskListSubtitle() {
         coroutineScope.launch {
             TransferManager.tasks.collect { tasks ->
@@ -184,6 +261,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_main, menu)
         return true
@@ -195,10 +273,12 @@ class MainActivity : AppCompatActivity() {
                 openSettings()
                 true
             }
+
             R.id.menu_about -> {
                 showToast("文件服务器客户端 v1.0")
                 true
             }
+
             R.id.menu_auto_connect -> {
                 autoConnectEnabled = !autoConnectEnabled
                 sharedPreferences.edit { putBoolean(PREF_AUTO_CONNECT, autoConnectEnabled) }
@@ -207,10 +287,12 @@ class MainActivity : AppCompatActivity() {
                 item.isChecked = autoConnectEnabled
                 true
             }
+
             R.id.menu_toggle_bg -> {
                 cycleGradient()
                 true
             }
+
             else -> super.onOptionsItemSelected(item)
         }
     }
@@ -219,7 +301,8 @@ class MainActivity : AppCompatActivity() {
         val autoConnectItem = menu.findItem(R.id.menu_auto_connect)
         if (autoConnectItem != null) {
             autoConnectItem.isChecked = autoConnectEnabled
-            val iconRes = if (autoConnectEnabled) R.drawable.ic_auto_connect_on else R.drawable.ic_auto_connect_off
+            val iconRes =
+                if (autoConnectEnabled) R.drawable.ic_auto_connect_on else R.drawable.ic_auto_connect_off
             autoConnectItem.icon = ContextCompat.getDrawable(this, iconRes)
         }
         return super.onPrepareOptionsMenu(menu)
@@ -248,7 +331,6 @@ class MainActivity : AppCompatActivity() {
         taskListEntryCard = findViewById(R.id.taskListEntryCard)
         taskListSubtitle = findViewById(R.id.taskListSubtitle)
 
-// 任务列表是本地队列，不需要服务器连接，随时可打开
         taskListEntryCard.setOnClickListener {
             startActivity(Intent(this, TaskListActivity::class.java))
             overrideActivityTransition()
@@ -265,7 +347,11 @@ class MainActivity : AppCompatActivity() {
                     requestNotificationPermission()
                     return@setOnClickListener
                 }
-                startActivity(Intent(this, AudioLibraryActivity::class.java).apply { putExtra("SERVER_URL", currentServerUrl) })
+                startActivity(
+                    Intent(
+                        this,
+                        AudioLibraryActivity::class.java
+                    ).apply { putExtra("SERVER_URL", currentServerUrl) })
                 overrideActivityTransition()
             } else {
                 showToast("请先连接到服务器")
@@ -275,7 +361,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun checkNotificationPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val notificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.areNotificationsEnabled()
         } else true
     }
@@ -290,28 +377,48 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openImageGallery() {
-        startActivity(Intent(this, ImageGalleryActivity::class.java).apply { putExtra("SERVER_URL", currentServerUrl) })
+        startActivity(Intent(this, ImageGalleryActivity::class.java).apply {
+            putExtra(
+                "SERVER_URL",
+                currentServerUrl
+            )
+        })
         overrideActivityTransition()
     }
 
     private fun openTextLibrary() {
-        startActivity(Intent(this, TextLibraryActivity::class.java).apply { putExtra("SERVER_URL", currentServerUrl) })
+        startActivity(Intent(this, TextLibraryActivity::class.java).apply {
+            putExtra(
+                "SERVER_URL",
+                currentServerUrl
+            )
+        })
         overrideActivityTransition()
     }
 
     private fun openVideoLibrary() {
-        startActivity(Intent(this, VideoLibraryActivity::class.java).apply { putExtra("SERVER_URL", currentServerUrl) })
+        startActivity(Intent(this, VideoLibraryActivity::class.java).apply {
+            putExtra(
+                "SERVER_URL",
+                currentServerUrl
+            )
+        })
         overrideActivityTransition()
     }
 
     private fun overrideActivityTransition() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, android.R.anim.fade_in, android.R.anim.fade_out)
+            overrideActivityTransition(
+                OVERRIDE_TRANSITION_OPEN,
+                android.R.anim.fade_in,
+                android.R.anim.fade_out
+            )
         } else {
             @Suppress("DEPRECATION")
             overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
         }
     }
+
     private fun startDiscovery() {
         discoverButton.isEnabled = false
         discoverButton.text = "搜索中..."
@@ -323,12 +430,14 @@ class MainActivity : AppCompatActivity() {
                     servers.isEmpty() -> {
                         showToast("未发现服务器，请确认在同一网络")
                     }
+
                     servers.size == 1 -> {
                         val s = servers.first()
                         serverUrlEditText.setText(s.toEditableAddress())
                         showToast("发现: ${s.name}")
                         connectToServer(isSilent = false)
                     }
+
                     else -> {
                         showServerSelectionDialog(servers)
                     }
@@ -361,6 +470,7 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("取消", null)
             .show()
     }
+
     private fun openFileList(fileType: String) {
         if (isConnected) {
             startActivity(Intent(this, FileListActivity::class.java).apply {
@@ -388,7 +498,8 @@ class MainActivity : AppCompatActivity() {
             connectButton.isEnabled = false
             connectButton.text = "连接中..."
             try {
-                val success = withContext(Dispatchers.IO) { fileServerService.testConnection(serverUrl) }
+                val success =
+                    withContext(Dispatchers.IO) { fileServerService.testConnection(serverUrl) }
                 if (success) {
                     currentServerUrl = serverUrl
                     isConnected = true
@@ -396,7 +507,10 @@ class MainActivity : AppCompatActivity() {
                     showQuickActions(true)
                     addToConnectionHistory(serverUrl)
                     if (!isSilent) showToast("✅ 连接成功！")
-                    val slideIn = AnimationUtils.loadAnimation(this@MainActivity, android.R.anim.slide_in_left)
+                    val slideIn = AnimationUtils.loadAnimation(
+                        this@MainActivity,
+                        android.R.anim.slide_in_left
+                    )
                     quickActionsLayout.startAnimation(slideIn)
                 } else {
                     isConnected = false
@@ -422,10 +536,12 @@ class MainActivity : AppCompatActivity() {
                 connectionStatusLabel.setTextColor(getColor(R.color.status_connected_text))
                 connectionStatusLabel.setBackgroundColor(getColor(R.color.status_connected_bg))
             }
+
             "#F44336" -> {
                 connectionStatusLabel.setTextColor(getColor(R.color.status_disconnected_text))
                 connectionStatusLabel.setBackgroundColor(getColor(R.color.status_disconnected_bg))
             }
+
             "#FF9800" -> {
                 connectionStatusLabel.setTextColor(getColor(R.color.status_connecting_text))
                 connectionStatusLabel.setBackgroundColor(getColor(R.color.status_connecting_bg))
@@ -440,7 +556,14 @@ class MainActivity : AppCompatActivity() {
     private fun addToConnectionHistory(url: String) {
         val existing = connectionHistory.firstOrNull { it.url == url }
         if (existing != null) connectionHistory.remove(existing)
-        connectionHistory.add(0, ConnectionHistory(url, System.currentTimeMillis(), if (url.startsWith("https://")) "HTTPS" else "HTTP"))
+        connectionHistory.add(
+            0,
+            ConnectionHistory(
+                url,
+                System.currentTimeMillis(),
+                if (url.startsWith("https://")) "HTTPS" else "HTTP"
+            )
+        )
         if (connectionHistory.size > 10) connectionHistory.removeAt(connectionHistory.size - 1)
         saveConnectionHistory()
         updateHistoryListView()
@@ -450,13 +573,20 @@ class MainActivity : AppCompatActivity() {
         val adapter = object : ArrayAdapter<String>(
             this,
             android.R.layout.simple_list_item_1,
-            connectionHistory.map { it.url.removePrefix("http://").removePrefix("https://") + " (${it.protocol})" }
+            connectionHistory.map {
+                it.url.removePrefix("http://").removePrefix("https://") + " (${it.protocol})"
+            }
         ) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = super.getView(position, convertView, parent)
                 view.setBackgroundColor(Color.TRANSPARENT)
                 if (view is TextView) {
-                    view.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+                    view.setTextColor(
+                        ContextCompat.getColor(
+                            this@MainActivity,
+                            R.color.text_primary
+                        )
+                    )
                     view.setPadding(16, 12, 16, 12)
                 }
                 return view
@@ -474,7 +604,9 @@ class MainActivity : AppCompatActivity() {
     private fun updateHistoryListView() {
         (historyListView.adapter as? ArrayAdapter<String>)?.apply {
             clear()
-            addAll(connectionHistory.map { it.url.removePrefix("http://").removePrefix("https://") + " (${it.protocol})" })
+            addAll(connectionHistory.map {
+                it.url.removePrefix("http://").removePrefix("https://") + " (${it.protocol})"
+            })
             notifyDataSetChanged()
         } ?: setupHistoryListView()
     }
@@ -496,7 +628,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveConnectionHistory() {
         try {
-            sharedPreferences.edit { putString("connection_history", gson.toJson(connectionHistory)) }
+            sharedPreferences.edit {
+                putString(
+                    "connection_history",
+                    gson.toJson(connectionHistory)
+                )
+            }
         } catch (e: Exception) {
             Log.e(TAG, "保存历史记录失败", e)
         }

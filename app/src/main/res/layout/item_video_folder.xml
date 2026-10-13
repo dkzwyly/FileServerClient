@@ -23,6 +23,7 @@
             android:layout_height="64dp"
             android:src="@drawable/ic_folder"
             android:scaleType="centerCrop"
+            android:tint="@color/primary_blue"
             android:visibility="visible" />
 
         <TextView
