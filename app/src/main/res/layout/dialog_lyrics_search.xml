@@ -5,7 +5,6 @@
     android:orientation="vertical"
     android:paddingTop="8dp">
 
-    <!-- 搜索框 -->
     <EditText
         android:id="@+id/searchLyricsInput"
         android:layout_width="match_parent"
@@ -19,19 +18,17 @@
         android:maxLines="1"
         android:singleLine="true" />
 
-    <!-- 分割线 -->
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:background="#22000000" />
+        android:background="@color/divider" />
 
-    <!-- 歌词文件列表 -->
     <ListView
         android:id="@+id/lyricsFileListView"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:maxHeight="380dp"
         android:minHeight="120dp"
-        android:divider="#22000000"
+        android:divider="@color/divider"
         android:dividerHeight="1px" />
 </LinearLayout>

@@ -6,17 +6,17 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fitsSystemWindows="true"
-    android:background="#F5F5F5">
+    android:background="@color/background">
 
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/detailToolbar"
         android:layout_width="0dp"
         android:layout_height="?attr/actionBarSize"
-        android:background="@color/white"
+        android:background="@color/surface"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:titleTextColor="@color/black"
+        app:titleTextColor="@color/text_primary"
         app:navigationIcon="?attr/homeAsUpIndicator" />
 
     <!-- 顶部卡片 -->
@@ -27,6 +27,7 @@
         android:layout_margin="8dp"
         app:cardCornerRadius="8dp"
         app:cardElevation="4dp"
+        app:cardBackgroundColor="@color/card_background"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/detailToolbar">
@@ -35,7 +36,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:padding="8dp"
-            android:background="@color/white">
+            android:background="@color/surface">
 
             <!-- 大缩略图，占宽60%，比例1:1 -->
             <FrameLayout
@@ -55,9 +56,9 @@
                     android:layout_height="match_parent"
                     android:scaleType="centerCrop"
                     android:src="@drawable/ic_video_placeholder"
-                    android:background="#E0E0E0" />
+                    android:background="@color/surface_variant" />
 
-                <!-- 播放按钮：右下角，图标填充按钮区域 -->
+                <!-- 播放按钮 -->
                 <ImageButton
                     android:id="@+id/btnPlayCurrent"
                     android:layout_width="72dp"
@@ -70,7 +71,7 @@
                     android:src="@drawable/ic_play_circle" />
             </FrameLayout>
 
-            <!-- 右侧面板，高度与缩略图容器一致 -->
+            <!-- 右侧面板 -->
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/rightPanel"
                 android:layout_width="0dp"
@@ -81,7 +82,7 @@
                 app:layout_constraintStart_toEndOf="@+id/currentThumbnailContainer"
                 app:layout_constraintTop_toTopOf="@+id/currentThumbnailContainer">
 
-                <!-- 最近观看区域：右上角 -->
+                <!-- 最近观看区域 -->
                 <androidx.constraintlayout.widget.ConstraintLayout
                     android:id="@+id/recentCard"
                     android:layout_width="wrap_content"
@@ -90,19 +91,17 @@
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintTop_toTopOf="parent">
 
-                    <!-- “最近观看”标签，右对齐 -->
                     <TextView
                         android:id="@+id/recentLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="最近观看"
-                        android:textColor="@color/black"
+                        android:textColor="@color/text_primary"
                         android:textSize="12sp"
                         android:textStyle="bold"
                         app:layout_constraintEnd_toEndOf="parent"
                         app:layout_constraintTop_toTopOf="parent" />
 
-                    <!-- 缩略图和播放按钮，右对齐 -->
                     <FrameLayout
                         android:id="@+id/recentThumbnailContainer"
                         android:layout_width="60dp"
@@ -115,7 +114,7 @@
                             android:id="@+id/recentThumbnail"
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
-                            android:background="#E0E0E0"
+                            android:background="@color/surface_variant"
                             android:scaleType="centerCrop"
                             android:src="@drawable/ic_video_placeholder" />
 
@@ -130,7 +129,7 @@
                     </FrameLayout>
                 </androidx.constraintlayout.widget.ConstraintLayout>
 
-                <!-- 文件信息区域，占据剩余空间，底部对齐 -->
+                <!-- 文件信息区域 -->
                 <androidx.constraintlayout.widget.ConstraintLayout
                     android:id="@+id/infoGroup"
                     android:layout_width="0dp"
@@ -148,7 +147,7 @@
                         android:ellipsize="end"
                         android:maxLines="2"
                         android:text="视频标题"
-                        android:textColor="@color/black"
+                        android:textColor="@color/text_primary"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         app:layout_constraintEnd_toEndOf="parent"
@@ -161,7 +160,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:text="大小: --"
-                        android:textColor="#666"
+                        android:textColor="@color/text_secondary"
                         android:textSize="12sp"
                         app:layout_constraintEnd_toEndOf="parent"
                         app:layout_constraintStart_toStartOf="parent"
@@ -173,7 +172,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:text="修改: --"
-                        android:textColor="#666"
+                        android:textColor="@color/text_secondary"
                         android:textSize="12sp"
                         app:layout_constraintEnd_toEndOf="parent"
                         app:layout_constraintStart_toStartOf="parent"
@@ -185,13 +184,13 @@
         </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- 剧集网格（5列） -->
+    <!-- 剧集网格 -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/episodeRecyclerView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:layout_marginTop="4dp"
-        android:background="@color/white"
+        android:background="@color/surface"
         android:clipToPadding="false"
         android:padding="4dp"
         app:layout_constraintBottom_toBottomOf="parent"

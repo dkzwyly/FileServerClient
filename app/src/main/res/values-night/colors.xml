@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 背景 -->
+    <color name="background">#121212</color>
+    <color name="background_light">#1A1A1A</color>
+    <color name="background_color">#121212</color>
+    <color name="on_background">#FFFFFF</color>
+
+    <!-- 卡片 / 表面 -->
+    <color name="card_background">#1E1E1E</color>
+    <color name="card_background_light">#242424</color>
+    <color name="surface">#1E1E1E</color>
+    <color name="on_surface">#E0E0E0</color>
+    <color name="surface_variant">#2A2A2A</color>
+    <color name="surface_dark">#121212</color>
+
+    <!-- 文字 -->
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#B0B0B0</color>
+    <color name="text_hint">#808080</color>
+
+    <!-- 搜索 / 分割线 / Tab -->
+    <color name="search_background">#2A2A2A</color>
+    <color name="search_stroke">#333333</color>
+    <color name="search_border">#333333</color>
+    <color name="divider">#33FFFFFF</color>
+    <color name="tab_border">#333333</color>
+    <color name="tab_selected_background">#1E1E1E</color>
+
+    <!-- 选中 / 高亮 -->
+    <color name="selection_bar_background">#1E1E1E</color>
+    <color name="selected_item_background">#3300A8FF</color>
+    <color name="playing_highlight">#1E3A5F</color>
+    <color name="icon_tint_dark">#CCCCCC</color>
+
+    <!-- 状态标签 -->
+    <color name="status_connected_text">#81C784</color>
+    <color name="status_connected_bg">#1B3A1F</color>
+    <color name="status_disconnected_text">#EF9A9A</color>
+    <color name="status_disconnected_bg">#3A1B1B</color>
+    <color name="status_connecting_text">#FFB74D</color>
+    <color name="status_connecting_bg">#3A2A1B</color>
+
+    <!-- 四个库按钮背景 -->
+    <color name="library_image_bg">#2A2430</color>
+    <color name="library_text_bg">#1B2A3A</color>
+    <color name="library_video_bg">#1B233A</color>
+    <color name="library_audio_bg">#2A1B2E</color>
+
+    <!-- 其他 -->
+    <color name="button_secondary">#2A2A2A</color>
+    <color name="record_dark">#BDBDBD</color>
+    <color name="record_light">#424242</color>
+</resources>

@@ -5,13 +5,13 @@
     android:layout_height="match_parent"
     android:fitsSystemWindows="true"
     android:orientation="vertical"
-    android:background="#F5F5F5">
+    android:background="@color/background">
 
     <!-- 标题栏 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:background="@android:color/white"
+        android:background="@color/surface"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingStart="8dp"
@@ -24,7 +24,7 @@
             android:layout_height="48dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/ic_arrow_back"
-            app:tint="@android:color/black"
+            app:tint="@color/text_primary"
             android:contentDescription="返回" />
 
         <TextView
@@ -35,16 +35,15 @@
             android:textSize="18sp"
             android:textStyle="bold"
             android:gravity="center"
-            android:textColor="@android:color/black" />
+            android:textColor="@color/text_primary" />
 
-        <!-- 添加图片按钮 -->
         <ImageButton
             android:id="@+id/addImageButton"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/ic_add_photo"
-            app:tint="#2196F3"
+            app:tint="@color/primary_color"
             android:contentDescription="添加图片" />
     </LinearLayout>
 
@@ -53,7 +52,7 @@
         android:id="@+id/detailSelectionToolbar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#E8E8E8"
+        android:background="@color/selection_bar_background"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:padding="8dp"
@@ -66,7 +65,7 @@
             android:layout_weight="1"
             android:text="已选择 0 项"
             android:textSize="14sp"
-            android:textColor="#333333"
+            android:textColor="@color/text_primary"
             android:paddingStart="16dp" />
 
         <Button
@@ -75,7 +74,7 @@
             android:layout_height="36dp"
             android:text="移除"
             android:textSize="14sp"
-            android:textColor="#FF5252" />
+            android:textColor="@color/status_disconnected_text" />
     </LinearLayout>
 
     <!-- 状态提示 -->
@@ -86,7 +85,7 @@
         android:padding="16dp"
         android:text="加载中..."
         android:textSize="14sp"
-        android:textColor="#666666"
+        android:textColor="@color/text_secondary"
         android:gravity="center" />
 
     <!-- 图片网格 -->

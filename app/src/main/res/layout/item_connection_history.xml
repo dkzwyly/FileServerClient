@@ -29,7 +29,7 @@
             android:layout_height="wrap_content"
             android:text="服务器地址"
             android:textSize="14sp"
-            android:textColor="#1A1A1A"
+            android:textColor="@color/text_primary"
             android:ellipsize="end"
             android:singleLine="true" />
 
@@ -39,7 +39,7 @@
             android:layout_height="wrap_content"
             android:text="时间"
             android:textSize="12sp"
-            android:textColor="#999999"
+            android:textColor="@color/text_hint"
             android:layout_marginTop="2dp" />
 
     </LinearLayout>
@@ -49,6 +49,6 @@
         android:layout_height="wrap_content"
         android:text="➡️"
         android:textSize="12sp"
-        android:textColor="#CCCCCC" />
+        android:textColor="@color/text_hint" />
 
 </LinearLayout>

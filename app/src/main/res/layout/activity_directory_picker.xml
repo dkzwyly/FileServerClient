@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@android:color/white">
+    android:background="@color/surface">
 
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
@@ -12,9 +12,9 @@
         android:layout_height="?attr/actionBarSize"
         android:background="?attr/colorPrimary"
         app:title="选择目标文件夹"
-        app:titleTextColor="@android:color/white"
+        app:titleTextColor="@color/white"
         app:navigationIcon="@drawable/ic_arrow_back"
-        app:navigationIconTint="@android:color/white" />
+        app:navigationIconTint="@color/white" />
 
     <TextView
         android:id="@+id/currentPathText"
@@ -23,7 +23,7 @@
         android:padding="16dp"
         android:text="当前路径：/"
         android:textSize="14sp"
-        android:textColor="@android:color/darker_gray" />
+        android:textColor="@color/text_secondary" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/directoryRecyclerView"

@@ -16,7 +16,7 @@
         android:layout_weight="1"
         android:scaleType="centerCrop"
         android:src="@drawable/ic_video_placeholder"
-        android:background="#E0E0E0"
+        android:background="@color/surface_variant"
         android:contentDescription="最近观看" />
 
     <TextView
@@ -30,6 +30,6 @@
         android:maxLines="1"
         android:ellipsize="end"
         android:gravity="center"
-        android:textColor="@android:color/black" />
+        android:textColor="@color/text_primary" />
 
 </LinearLayout>
