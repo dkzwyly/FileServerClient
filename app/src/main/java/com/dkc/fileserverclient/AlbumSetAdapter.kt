@@ -30,7 +30,7 @@ class AlbumSetAdapter(
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val album = albums[position]
         holder.nameText.text = album.name
-        holder.countText.text = "${album.imagePaths.size} 张图片"
+        holder.countText.text = "${album.imagePaths.size} 项"
 
         // 获取相册第一张图片路径作为封面
         val coverPath = album.imagePaths.firstOrNull()

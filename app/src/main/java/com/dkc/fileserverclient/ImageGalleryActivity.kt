@@ -32,19 +32,19 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * 图片库 Activity，支持图片浏览、相册集管理、拍照上传、多选删除等。
+ * 图片库 Activity，支持图片/视频浏览、相册集管理、拍照/录像上传、多选删除等。
  */
 class ImageGalleryActivity : AppCompatActivity() {
 
     // ========== Views ==========
-    private lateinit var recyclerView: RecyclerView          // 相册网格
+    private lateinit var recyclerView: RecyclerView          // 媒体网格
     private lateinit var albumSetRecyclerView: RecyclerView  // 相册集列表
     private lateinit var statusText: TextView
     private lateinit var titleText: TextView
     private lateinit var backButton: ImageButton
     private lateinit var cameraButton: ImageButton
     private lateinit var sortButton: ImageButton
-    private lateinit var reindexButton: ImageButton         // 上传按钮（原重建功能替换）
+    private lateinit var reindexButton: ImageButton         // 上传按钮
     private lateinit var deleteSelectedButton: ImageButton
     private lateinit var selectionToolbar: View
     private lateinit var selectedCountText: TextView
@@ -69,14 +69,17 @@ class ImageGalleryActivity : AppCompatActivity() {
     // ========== 相册集相关 ==========
     private var currentTab = TAB_ALBUM
     private var albumList = mutableListOf<Album>()
-    private lateinit var albumSetAdapter: AlbumSetAdapter  // 使用外部类
+    private lateinit var albumSetAdapter: AlbumSetAdapter
     private val gson = Gson()
     private val PREFS_ALBUMS = "albums_prefs"
     private val KEY_ALBUMS_JSON = "albums_json"
 
-    // ========== 拍照相关 ==========
+    // ========== 拍照 / 录像相关 ==========
     private lateinit var currentPhotoPath: String
     private var currentPhotoFile: File? = null
+
+    private lateinit var currentVideoPath: String
+    private var currentVideoFile: File? = null
 
     companion object {
         private const val TAG = "ImageGalleryActivity"
@@ -145,7 +148,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         selectAllButton.setOnClickListener { toggleSelectAll() }
         cancelSelectionButton.setOnClickListener { exitMultiSelectionMode() }
 
-        // 相册网格设置
+        // 媒体网格设置
         val gridLayoutManager = GridLayoutManager(this, 4)
         gridLayoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
             override fun getSpanSize(position: Int): Int {
@@ -160,9 +163,13 @@ class ImageGalleryActivity : AppCompatActivity() {
             serverUrl = currentServerUrl,
             isMultiSelectionMode = { isMultiSelectionMode },
             isItemSelected = { selectedItems.contains(it) },
-            onImageClick = { imageItem ->
-                if (isMultiSelectionMode) toggleItemSelection(imageItem)
-                else previewImage(imageItem)
+            onImageClick = { item ->
+                if (isMultiSelectionMode) {
+                    toggleItemSelection(item)
+                } else {
+                    // ★ 视频走 ExoPlayer，图片走 ImageActivity
+                    if (item.isVideo) previewVideo(item) else previewImage(item)
+                }
             },
             onImageLongClick = { imageItem ->
                 if (!isMultiSelectionMode) enterMultiSelectionMode()
@@ -171,10 +178,10 @@ class ImageGalleryActivity : AppCompatActivity() {
         )
         recyclerView.adapter = adapter
 
-        // 相册集列表设置（使用外部 AlbumSetAdapter）
+        // 相册集列表设置
         albumSetRecyclerView.layoutManager = LinearLayoutManager(this)
         albumSetAdapter = AlbumSetAdapter(
-            serverUrl = currentServerUrl,  // 传入
+            serverUrl = currentServerUrl,
             albums = albumList,
             onAlbumClick = { album ->
                 val intent = Intent(this, AlbumDetailActivity::class.java).apply {
@@ -197,7 +204,6 @@ class ImageGalleryActivity : AppCompatActivity() {
     private fun switchTab(tab: Int) {
         currentTab = tab
         if (tab == TAB_ALBUM) {
-            // 切换到相册 Tab
             tabAlbum.background = resources.getDrawable(R.drawable.tab_background_selected, null)
             tabAlbum.setTextColor(resources.getColor(R.color.primary_color, null))
             tabAlbumSet.background = resources.getDrawable(R.drawable.tab_background, null)
@@ -208,11 +214,10 @@ class ImageGalleryActivity : AppCompatActivity() {
             addAlbumFab.visibility = View.GONE
             sortButton.visibility = View.VISIBLE
             reindexButton.visibility = View.VISIBLE
-            cameraButton.visibility = View.VISIBLE      // 相册 Tab 显示相机
+            cameraButton.visibility = View.VISIBLE
             if (isMultiSelectionMode) exitMultiSelectionMode()
             loadImages()
         } else {
-            // 切换到相册集 Tab
             tabAlbumSet.background = resources.getDrawable(R.drawable.tab_background_selected, null)
             tabAlbumSet.setTextColor(resources.getColor(R.color.primary_color, null))
             tabAlbum.background = resources.getDrawable(R.drawable.tab_background, null)
@@ -223,7 +228,7 @@ class ImageGalleryActivity : AppCompatActivity() {
             addAlbumFab.visibility = View.VISIBLE
             sortButton.visibility = View.GONE
             reindexButton.visibility = View.GONE
-            cameraButton.visibility = View.GONE           // 相册集 Tab 隐藏相机
+            cameraButton.visibility = View.GONE
             if (isMultiSelectionMode) exitMultiSelectionMode()
             loadAlbumsFromPrefs()
             albumSetAdapter.notifyDataSetChanged()
@@ -268,8 +273,8 @@ class ImageGalleryActivity : AppCompatActivity() {
 
     private fun deleteAlbum(album: Album) {
         albumList.remove(album)
-        saveAlbumsToPrefs()          // 保存到 SharedPreferences
-        albumSetAdapter.notifyDataSetChanged()   // 刷新列表
+        saveAlbumsToPrefs()
+        albumSetAdapter.notifyDataSetChanged()
         statusText.text = if (albumList.isEmpty()) "暂无相册" else "共 ${albumList.size} 个相册"
         Toast.makeText(this, "相册「${album.name}」已删除", Toast.LENGTH_SHORT).show()
     }
@@ -301,7 +306,7 @@ class ImageGalleryActivity : AppCompatActivity() {
             .show()
     }
 
-    // ==================== 图片加载与排序 ====================
+    // ==================== 媒体加载与排序 ====================
     private fun showSortDialog() {
         val options = arrayOf(
             "按名称 (升序)", "按名称 (降序)",
@@ -346,22 +351,32 @@ class ImageGalleryActivity : AppCompatActivity() {
                 val items = withContext(Dispatchers.IO) {
                     fileServerService.getFileList(currentServerUrl, imageGalleryPath, sortBy, sortOrder)
                 }
-                val images = items.filter { !it.isDirectory && it.isImage }
+                // ★ 同时包含图片和视频
+                val mediaItems = items.filter { !it.isDirectory && (it.isImage || it.isVideo) }
 
                 if (sortBy == "dateTaken") {
-                    val paths = images.map { it.path }
+                    val paths = mediaItems.map { it.path }
                     val dates = withContext(Dispatchers.IO) {
                         fileServerService.getBatchDateTaken(currentServerUrl, paths)
                     }
                     dateTakenMap.clear()
                     dateTakenMap.putAll(dates)
-                    val grouped = groupByDateTaken(images)
+                    val grouped = groupByDateTaken(mediaItems)
                     adapter.submitList(grouped)
                 } else {
-                    val entries = images.map { GalleryItem.ImageEntry(it) }
+                    val entries = mediaItems.map { GalleryItem.ImageEntry(it) }
                     adapter.submitList(entries)
                 }
-                statusText.text = if (images.isEmpty()) "无图片" else "共 ${images.size} 张"
+
+                // ★ 状态栏区分类型
+                val imageCount = mediaItems.count { it.isImage }
+                val videoCount = mediaItems.count { it.isVideo }
+                statusText.text = when {
+                    mediaItems.isEmpty() -> "无媒体文件"
+                    videoCount == 0 -> "共 $imageCount 张"
+                    imageCount == 0 -> "共 $videoCount 个视频"
+                    else -> "图片 $imageCount · 视频 $videoCount"
+                }
             } catch (e: Exception) {
                 statusText.text = "加载失败"
                 Log.e(TAG, "loadImages error", e)
@@ -369,41 +384,47 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
-    private fun groupByDateTaken(images: List<FileSystemItem>): List<GalleryItem> {
+    private fun groupByDateTaken(items: List<FileSystemItem>): List<GalleryItem> {
         val result = mutableListOf<GalleryItem>()
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val today = Calendar.getInstance()
         var currentLabel: String? = null
-        for (image in images) {
-            val dateStr = dateTakenMap[image.path]
-            val label = when {
-                dateStr.isNullOrEmpty() -> "未知日期"
-                else -> try {
-                    val isoDate = dateStr.substringBefore("T")
-                    val cal = Calendar.getInstance().apply {
-                        time = dateFormat.parse(isoDate)!!
-                    }
-                    when {
-                        cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
-                                cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) -> "今天"
-                        cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
-                                cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) - 1 -> "昨天"
-                        else -> {
-                            if (cal.get(Calendar.YEAR) == today.get(Calendar.YEAR))
-                                SimpleDateFormat("M月d日", Locale.getDefault()).format(cal.time)
-                            else
-                                SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(cal.time)
-                        }
-                    }
-                } catch (e: Exception) {
-                    "未知日期"
-                }
+
+        for (item in items) {
+            val dateStr = dateTakenMap[item.path]
+
+            // ★ 通用兜底：EXIF 优先 → 文件修改时间 → 未知
+            val isoDate: String? = when {
+                !dateStr.isNullOrEmpty() -> dateStr.substringBefore("T").take(10)
+                item.lastModified.isNotEmpty() -> item.lastModified.substringBefore("T").take(10)
+                else -> null
             }
+
+            val label: String = if (isoDate == null) {
+                "未知日期"
+            } else try {
+                val cal = Calendar.getInstance().apply {
+                    time = dateFormat.parse(isoDate)!!
+                }
+                when {
+                    cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+                            cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) -> "今天"
+                    cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+                            cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) - 1 -> "昨天"
+                    cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) ->
+                        SimpleDateFormat("M月d日", Locale.getDefault()).format(cal.time)
+                    else ->
+                        SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(cal.time)
+                }
+            } catch (e: Exception) {
+                "未知日期"
+            }
+
             if (label != currentLabel) {
                 currentLabel = label
                 result.add(GalleryItem.DateHeader(label))
             }
-            result.add(GalleryItem.ImageEntry(image))
+            result.add(GalleryItem.ImageEntry(item))
         }
         return result
     }
@@ -462,9 +483,9 @@ class ImageGalleryActivity : AppCompatActivity() {
 
     private fun showDeleteConfirmation() {
         if (selectedItems.isEmpty()) return
-        val message = if (selectedItems.size == 1) "确定删除选中的1张图片？" else "确定删除选中的${selectedItems.size}张图片？"
+        val message = if (selectedItems.size == 1) "确定删除选中的1个文件？" else "确定删除选中的${selectedItems.size}个文件？"
         AlertDialog.Builder(this)
-            .setTitle("删除图片")
+            .setTitle("删除")
             .setMessage(message)
             .setPositiveButton("删除") { _, _ -> deleteSelectedImages() }
             .setNegativeButton("取消", null)
@@ -482,7 +503,7 @@ class ImageGalleryActivity : AppCompatActivity() {
             }
             loadImages()
             exitMultiSelectionMode()
-            Toast.makeText(this@ImageGalleryActivity, "已删除 $successCount 张", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this@ImageGalleryActivity, "已删除 $successCount 个", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -505,49 +526,74 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
-    // ==================== 相机拍照 ====================
-    private fun checkAndRequestPermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-            } else {
-                if (checkStoragePermissions()) takePhoto()
-            }
-        } else {
-            val permissionsToRequest = mutableListOf<String>()
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.CAMERA)
-            }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            }
-            if (permissionsToRequest.isEmpty()) takePhoto()
-            else requestMultiplePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
+    // ==================== 预览视频 ====================
+    private fun previewVideo(item: FileSystemItem) {
+        try {
+            val encoded = java.net.URLEncoder.encode(item.path, "UTF-8")
+            val streamUrl = "${currentServerUrl.removeSuffix("/")}/api/fileserver/stream/$encoded"
+            startActivity(Intent(this, GalleryVideoPlayerActivity::class.java).apply {
+                putExtra("FILE_NAME", item.name)
+                putExtra("FILE_URL", streamUrl)
+            })
+        } catch (e: Exception) {
+            Toast.makeText(this, "播放失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private val requestCameraPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
-            if (isGranted && checkStoragePermissions()) takePhoto()
-            else Toast.makeText(this, "需要相机权限", Toast.LENGTH_SHORT).show()
+    // ==================== 相机权限 ====================
+    private fun checkAndRequestPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val need = mutableListOf<String>()
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.CAMERA)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.RECORD_AUDIO)
+
+            if (need.isEmpty()) takePhoto()
+            else requestMultiplePermissionsLauncher.launch(need.toTypedArray())
+        } else {
+            val need = mutableListOf<String>()
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.CAMERA)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.RECORD_AUDIO)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+
+            if (need.isEmpty()) takePhoto()
+            else requestMultiplePermissionsLauncher.launch(need.toTypedArray())
         }
+    }
 
     private val requestMultiplePermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             if (permissions.entries.all { it.value }) takePhoto()
-            else Toast.makeText(this, "需要相机和存储权限", Toast.LENGTH_SHORT).show()
+            else Toast.makeText(this, "需要相机和麦克风权限", Toast.LENGTH_SHORT).show()
         }
 
-    private fun checkStoragePermissions(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) true
-        else ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED &&
-                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    // ==================== 拍照 / 录像 ====================
+    private fun takePhoto() {
+        showCameraChoiceDialog()
     }
 
-    private fun takePhoto() {
+    private fun showCameraChoiceDialog() {
+        val options = arrayOf("拍照", "录像")
+        AlertDialog.Builder(this)
+            .setTitle("拍摄方式")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> capturePhoto()
+                    1 -> captureVideo()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // -------- 拍照 --------
+    private fun capturePhoto() {
         val photoFile = createImageFile()
         if (photoFile == null) {
             Toast.makeText(this, "无法创建图片文件", Toast.LENGTH_SHORT).show()
@@ -570,7 +616,7 @@ class ImageGalleryActivity : AppCompatActivity() {
     private val takePictureLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                currentPhotoFile?.let { uploadPhotoToServer(it) }
+                currentPhotoFile?.let { uploadCapturedMedia(it, isVideo = false) }
             } else {
                 currentPhotoFile?.delete()
                 currentPhotoFile = null
@@ -582,6 +628,7 @@ class ImageGalleryActivity : AppCompatActivity() {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val fileName = "IMG_${timeStamp}"
             val storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+            storageDir?.mkdirs()
             File.createTempFile(fileName, ".jpg", storageDir)
         } catch (e: Exception) {
             Log.e(TAG, "创建图片文件失败", e)
@@ -589,28 +636,85 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
-    private fun uploadPhotoToServer(photoFile: File) {
-        if (!photoFile.exists()) return
+    // -------- 录像 --------
+    private fun captureVideo() {
+        val videoFile = createVideoFile()
+        if (videoFile == null) {
+            Toast.makeText(this, "无法创建视频文件", Toast.LENGTH_SHORT).show()
+            return
+        }
+        currentVideoPath = videoFile.absolutePath
+        currentVideoFile = videoFile
+        val videoUri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", videoFile)
+        val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, videoUri)
+            putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+        if (intent.resolveActivity(packageManager) != null) {
+            takeVideoLauncher.launch(intent)
+        } else {
+            Toast.makeText(this, "无相机应用（或系统不支持录像）", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val takeVideoLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                currentVideoFile?.let { uploadCapturedMedia(it, isVideo = true) }
+            } else {
+                currentVideoFile?.delete()
+                currentVideoFile = null
+            }
+        }
+
+    private fun createVideoFile(): File? {
+        return try {
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val fileName = "VID_${timeStamp}"
+            val storageDir = getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+            storageDir?.mkdirs()
+            File.createTempFile(fileName, ".mp4", storageDir)
+        } catch (e: Exception) {
+            Log.e(TAG, "创建视频文件失败", e)
+            null
+        }
+    }
+
+    // -------- 统一上传（拍照 / 录像）--------
+    private fun uploadCapturedMedia(file: File, isVideo: Boolean) {
+        if (!file.exists()) return
+
         coroutineScope.launch {
-            statusText.text = "上传中..."
+            statusText.text = if (isVideo) "上传视频中..." else "上传图片中..."
             try {
                 val result = withContext(Dispatchers.IO) {
-                    fileServerService.uploadFiles(currentServerUrl, listOf(photoFile to photoFile.name), imageGalleryPath)
+                    fileServerService.uploadFiles(
+                        currentServerUrl,
+                        listOf(file to file.name),
+                        imageGalleryPath          // ★ 统一上传到 data/图片
+                    )
                 }
                 if (result.success) {
-                    Toast.makeText(this@ImageGalleryActivity, "上传成功", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this@ImageGalleryActivity,
+                        if (isVideo) "视频上传成功" else "图片上传成功",
+                        Toast.LENGTH_SHORT
+                    ).show()
                     loadImages()
                 } else {
                     Toast.makeText(this@ImageGalleryActivity, "上传失败: ${result.message}", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                Toast.makeText(this@ImageGalleryActivity, "上传异常", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@ImageGalleryActivity, "上传异常: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                if (isVideo) currentVideoFile = null else currentPhotoFile = null
+                statusText.text = if (adapter.itemCount == 0) "无媒体文件" else "共 ${adapter.itemCount} 项"
             }
-            statusText.text = if (adapter.itemCount == 0) "无图片" else "共 ${adapter.itemCount} 张"
         }
     }
 
-    // ==================== 从本地选择图片上传 ====================
+    // ==================== 从本地选择上传 ====================
     private val filePickerLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
@@ -626,7 +730,8 @@ class ImageGalleryActivity : AppCompatActivity() {
 
     private fun openFilePicker() {
         val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-            type = "image/*"
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
         filePickerLauncher.launch(intent)
@@ -636,40 +741,61 @@ class ImageGalleryActivity : AppCompatActivity() {
         if (uris.isEmpty()) return
 
         coroutineScope.launch {
-            statusText.text = "准备入队 (${uris.size} 张)..."
+            statusText.text = "准备入队 (${uris.size} 个文件)..."
 
             var queuedCount = 0
             for (uri in uris) {
-                val tempFile = createTempImageFile(uri) ?: continue
+                val tempFile = createTempMediaFile(uri) ?: continue
                 com.dkc.fileserverclient.transfer.TransferManager.enqueueUpload(
                     serverUrl = currentServerUrl,
                     localFile = tempFile,
-                    remoteDir = imageGalleryPath
+                    remoteDir = imageGalleryPath   // ★ 全部进 data/图片
                 )
                 queuedCount++
             }
 
             Toast.makeText(
                 this@ImageGalleryActivity,
-                "已加入上传队列 $queuedCount / ${uris.size} 张",
+                "已加入上传队列 $queuedCount / ${uris.size} 个",
                 Toast.LENGTH_LONG
             ).show()
 
-            statusText.text = if (adapter.itemCount == 0) "无图片" else "共 ${adapter.itemCount} 张"
+            statusText.text = if (adapter.itemCount == 0) "无媒体文件" else "共 ${adapter.itemCount} 项"
         }
     }
 
-    private fun createTempImageFile(uri: Uri): File? {
+    /**
+     * 根据 uri 的 mime / 原始文件名，保留正确的扩展名。
+     */
+    private fun createTempMediaFile(uri: Uri): File? {
         return try {
+            val mime = contentResolver.getType(uri) ?: ""
+            val displayName = queryDisplayName(uri)
+            val extFromName = displayName?.substringAfterLast('.', "")?.takeIf { it.isNotEmpty() }
+            val ext = extFromName ?: when {
+                mime.startsWith("video/") -> mime.substringAfter("video/").takeIf { it.isNotEmpty() } ?: "mp4"
+                mime.startsWith("image/") -> mime.substringAfter("image/").takeIf { it.isNotEmpty() } ?: "jpg"
+                else -> "bin"
+            }
+
             contentResolver.openInputStream(uri)?.use { inputStream ->
-                val tempFile = File.createTempFile("upload_", ".jpg", cacheDir)
-                tempFile.outputStream().use { output ->
-                    inputStream.copyTo(output)
-                }
+                val tempFile = File.createTempFile("upload_", ".$ext", cacheDir)
+                tempFile.outputStream().use { output -> inputStream.copyTo(output) }
                 tempFile
             }
         } catch (e: Exception) {
             Log.e(TAG, "创建临时文件失败", e)
+            null
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
+            }
+        } catch (_: Exception) {
             null
         }
     }

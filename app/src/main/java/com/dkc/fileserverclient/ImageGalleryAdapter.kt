@@ -1,9 +1,13 @@
 package com.dkc.fileserverclient
 
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.util.Log
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.view.isVisible
@@ -29,12 +33,9 @@ class ImageGalleryAdapter(
     private var unsafeImageLoader: ImageLoader? = null
     private var currentServerUrl = serverUrl
 
-    // ---------- ViewHolder ----------
     class HeaderViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val dateText: TextView = view.findViewById(R.id.tv_date_header)
-        fun bind(dateLabel: String) {
-            dateText.text = dateLabel
-        }
+        fun bind(dateLabel: String) { dateText.text = dateLabel }
     }
 
     class ImageViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -43,8 +44,34 @@ class ImageGalleryAdapter(
         val selectionOverlay: View = view.findViewById(R.id.selectionOverlay)
         val selectionCheck: ImageView = view.findViewById(R.id.selectionCheck)
 
+        /** 视频播放图标 */
+        val videoPlayIcon: ImageView = ImageView(view.context).apply {
+            id = View.generateViewId()
+            setImageResource(android.R.drawable.ic_media_play)
+            setColorFilter(Color.WHITE)
+            val pad = (10 * view.context.resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#80000000"))
+            }
+            visibility = View.GONE
+        }
+
+        init {
+            // 把播放图标加到 imageView 的父容器（应为 FrameLayout）
+            val parent = imageView.parent
+            if (parent is FrameLayout) {
+                val size = (48 * view.context.resources.displayMetrics.density).toInt()
+                parent.addView(
+                    videoPlayIcon,
+                    FrameLayout.LayoutParams(size, size, Gravity.CENTER)
+                )
+            }
+        }
+
         fun bindImage(
-            imageItem: FileSystemItem,
+            item: FileSystemItem,
             serverUrl: String,
             imageLoader: ImageLoader,
             isMultiSelectionMode: () -> Boolean,
@@ -52,23 +79,25 @@ class ImageGalleryAdapter(
             onImageClick: (FileSystemItem) -> Unit,
             onImageLongClick: (FileSystemItem) -> Unit
         ) {
-            fileName.text = imageItem.name
-            updateSelectionUI(imageItem, isMultiSelectionMode, isItemSelected)
-            ThumbnailLoader.loadImageThumbnail(imageView, imageItem, serverUrl)
+            fileName.text = item.name
+            videoPlayIcon.visibility = if (item.isVideo) View.VISIBLE else View.GONE
 
-            itemView.setOnClickListener { onImageClick(imageItem) }
+            updateSelectionUI(item, isMultiSelectionMode, isItemSelected)
+            loadThumbnail(item, serverUrl, imageLoader)
+
+            itemView.setOnClickListener { onImageClick(item) }
             itemView.setOnLongClickListener {
-                onImageLongClick(imageItem)
+                onImageLongClick(item)
                 true
             }
         }
 
         private fun updateSelectionUI(
-            imageItem: FileSystemItem,
+            item: FileSystemItem,
             isMultiSelectionMode: () -> Boolean,
             isItemSelected: (String) -> Boolean
         ) {
-            val selected = isItemSelected(imageItem.path)
+            val selected = isItemSelected(item.path)
             val multiMode = isMultiSelectionMode()
 
             if (multiMode) {
@@ -88,15 +117,23 @@ class ImageGalleryAdapter(
             }
         }
 
-        private fun loadImageThumbnail(
-            imageItem: FileSystemItem,
+        /**
+         * 关键：图片走 /thumbnail/，视频走 /video-thumbnail/
+         */
+        private fun loadThumbnail(
+            item: FileSystemItem,
             serverUrl: String,
             imageLoader: ImageLoader
         ) {
             try {
-                val encodedPath = java.net.URLEncoder.encode(imageItem.path, "UTF-8")
-                val thumbnailUrl = "${serverUrl.removeSuffix("/")}/api/fileserver/thumbnail/$encodedPath"
-                imageView.load(thumbnailUrl, imageLoader) {
+                val encoded = java.net.URLEncoder.encode(item.path, "UTF-8")
+                val base = serverUrl.removeSuffix("/")
+                val url = if (item.isVideo) {
+                    "$base/api/fileserver/video-thumbnail/$encoded"
+                } else {
+                    "$base/api/fileserver/thumbnail/$encoded"
+                }
+                imageView.load(url, imageLoader) {
                     placeholder(R.drawable.ic_image_placeholder)
                     error(R.drawable.ic_image_placeholder)
                     memoryCachePolicy(CachePolicy.ENABLED)
@@ -110,7 +147,6 @@ class ImageGalleryAdapter(
         }
     }
 
-    // ---------- Adapter methods ----------
     private fun getImageLoader(context: android.content.Context): ImageLoader {
         if (unsafeImageLoader == null) {
             unsafeImageLoader = ImageLoader.Builder(context)
@@ -120,45 +156,38 @@ class ImageGalleryAdapter(
         return unsafeImageLoader!!
     }
 
-    override fun getItemViewType(position: Int): Int {
-        return when (getItem(position)) {
-            is GalleryItem.DateHeader -> VIEW_TYPE_HEADER
-            is GalleryItem.ImageEntry -> VIEW_TYPE_IMAGE
-        }
+    override fun getItemViewType(position: Int): Int = when (getItem(position)) {
+        is GalleryItem.DateHeader -> VIEW_TYPE_HEADER
+        is GalleryItem.ImageEntry -> VIEW_TYPE_IMAGE
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         return when (viewType) {
             VIEW_TYPE_HEADER -> {
-                val view = LayoutInflater.from(parent.context)
+                val v = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_date_header, parent, false)
-                HeaderViewHolder(view)
+                HeaderViewHolder(v)
             }
             else -> {
-                val view = LayoutInflater.from(parent.context)
+                val v = LayoutInflater.from(parent.context)
                     .inflate(R.layout.item_image_gallery, parent, false)
-                ImageViewHolder(view)
+                ImageViewHolder(v)
             }
         }
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         when (val item = getItem(position)) {
-            is GalleryItem.DateHeader -> {
-                (holder as HeaderViewHolder).bind(item.dateText)
-            }
-            is GalleryItem.ImageEntry -> {
-                val imgHolder = holder as ImageViewHolder
-                imgHolder.bindImage(
-                    item.image,
-                    currentServerUrl,
-                    getImageLoader(holder.itemView.context),
-                    isMultiSelectionMode,
-                    isItemSelected,
-                    onImageClick,
-                    onImageLongClick
-                )
-            }
+            is GalleryItem.DateHeader -> (holder as HeaderViewHolder).bind(item.dateText)
+            is GalleryItem.ImageEntry -> (holder as ImageViewHolder).bindImage(
+                item.image,
+                currentServerUrl,
+                getImageLoader(holder.itemView.context),
+                isMultiSelectionMode,
+                isItemSelected,
+                onImageClick,
+                onImageLongClick
+            )
         }
     }
 
@@ -171,27 +200,23 @@ class ImageGalleryAdapter(
             super.onBindViewHolder(holder, position, payloads)
             return
         }
-
         val item = getItem(position)
-        when (item) {
-            is GalleryItem.ImageEntry -> {
-                val imgHolder = holder as ImageViewHolder
-                // 只更新选择状态，避免重新加载图片
-                if (payloads.any { it == "selection" }) {
-                    imgHolder.bindImage(
-                        item.image,
-                        currentServerUrl,
-                        getImageLoader(holder.itemView.context),
-                        isMultiSelectionMode,
-                        isItemSelected,
-                        onImageClick,
-                        onImageLongClick
-                    )
-                } else {
-                    super.onBindViewHolder(holder, position, payloads)
-                }
+        if (item is GalleryItem.ImageEntry && holder is ImageViewHolder) {
+            if (payloads.any { it == "selection" }) {
+                holder.bindImage(
+                    item.image,
+                    currentServerUrl,
+                    getImageLoader(holder.itemView.context),
+                    isMultiSelectionMode,
+                    isItemSelected,
+                    onImageClick,
+                    onImageLongClick
+                )
+            } else {
+                super.onBindViewHolder(holder, position, payloads)
             }
-            else -> super.onBindViewHolder(holder, position, payloads)
+        } else {
+            super.onBindViewHolder(holder, position, payloads)
         }
     }
 
@@ -200,6 +225,7 @@ class ImageGalleryAdapter(
         if (holder is ImageViewHolder) {
             holder.imageView.setImageDrawable(null)
             holder.selectionCheck.clearColorFilter()
+            holder.videoPlayIcon.visibility = View.GONE
         }
     }
 
