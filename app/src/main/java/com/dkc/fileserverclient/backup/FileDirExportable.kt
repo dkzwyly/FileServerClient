@@ -1,56 +1,62 @@
 package com.dkc.fileserverclient.backup
 
 import android.content.Context
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.ZipEntry
-import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /**
- * 通用 filesDir 子目录导出器。
- * 内部会再打一层 zip，目录内所有文件按相对路径保存。
+ * 通用 filesDir 子目录导出器（流式版本）。
+ *
+ * 目录里每个文件作为独立 entry 写入外层 zip，entry 名为：
+ *   <exportKey>/<相对路径>
+ *
+ * 因此不会把所有文件读进内存，20GB 缩略图也能导出。
  */
 class FileDirExportable(private val dirRelativePath: String) : Exportable {
 
-    override val exportKey: String = "files_${dirRelativePath.replace('/', '_')}"
+    override val exportKey: String =
+        "files_${dirRelativePath.replace('/', '_')}"
 
-    override suspend fun export(context: Context): ByteArray {
+    override fun canHandle(entryName: String): Boolean =
+        entryName.startsWith("$exportKey/")
+
+    override suspend fun exportToZip(context: Context, zip: ZipOutputStream) {
         val dir = File(context.filesDir, dirRelativePath)
-        if (!dir.exists() || !dir.isDirectory) return ByteArray(0)
+        if (!dir.exists() || !dir.isDirectory) return
 
-        val baos = ByteArrayOutputStream()
-        ZipOutputStream(baos).use { zip ->
-            dir.walkTopDown()
-                .filter { it.isFile }
-                .forEach { file ->
+        dir.walkTopDown()
+            .filter { it.isFile }
+            .forEach { file ->
+                try {
                     val rel = file.relativeTo(dir).path.replace('\\', '/')
-                    zip.putNextEntry(ZipEntry(rel))
+                    zip.putNextEntry(ZipEntry("$exportKey/$rel"))
                     file.inputStream().use { it.copyTo(zip) }
                     zip.closeEntry()
-                }
-        }
-        return baos.toByteArray()
-    }
-
-    override suspend fun restore(context: Context, data: ByteArray): Boolean {
-        if (data.isEmpty()) return true
-        return try {
-            val dir = File(context.filesDir, dirRelativePath)
-            dir.mkdirs()
-            ZipInputStream(ByteArrayInputStream(data)).use { zip ->
-                var entry = zip.nextEntry
-                while (entry != null) {
-                    if (!entry.isDirectory) {
-                        val target = File(dir, entry.name)
-                        target.parentFile?.mkdirs()
-                        target.outputStream().use { zip.copyTo(it) }
-                    }
-                    zip.closeEntry()
-                    entry = zip.nextEntry
+                } catch (e: Exception) {
+                    // 单个文件失败不影响整体；补一个 .error entry 便于排查
+                    try {
+                        zip.putNextEntry(ZipEntry("$exportKey/${file.name}.error"))
+                        zip.write((e.message ?: "unknown").toByteArray(Charsets.UTF_8))
+                        zip.closeEntry()
+                    } catch (_: Exception) {}
                 }
             }
+    }
+
+    override suspend fun restoreFromZip(
+        context: Context,
+        entryName: String,
+        data: ByteArray
+    ): Boolean {
+        return try {
+            val rel = entryName.removePrefix("$exportKey/")
+            if (rel.isEmpty()) return false
+
+            val dir = File(context.filesDir, dirRelativePath)
+            val target = File(dir, rel)
+            target.parentFile?.mkdirs()
+            target.writeBytes(data)
             true
         } catch (e: Exception) {
             false

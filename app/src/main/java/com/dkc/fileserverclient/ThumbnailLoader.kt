@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import android.widget.ImageView
-import androidx.core.graphics.drawable.toDrawable
 import coil.ImageLoader
 import coil.load
 import kotlinx.coroutines.*
@@ -22,24 +21,28 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object ThumbnailLoader {
     private const val TAG = "ThumbnailLoader"
-    private const val MAX_CACHE_SIZE_MB = 200L
-    private const val CACHE_DIR_NAME = "thumbnails"      // 统一缓存目录
+
+    // ★ 由 200MB 提升到 20GB
+    private const val MAX_CACHE_SIZE_MB = 20L * 1024L   // 20480MB = 20GB
+
+    private const val CACHE_DIR_NAME = "thumbnails"
 
     private lateinit var cacheDir: File
     private lateinit var httpClient: OkHttpClient
     private lateinit var coilLoader: ImageLoader
     private var isInitialized = false
 
-    // 防止重复下载
     private val pendingDownloads = ConcurrentHashMap<String, Deferred<File?>>()
     private val loaderScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    /**
-     * 初始化，必须在使用前调用一次
-     */
+    /** 初始化，必须在使用前调用一次 */
     fun init(context: Context) {
         if (isInitialized) return
-        cacheDir = File(context.cacheDir, CACHE_DIR_NAME).apply { mkdirs() }
+
+        // ★ 用 filesDir 而不是 cacheDir：cacheDir 会被系统在存储紧张时清空
+        //    filesDir 是 App 私有持久目录，重启和系统清理都不会丢
+        val baseDir = File(context.filesDir, CACHE_DIR_NAME).apply { mkdirs() }
+        cacheDir = baseDir
 
         httpClient = UnsafeHttpClient.createUnsafeOkHttpClient().newBuilder()
             .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
@@ -48,12 +51,14 @@ object ThumbnailLoader {
 
         coilLoader = ImageLoader.Builder(context.applicationContext)
             .okHttpClient(httpClient)
+            .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+            .diskCachePolicy(coil.request.CachePolicy.DISABLED) // 自己管磁盘缓存
+            .respectCacheHeaders(false)
             .build()
 
         isInitialized = true
         Log.d(TAG, "初始化完成，缓存目录: ${cacheDir.absolutePath}")
 
-        // 异步检查并清理超出大小的缓存
         loaderScope.launch {
             delay(2000)
             trimCacheIfNeeded()
@@ -62,14 +67,6 @@ object ThumbnailLoader {
 
     // ======================= 公共 API =======================
 
-    /**
-     * 加载图片缩略图到 ImageView
-     * @param imageView 目标 ImageView
-     * @param imageItem 图片文件项
-     * @param serverUrl 服务器地址
-     * @param placeholderResId 占位图资源 ID
-     * @param errorResId 错误占位图资源 ID
-     */
     fun loadImageThumbnail(
         imageView: ImageView,
         imageItem: FileSystemItem,
@@ -79,18 +76,28 @@ object ThumbnailLoader {
     ) {
         if (!isInitialized) init(imageView.context)
 
+        // ★ 视频和图片走不同的端点/缓存类型
+        if (imageItem.isVideo) {
+            loadVideoThumbnail(
+                imageView = imageView,
+                serverUrl = serverUrl,
+                videoPath = imageItem.path,
+                placeholderResId = placeholderResId,
+                errorResId = errorResId
+            )
+            return
+        }
+
         val cacheKey = generateCacheKey(serverUrl, imageItem.path, "image")
         val cachedFile = getCachedFile(cacheKey)
 
-        if (cachedFile != null && cachedFile.exists()) {
-            // 缓存命中，直接加载本地文件
+        if (cachedFile != null) {
             imageView.load(cachedFile, coilLoader) {
                 placeholder(placeholderResId)
                 error(errorResId)
                 crossfade(true)
             }
         } else {
-            // 先显示占位图，异步下载并缓存
             imageView.setImageResource(placeholderResId)
             loaderScope.launch {
                 val file = downloadThumbnail(
@@ -98,10 +105,10 @@ object ThumbnailLoader {
                     path = imageItem.path,
                     type = "image",
                     cacheKey = cacheKey,
-                    urlSuffix = "thumbnail"  // 图片缩略图接口
+                    urlSuffix = "thumbnail"
                 )
                 withContext(Dispatchers.Main) {
-                    if (file != null && file.exists()) {
+                    if (file != null) {
                         imageView.load(file, coilLoader) {
                             placeholder(placeholderResId)
                             error(errorResId)
@@ -115,14 +122,6 @@ object ThumbnailLoader {
         }
     }
 
-    /**
-     * 加载视频缩略图（返回 Bitmap，用于需要直接操作 Bitmap 的场景）
-     * @param serverUrl 服务器地址
-     * @param videoPath 视频路径
-     * @param width 期望宽度
-     * @param height 期望高度
-     * @return Bitmap 或 null
-     */
     suspend fun loadVideoThumbnailBitmap(
         serverUrl: String,
         videoPath: String,
@@ -134,11 +133,10 @@ object ThumbnailLoader {
         val cacheKey = generateCacheKey(serverUrl, videoPath, "video", width, height)
         val cachedFile = getCachedFile(cacheKey)
 
-        if (cachedFile != null && cachedFile.exists()) {
+        if (cachedFile != null) {
             return@withContext BitmapFactory.decodeFile(cachedFile.absolutePath)
         }
 
-        // 下载并缓存
         val file = downloadThumbnail(
             serverUrl = serverUrl,
             path = videoPath,
@@ -151,9 +149,6 @@ object ThumbnailLoader {
         return@withContext file?.let { BitmapFactory.decodeFile(it.absolutePath) }
     }
 
-    /**
-     * 加载视频缩略图到 ImageView（自动缓存）
-     */
     fun loadVideoThumbnail(
         imageView: ImageView,
         serverUrl: String,
@@ -168,7 +163,7 @@ object ThumbnailLoader {
         val cacheKey = generateCacheKey(serverUrl, videoPath, "video", width, height)
         val cachedFile = getCachedFile(cacheKey)
 
-        if (cachedFile != null && cachedFile.exists()) {
+        if (cachedFile != null) {
             imageView.load(cachedFile, coilLoader) {
                 placeholder(placeholderResId)
                 error(errorResId)
@@ -187,7 +182,7 @@ object ThumbnailLoader {
                     height = height
                 )
                 withContext(Dispatchers.Main) {
-                    if (file != null && file.exists()) {
+                    if (file != null) {
                         imageView.load(file, coilLoader) {
                             placeholder(placeholderResId)
                             error(errorResId)
@@ -201,30 +196,28 @@ object ThumbnailLoader {
         }
     }
 
-    /**
-     * 清除指定路径的缩略图缓存
-     */
     fun clearCache(serverUrl: String, filePath: String, type: String = "image", width: Int = 0, height: Int = 0) {
         val cacheKey = generateCacheKey(serverUrl, filePath, type, width, height)
         getCachedFile(cacheKey)?.delete()
     }
 
-    /**
-     * 清除所有缩略图缓存
-     */
     fun clearAllCache() {
         cacheDir.listFiles()?.forEach { it.delete() }
         Log.d(TAG, "所有缩略图缓存已清除")
     }
 
     /**
-     * 检查并清理超出大小限制的缓存
+     * 缓存剪枝：超过 20GB 才删最旧的文件。
+     * 20GB 对缩略图来说基本永远不会触发，所以正常情况下不会再因为容量被淘汰。
      */
     fun trimCacheIfNeeded() {
         val files = cacheDir.listFiles() ?: return
         var totalSize = files.sumOf { it.length() }
         val maxSize = MAX_CACHE_SIZE_MB * 1024 * 1024
-        if (totalSize <= maxSize) return
+        if (totalSize <= maxSize) {
+            Log.d(TAG, "缓存大小 ${totalSize / (1024 * 1024)} MB，未超限（上限 $MAX_CACHE_SIZE_MB MB）")
+            return
+        }
 
         val sortedFiles = files.sortedBy { it.lastModified() }
         for (file in sortedFiles) {
@@ -244,7 +237,9 @@ object ThumbnailLoader {
         width: Int = 0,
         height: Int = 0
     ): String {
-        val parts = "$serverUrl|$type|$filePath|${width}x$height"
+        // ★ 归一化 serverUrl：去掉尾斜杠，避免同一台服务器因尾斜杠差异造成 cacheKey 变化
+        val normalizedServer = serverUrl.trimEnd('/')
+        val parts = "$normalizedServer|$type|$filePath|${width}x$height"
         return md5(parts) + (if (type == "video") ".jpg" else ".thumb")
     }
 
@@ -262,7 +257,6 @@ object ThumbnailLoader {
         width: Int = 0,
         height: Int = 0
     ): File? {
-        // 合并相同请求
         pendingDownloads[cacheKey]?.let { return it.await() }
 
         val deferred = loaderScope.async {
@@ -284,21 +278,24 @@ object ThumbnailLoader {
                 val body = response.body ?: return@async null
                 val inputStream = body.byteStream()
 
-                // 对于视频缩略图，服务器可能返回 SVG 占位图，此时不缓存
-                val contentType = response.header("Content-Type", "")
-                if (type == "video" && contentType?.contains("svg") == true) {
-                    Log.d(TAG, "收到 SVG 占位图，不缓存: $path")
-                    return@async null
+                // ★ 服务端返回 SVG 占位图（视频缩略图尚未生成）：
+                //   仍然缓存下来，避免每次滚动都请求；下次滚动会命中本地 SVG。
+                //   但写盘时需要区分扩展名，避免把 SVG 内容写成 .jpg 造成解码失败。
+                val contentType = response.header("Content-Type", "") ?: ""
+                val isSvg = contentType.contains("svg", ignoreCase = true)
+
+                val cacheFile = if (type == "video" && isSvg) {
+                    File(cacheDir, cacheKey.replace(".jpg", ".svg"))
+                } else {
+                    File(cacheDir, cacheKey)
                 }
 
-                val cacheFile = File(cacheDir, cacheKey)
                 FileOutputStream(cacheFile).use { output ->
                     inputStream.copyTo(output)
                 }
                 inputStream.close()
 
-                trimCacheIfNeeded()
-                Log.d(TAG, "缩略图缓存成功: $cacheKey, 大小=${cacheFile.length()}")
+                Log.d(TAG, "缩略图缓存成功: ${cacheFile.name}, 大小=${cacheFile.length()}, type=$type, isSvg=$isSvg")
                 cacheFile
             } catch (e: Exception) {
                 Log.e(TAG, "下载缩略图异常: $path", e)

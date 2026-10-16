@@ -84,22 +84,20 @@ class ImagePickerActivity : AppCompatActivity() {
     private fun loadAllImages() {
         coroutineScope.launch {
             try {
-                // 获取图片列表（按拍摄时间降序）
                 val items = withContext(Dispatchers.IO) {
                     fileServerService.getFileList(currentServerUrl, imageGalleryPath, "dateTaken", "desc")
                 }
-                val images = items.filter { !it.isDirectory && it.isImage }
+                // ★ 图片 + 视频都要
+                val mediaItems = items.filter { !it.isDirectory && (it.isImage || it.isVideo) }
 
-                // 批量获取拍摄日期
-                val paths = images.map { it.path }
+                val paths = mediaItems.map { it.path }
                 val dates = withContext(Dispatchers.IO) {
                     fileServerService.getBatchDateTaken(currentServerUrl, paths)
                 }
                 dateTakenMap.clear()
                 dateTakenMap.putAll(dates)
 
-                // 按拍摄日期分组（因为列表已按日期降序，直接分组即可）
-                val grouped = groupByDateTaken(images)
+                val grouped = groupByDateTaken(mediaItems)
                 adapter.submitList(grouped)
             } catch (e: Exception) {
                 Log.e("ImagePicker", "load error", e)
@@ -110,45 +108,41 @@ class ImagePickerActivity : AppCompatActivity() {
     /**
      * 将图片列表按拍摄日期分组，生成带日期头的 GalleryItem 列表
      */
-    private fun groupByDateTaken(images: List<FileSystemItem>): List<GalleryItem> {
+    private fun groupByDateTaken(items: List<FileSystemItem>): List<GalleryItem> {
         val result = mutableListOf<GalleryItem>()
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val today = Calendar.getInstance()
-
         var currentLabel: String? = null
-        for (image in images) {
-            val dateStr = dateTakenMap[image.path]
-            val label = if (dateStr.isNullOrEmpty()) {
-                "未知日期"
-            } else {
-                try {
-                    val isoDate = dateStr.substringBefore("T")
-                    val cal = Calendar.getInstance().apply {
-                        time = dateFormat.parse(isoDate)!!
-                    }
-                    when {
-                        cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
-                                cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) -> "今天"
-                        cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
-                                cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) - 1 -> "昨天"
-                        else -> {
-                            if (cal.get(Calendar.YEAR) == today.get(Calendar.YEAR)) {
-                                SimpleDateFormat("M月d日", Locale.getDefault()).format(cal.time)
-                            } else {
-                                SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(cal.time)
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    "未知日期"
-                }
+
+        for (item in items) {
+            val dateStr = dateTakenMap[item.path]
+            val isoDate: String? = when {
+                !dateStr.isNullOrEmpty() -> dateStr.substringBefore("T").take(10)
+                item.lastModified.isNotEmpty() -> item.lastModified.substringBefore("T").take(10)
+                else -> null
             }
+
+            val label: String = if (isoDate == null) {
+                "未知日期"
+            } else try {
+                val cal = Calendar.getInstance().apply { time = dateFormat.parse(isoDate)!! }
+                when {
+                    cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+                            cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) -> "今天"
+                    cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+                            cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) - 1 -> "昨天"
+                    cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) ->
+                        SimpleDateFormat("M月d日", Locale.getDefault()).format(cal.time)
+                    else ->
+                        SimpleDateFormat("yyyy年M月d日", Locale.getDefault()).format(cal.time)
+                }
+            } catch (e: Exception) { "未知日期" }
 
             if (label != currentLabel) {
                 currentLabel = label
                 result.add(GalleryItem.DateHeader(label))
             }
-            result.add(GalleryItem.ImageEntry(image))
+            result.add(GalleryItem.ImageEntry(item))
         }
         return result
     }

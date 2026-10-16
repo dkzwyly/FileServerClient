@@ -5,15 +5,13 @@
     android:fitsSystemWindows="true"
     android:background="#000000">
 
-    <!-- 可缩放的图片预览 -->
-    <ImageView
-        android:id="@+id/imagePreview"
+    <!-- 图片 / 视频 混排分页 -->
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/mediaPager"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:scaleType="matrix"
-        android:contentDescription="图片预览" />
+        android:layout_height="match_parent" />
 
-    <!-- 加载进度 -->
+    <!-- 顶层加载进度（页面级，比如列表还在加载） -->
     <ProgressBar
         android:id="@+id/loadingProgress"
         android:layout_width="wrap_content"
@@ -62,7 +60,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:layout_marginHorizontal="8dp"
-            android:text="图片文件名"
+            android:text=""
             android:textColor="#FFFFFF"
             android:textSize="16sp"
             android:textStyle="bold"
@@ -98,14 +96,14 @@
             android:layout_height="48dp"
             android:src="@drawable/ic_navigate_before"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="上一张"
+            android:contentDescription="上一个"
             android:tint="#FFFFFF"
             android:enabled="false" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="左右滑动切换图片"
+            android:text="左右滑动切换"
             android:textColor="#CCCCCC"
             android:textSize="12sp"
             android:layout_marginHorizontal="16dp" />
@@ -116,7 +114,7 @@
             android:layout_height="48dp"
             android:src="@drawable/ic_navigate_next"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="下一张"
+            android:contentDescription="下一个"
             android:tint="#FFFFFF"
             android:enabled="false" />
     </LinearLayout>

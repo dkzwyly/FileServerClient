@@ -65,20 +65,29 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun initializeWithPaths(serverUrl: String, paths: List<String>, currentIndex: Int) {
         this.serverUrl = serverUrl
+
+        val videoExts = setOf(
+            "mp4", "mkv", "avi", "mov", "webm", "flv",
+            "m4v", "3gp", "ts", "rmvb", "wmv"
+        )
+
         val items = paths.map { path ->
+            val ext = path.substringAfterLast('.', "").lowercase()
+            val isVideo = ext in videoExts
             FileSystemItem(
                 name = path.substringAfterLast("/"),
                 path = path,
                 size = 0,
-                extension = path.substringAfterLast('.', ""),
+                extension = ext,
                 sizeFormatted = "",
                 lastModified = "",
-                isVideo = false,
+                isVideo = isVideo,                     // ★
                 isAudio = false,
-                mimeType = "image/*",
+                mimeType = if (isVideo) "video/*" else "image/*",
                 encoding = ""
             )
         }
+
         _imageList.value = items
         _totalCount.value = items.size
         if (currentIndex in items.indices) {
@@ -107,36 +116,38 @@ class ImageViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                val images = allItems.filter { item ->
-                    !item.isDirectory && isImageFile(item)
+                // ★ 图片 + 视频混排
+                val media = allItems.filter { item ->
+                    !item.isDirectory && (isImageFile(item) || item.isVideo)
                 }
 
-                _imageList.value = images
-                _totalCount.value = images.size
+                _imageList.value = media
+                _totalCount.value = media.size
 
-                if (images.isNotEmpty()) {
+                if (media.isNotEmpty()) {
                     if (initialImagePath.isNotEmpty()) {
-                        val index = images.indexOfFirst { item ->
+                        val index = media.indexOfFirst { item ->
                             getFullImageUrl(item) == initialImagePath || item.path.contains(initialImagePath)
                         }
                         val currentIdx = if (index != -1) index else 0
                         _currentIndex.value = currentIdx
-                        _currentImage.value = images[currentIdx]
+                        _currentImage.value = media[currentIdx]
                     } else {
                         _currentIndex.value = 0
-                        _currentImage.value = images[0]
+                        _currentImage.value = media[0]
                     }
                 }
 
                 _loadingState.value = LoadingState.Success
 
             } catch (e: Exception) {
-                Log.e("ImageViewModel", "加载图片列表失败", e)
+                Log.e("ImageViewModel", "加载媒体列表失败", e)
                 _errorState.value = "加载失败: ${e.message}"
                 _loadingState.value = LoadingState.Error(e.message ?: "未知错误")
             }
         }
     }
+
 
     fun navigateToNext() {
         val currentIdx = _currentIndex.value ?: -1

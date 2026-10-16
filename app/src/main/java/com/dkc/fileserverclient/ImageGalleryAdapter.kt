@@ -13,9 +13,6 @@ import android.widget.TextView
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import coil.ImageLoader
-import coil.load
-import coil.request.CachePolicy
 
 class ImageGalleryAdapter(
     private val serverUrl: String,
@@ -28,11 +25,12 @@ class ImageGalleryAdapter(
     companion object {
         const val VIEW_TYPE_HEADER = 0
         const val VIEW_TYPE_IMAGE  = 1
+        private const val TAG = "ImageGallery"
     }
 
-    private var unsafeImageLoader: ImageLoader? = null
     private var currentServerUrl = serverUrl
 
+    // ---------- ViewHolder ----------
     class HeaderViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val dateText: TextView = view.findViewById(R.id.tv_date_header)
         fun bind(dateLabel: String) { dateText.text = dateLabel }
@@ -44,7 +42,7 @@ class ImageGalleryAdapter(
         val selectionOverlay: View = view.findViewById(R.id.selectionOverlay)
         val selectionCheck: ImageView = view.findViewById(R.id.selectionCheck)
 
-        /** 视频播放图标 */
+        /** 视频播放图标（动态加在 imageView 的父 FrameLayout 里，居中覆盖） */
         val videoPlayIcon: ImageView = ImageView(view.context).apply {
             id = View.generateViewId()
             setImageResource(android.R.drawable.ic_media_play)
@@ -59,7 +57,6 @@ class ImageGalleryAdapter(
         }
 
         init {
-            // 把播放图标加到 imageView 的父容器（应为 FrameLayout）
             val parent = imageView.parent
             if (parent is FrameLayout) {
                 val size = (48 * view.context.resources.displayMetrics.density).toInt()
@@ -73,7 +70,6 @@ class ImageGalleryAdapter(
         fun bindImage(
             item: FileSystemItem,
             serverUrl: String,
-            imageLoader: ImageLoader,
             isMultiSelectionMode: () -> Boolean,
             isItemSelected: (String) -> Boolean,
             onImageClick: (FileSystemItem) -> Unit,
@@ -83,7 +79,7 @@ class ImageGalleryAdapter(
             videoPlayIcon.visibility = if (item.isVideo) View.VISIBLE else View.GONE
 
             updateSelectionUI(item, isMultiSelectionMode, isItemSelected)
-            loadThumbnail(item, serverUrl, imageLoader)
+            loadThumbnail(item, serverUrl)
 
             itemView.setOnClickListener { onImageClick(item) }
             itemView.setOnLongClickListener {
@@ -118,43 +114,34 @@ class ImageGalleryAdapter(
         }
 
         /**
-         * 关键：图片走 /thumbnail/，视频走 /video-thumbnail/
+         * 统一走 ThumbnailLoader：
+         * - 图片 → /thumbnail/，缓存为 .thumb
+         * - 视频 → /video-thumbnail/，缓存为 .jpg（占位图期间是 .svg）
+         * 磁盘缓存在 filesDir/thumbnails，上限 20GB。
          */
-        private fun loadThumbnail(
-            item: FileSystemItem,
-            serverUrl: String,
-            imageLoader: ImageLoader
-        ) {
+        private fun loadThumbnail(item: FileSystemItem, serverUrl: String) {
             try {
-                val encoded = java.net.URLEncoder.encode(item.path, "UTF-8")
-                val base = serverUrl.removeSuffix("/")
-                val url = if (item.isVideo) {
-                    "$base/api/fileserver/video-thumbnail/$encoded"
+                if (item.isVideo) {
+                    ThumbnailLoader.loadVideoThumbnail(
+                        imageView = imageView,
+                        serverUrl = serverUrl,
+                        videoPath = item.path
+                    )
                 } else {
-                    "$base/api/fileserver/thumbnail/$encoded"
-                }
-                imageView.load(url, imageLoader) {
-                    placeholder(R.drawable.ic_image_placeholder)
-                    error(R.drawable.ic_image_placeholder)
-                    memoryCachePolicy(CachePolicy.ENABLED)
-                    diskCachePolicy(CachePolicy.ENABLED)
-                    size(300, 300)
+                    ThumbnailLoader.loadImageThumbnail(
+                        imageView = imageView,
+                        imageItem = item,
+                        serverUrl = serverUrl
+                    )
                 }
             } catch (e: Exception) {
-                Log.e("ImageGallery", "缩略图加载异常: ${e.message}", e)
+                Log.e(TAG, "缩略图加载异常: ${e.message}", e)
                 imageView.setImageResource(R.drawable.ic_image_placeholder)
             }
         }
     }
 
-    private fun getImageLoader(context: android.content.Context): ImageLoader {
-        if (unsafeImageLoader == null) {
-            unsafeImageLoader = ImageLoader.Builder(context)
-                .okHttpClient(UnsafeHttpClient.createUnsafeOkHttpClient())
-                .build()
-        }
-        return unsafeImageLoader!!
-    }
+    // ---------- Adapter methods ----------
 
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
         is GalleryItem.DateHeader -> VIEW_TYPE_HEADER
@@ -182,7 +169,6 @@ class ImageGalleryAdapter(
             is GalleryItem.ImageEntry -> (holder as ImageViewHolder).bindImage(
                 item.image,
                 currentServerUrl,
-                getImageLoader(holder.itemView.context),
                 isMultiSelectionMode,
                 isItemSelected,
                 onImageClick,
@@ -206,7 +192,6 @@ class ImageGalleryAdapter(
                 holder.bindImage(
                     item.image,
                     currentServerUrl,
-                    getImageLoader(holder.itemView.context),
                     isMultiSelectionMode,
                     isItemSelected,
                     onImageClick,
@@ -230,8 +215,7 @@ class ImageGalleryAdapter(
     }
 
     fun dispose() {
-        unsafeImageLoader?.shutdown()
-        unsafeImageLoader = null
+        // ImageLoader 由 ThumbnailLoader 全局管理，无需释放
     }
 
     fun updateServerUrl(newUrl: String) {

@@ -1,18 +1,9 @@
 package com.dkc.fileserverclient
 
-import android.animation.ValueAnimator
-import android.annotation.SuppressLint
 import android.content.Intent
-import android.graphics.Matrix
-import android.graphics.drawable.Drawable
 import android.os.Bundle
-import android.util.Log
-import android.view.GestureDetector
-import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.View
 import android.widget.ImageButton
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -21,56 +12,30 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.viewpager2.widget.ViewPager2
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import kotlin.math.abs
-import kotlin.math.min
 
 class ImageActivity : AppCompatActivity() {
 
     private lateinit var viewModel: ImageViewModel
-
-    // UI 组件
+    private lateinit var mediaPager: ViewPager2
+    private lateinit var loadingProgress: ProgressBar
+    private lateinit var errorTextView: TextView
     private lateinit var topControlBar: LinearLayout
     private lateinit var backButton: ImageButton
     private lateinit var fileNameWithCount: TextView
     private lateinit var shareButton: ImageButton
-
-    private lateinit var imagePreview: ImageView
-    private lateinit var loadingProgress: ProgressBar
-    private lateinit var errorTextView: TextView
     private lateinit var bottomControlBar: LinearLayout
     private lateinit var previousButton: ImageButton
     private lateinit var nextButton: ImageButton
 
-    private lateinit var imageManager: ImagePreviewManager
-
-    // 手势
-    private lateinit var gestureDetector: GestureDetector
-    private lateinit var scaleGestureDetector: ScaleGestureDetector
-
-    // 矩阵与状态
-    private val baseMatrix = Matrix()       // 初始居中适配矩阵
-    private val matrix = Matrix()           // 当前变换矩阵
-    private var currentScale = 1f           // 当前相对初始的缩放倍数
-    private val minScale = 1f
-    private val maxScale = 5f
-    private var lastTouchX = 0f
-    private var lastTouchY = 0f
-    private var touchStartX = 0f
-    private var touchStartY = 0f
-    private var isDragging = false
-
-    private var isControlsVisible = false   // 默认沉浸
-
-    companion object {
-        private const val TAG = "ImageActivity"
-        private const val SWIPE_THRESHOLD = 100f
-    }
+    private var adapter: MediaPagerAdapter? = null
+    private var isControlsVisible = false
+    private var isProgrammaticScroll = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,243 +44,113 @@ class ImageActivity : AppCompatActivity() {
         viewModel = ViewModelProvider(this)[ImageViewModel::class.java]
 
         initViews()
-        setupImageManager()
-        setupGestureDetectors()
-        setupTouchListener()
         setupEventListeners()
-        loadIntentData()
         setupObservers()
+        loadIntentData()
     }
 
     private fun initViews() {
+        mediaPager = findViewById(R.id.mediaPager)
+        loadingProgress = findViewById(R.id.loadingProgress)
+        errorTextView = findViewById(R.id.errorTextView)
         topControlBar = findViewById(R.id.topControlBar)
         backButton = findViewById(R.id.backButton)
         fileNameWithCount = findViewById(R.id.fileNameWithCount)
         shareButton = findViewById(R.id.shareButton)
-
-        imagePreview = findViewById(R.id.imagePreview)
-        loadingProgress = findViewById(R.id.loadingProgress)
-        errorTextView = findViewById(R.id.errorTextView)
         bottomControlBar = findViewById(R.id.bottomControlBar)
         previousButton = findViewById(R.id.previousButton)
         nextButton = findViewById(R.id.nextButton)
 
-        // 默认隐藏控制栏（沉浸式）
         topControlBar.visibility = View.GONE
         bottomControlBar.visibility = View.GONE
-    }
 
-    private fun setupImageManager() {
-        val client = UnsafeHttpClient.createUnsafeOkHttpClient()
-        imageManager = ImagePreviewManager(
-            context = this,
-            coroutineScope = lifecycleScope,
-            imageView = imagePreview,
-            loadingProgress = loadingProgress,
-            httpClient = client
-        )
-
-        imageManager.setListener(object : ImagePreviewManager.ImageStateListener {
-            override fun onImageLoadStart() {
-                imagePreview.visibility = View.INVISIBLE
-                imagePreview.setImageDrawable(null)
-                matrix.reset()
-                baseMatrix.reset()
-                currentScale = 1f
-                imagePreview.imageMatrix = matrix
-            }
-
-            override fun onImageLoadSuccess(isGif: Boolean) {
-                loadingProgress.visibility = View.GONE
-                errorTextView.visibility = View.GONE
-                imagePreview.post {
-                    applyFittedCenterMatrix()
-                    imagePreview.visibility = View.VISIBLE
-                    if (isGif) {
-                        imageManager.startGifAnimation()
-                    }
+        mediaPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageSelected(position: Int) {
+                if (isProgrammaticScroll) {
+                    isProgrammaticScroll = false
+                    return
                 }
+                adapter?.setCurrentPage(position)
+                viewModel.navigateToIndex(position)
+                updateTitleAndNav()
             }
-
-            override fun onImageLoadError(message: String) {
-                loadingProgress.visibility = View.GONE
-                showError(message)
-            }
-
-            override fun onDoubleTap() { /* 由手势检测器处理 */ }
         })
-    }
-
-    private fun applyFittedCenterMatrix() {
-        val drawable = imagePreview.drawable ?: return
-        val dw = drawable.intrinsicWidth
-        val dh = drawable.intrinsicHeight
-        if (dw <= 0 || dh <= 0) return
-
-        val vw = imagePreview.width - imagePreview.paddingLeft - imagePreview.paddingRight
-        val vh = imagePreview.height - imagePreview.paddingTop - imagePreview.paddingBottom
-        if (vw <= 0 || vh <= 0) return
-
-        baseMatrix.reset()
-        val scale = min(vw.toFloat() / dw, vh.toFloat() / dh)
-        val dx = (vw - dw * scale) / 2f + imagePreview.paddingLeft
-        val dy = (vh - dh * scale) / 2f + imagePreview.paddingTop
-        baseMatrix.setScale(scale, scale)
-        baseMatrix.postTranslate(dx, dy)
-
-        matrix.set(baseMatrix)
-        imagePreview.imageMatrix = matrix
-        currentScale = 1f
-    }
-
-    private fun setupGestureDetectors() {
-        gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean = true
-
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                toggleControls()
-                return true
-            }
-
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                handleDoubleTap(e.x, e.y)
-                return true
-            }
-
-            override fun onScroll(
-                e1: MotionEvent?,
-                e2: MotionEvent,
-                distanceX: Float,
-                distanceY: Float
-            ): Boolean = false
-        })
-
-        scaleGestureDetector = ScaleGestureDetector(this,
-            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-                override fun onScale(detector: ScaleGestureDetector): Boolean {
-                    val scaleFactor = detector.scaleFactor
-                    val focusX = detector.focusX
-                    val focusY = detector.focusY
-
-                    val newScale = (currentScale * scaleFactor).coerceIn(minScale, maxScale)
-                    matrix.postScale(
-                        newScale / currentScale,
-                        newScale / currentScale,
-                        focusX,
-                        focusY
-                    )
-                    currentScale = newScale
-                    imagePreview.imageMatrix = matrix
-                    return true
-                }
-            })
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun setupTouchListener() {
-        imagePreview.setOnTouchListener { _, event ->
-            scaleGestureDetector.onTouchEvent(event)
-            if (!scaleGestureDetector.isInProgress) {
-                gestureDetector.onTouchEvent(event)
-            }
-
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    lastTouchX = event.rawX
-                    lastTouchY = event.rawY
-                    touchStartX = event.rawX
-                    touchStartY = event.rawY
-                    isDragging = false
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (scaleGestureDetector.isInProgress) return@setOnTouchListener true
-
-                    if (event.pointerCount == 1 && currentScale > 1.01f) {
-                        val dx = event.rawX - lastTouchX
-                        val dy = event.rawY - lastTouchY
-                        matrix.postTranslate(dx, dy)
-                        imagePreview.imageMatrix = matrix
-                        lastTouchX = event.rawX
-                        lastTouchY = event.rawY
-                        if (abs(dx) > 5 || abs(dy) > 5) {
-                            isDragging = true
-                        }
-                    }
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (!isDragging && currentScale <= 1.01f) {
-                        val diffX = event.rawX - touchStartX
-                        if (abs(diffX) > SWIPE_THRESHOLD) {
-                            if (diffX > 0) viewModel.navigateToPrevious()
-                            else viewModel.navigateToNext()
-                        }
-                    }
-                }
-            }
-            true
-        }
-    }
-
-    private fun handleDoubleTap(focusX: Float, focusY: Float) {
-        val targetScale = if (currentScale > 1.1f) minScale else 2.5f.coerceAtMost(maxScale)
-        animateScale(currentScale, targetScale, focusX, focusY)
-    }
-
-    private fun animateScale(
-        fromScale: Float,
-        toScale: Float,
-        pivotX: Float,
-        pivotY: Float
-    ) {
-        val startMatrix = Matrix(matrix)
-        ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 250
-            addUpdateListener { animator ->
-                val fraction = animator.animatedFraction
-                val scaleThisFrame = fromScale + (toScale - fromScale) * fraction
-                val scaleChange = scaleThisFrame / fromScale
-                val m = Matrix(startMatrix)
-                m.postScale(scaleChange, scaleChange, pivotX, pivotY)
-                imagePreview.imageMatrix = m
-                matrix.set(m)
-            }
-        }.start()
-        currentScale = toScale
-    }
-
-    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
-        return when (keyCode) {
-            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
-                viewModel.navigateToPrevious()
-                true
-            }
-            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                viewModel.navigateToNext()
-                true
-            }
-            else -> super.onKeyDown(keyCode, event)
-        }
     }
 
     private fun setupEventListeners() {
-        backButton.setOnClickListener { onBackPressed() }
-        shareButton.setOnClickListener { shareCurrentImage() }
+        backButton.setOnClickListener { finish() }
+        shareButton.setOnClickListener { shareCurrentMedia() }
         previousButton.setOnClickListener { viewModel.navigateToPrevious() }
         nextButton.setOnClickListener { viewModel.navigateToNext() }
     }
 
+    private fun setupObservers() {
+        viewModel.imageList.observe(this) { list ->
+            if (list.isNullOrEmpty()) return@observe
+            buildAdapterIfNeeded(list)
+        }
+
+        viewModel.currentIndex.observe(this) { index ->
+            if (index == null || adapter == null) return@observe
+            if (mediaPager.currentItem != index) {
+                isProgrammaticScroll = true
+                mediaPager.setCurrentItem(index, false)
+                adapter?.setCurrentPage(index)
+            }
+            updateTitleAndNav()
+        }
+
+        viewModel.loadingState.observe(this) { state ->
+            when (state) {
+                is ImageViewModel.LoadingState.Loading -> loadingProgress.visibility = View.VISIBLE
+                is ImageViewModel.LoadingState.Success -> loadingProgress.visibility = View.GONE
+                is ImageViewModel.LoadingState.Error -> {
+                    loadingProgress.visibility = View.GONE
+                    errorTextView.visibility = View.VISIBLE
+                    errorTextView.text = state.message
+                }
+                else -> loadingProgress.visibility = View.GONE
+            }
+        }
+
+        viewModel.errorState.observe(this) { error ->
+            if (!error.isNullOrEmpty()) {
+                errorTextView.visibility = View.VISIBLE
+                errorTextView.text = error
+            }
+        }
+    }
+
+    private fun buildAdapterIfNeeded(list: List<FileSystemItem>) {
+        if (adapter != null) return
+        val serverUrl = viewModel.getServerUrl()
+        adapter = MediaPagerAdapter(
+            items = list,
+            serverUrl = serverUrl,
+            onClickPage = { toggleControls() }
+        )
+        mediaPager.adapter = adapter
+        val startIndex = (viewModel.currentIndex.value ?: 0).coerceIn(0, list.size - 1)
+        mediaPager.setCurrentItem(startIndex, false)
+        adapter?.setCurrentPage(startIndex)
+        updateTitleAndNav()
+    }
+
     private fun loadIntentData() {
         val serverUrl = intent.getStringExtra("SERVER_URL") ?: ""
-        val imageList = intent.getStringArrayListExtra("IMAGE_LIST")
+        val mediaList = intent.getStringArrayListExtra("IMAGE_LIST")
         val currentIndex = intent.getIntExtra("CURRENT_INDEX", -1)
 
-        if (imageList != null && currentIndex >= 0 && currentIndex < imageList.size) {
-            // 使用相册传来的图片路径列表
-            viewModel.initializeWithPaths(serverUrl, imageList, currentIndex)
+        if (serverUrl.isEmpty()) {
+            errorTextView.visibility = View.VISIBLE
+            errorTextView.text = "服务器地址不能为空"
+            return
+        }
+
+        if (mediaList != null && currentIndex >= 0 && currentIndex < mediaList.size) {
+            viewModel.initializeWithPaths(serverUrl, mediaList, currentIndex)
         } else {
-            // 原有逻辑：从服务器目录加载
             var directoryPath = intent.getStringExtra("CURRENT_PATH") ?: ""
-            val imagePath = intent.getStringExtra("FILE_URL") ?: ""
             val filePath = intent.getStringExtra("FILE_PATH") ?: ""
             val sortBy = intent.getStringExtra("SORT_BY") ?: ""
             val sortOrder = intent.getStringExtra("SORT_ORDER") ?: ""
@@ -323,63 +158,22 @@ class ImageActivity : AppCompatActivity() {
             if (directoryPath.isEmpty() && filePath.isNotEmpty()) {
                 directoryPath = File(filePath).parent ?: ""
             }
-
-            if (serverUrl.isEmpty()) {
-                showError("服务器地址不能为空")
-                return
-            }
-            viewModel.initialize(serverUrl, directoryPath, imagePath, sortBy, sortOrder)
+            viewModel.initialize(serverUrl, directoryPath, filePath, sortBy, sortOrder)
         }
     }
 
-    @SuppressLint("SetTextI18n")
-    private fun setupObservers() {
-        viewModel.currentImage.observe(this) { imageItem ->
-            imageItem?.let { item ->
-                val currentIndex = (viewModel.currentIndex.value ?: 0) + 1
-                val totalCount = viewModel.totalCount.value ?: 0
-                fileNameWithCount.text = "$currentIndex/$totalCount  ${item.name}"
+    @android.annotation.SuppressLint("SetTextI18n")
+    private fun updateTitleAndNav() {
+        val items = viewModel.imageList.value ?: return
+        val index = viewModel.currentIndex.value ?: 0
+        if (index !in items.indices) return
+        val item = items[index]
+        fileNameWithCount.text = "${index + 1}/${items.size}  ${item.name}"
 
-                val imageUrl = getFullImageUrl(item)
-                imageManager.loadImage(imageUrl, item.name)
-
-                updateNavigationButtons()
-            }
-        }
-
-        viewModel.loadingState.observe(this) { state ->
-            when (state) {
-                is ImageViewModel.LoadingState.Loading -> {
-                    loadingProgress.visibility = View.VISIBLE
-                    errorTextView.visibility = View.GONE
-                }
-                is ImageViewModel.LoadingState.Success -> {
-                    loadingProgress.visibility = View.GONE
-                }
-                is ImageViewModel.LoadingState.Error -> {
-                    loadingProgress.visibility = View.GONE
-                    showError(state.message)
-                }
-                else -> {}
-            }
-        }
-
-        viewModel.errorState.observe(this) { error ->
-            error?.let { showError(it) }
-        }
-    }
-
-    private fun updateNavigationButtons() {
-        val currentIndex = viewModel.currentIndex.value ?: 0
-        val totalCount = viewModel.totalCount.value ?: 0
-        previousButton.isEnabled = currentIndex > 0
-        nextButton.isEnabled = currentIndex < totalCount - 1
-    }
-
-    private fun getFullImageUrl(item: FileSystemItem): String {
-        val serverUrl = viewModel.getServerUrl()
-        val encodedPath = java.net.URLEncoder.encode(item.path, "UTF-8")
-        return "${serverUrl.removeSuffix("/")}/api/fileserver/preview/$encodedPath"
+        previousButton.isEnabled = index > 0
+        nextButton.isEnabled = index < items.size - 1
+        previousButton.alpha = if (index > 0) 1f else 0.4f
+        nextButton.alpha = if (index < items.size - 1) 1f else 0.4f
     }
 
     private fun toggleControls() {
@@ -388,31 +182,32 @@ class ImageActivity : AppCompatActivity() {
         bottomControlBar.visibility = if (isControlsVisible) View.VISIBLE else View.GONE
     }
 
-    private fun showError(message: String) {
-        errorTextView.visibility = View.VISIBLE
-        errorTextView.text = message
-        imagePreview.visibility = View.GONE
-    }
+    private fun shareCurrentMedia() {
+        val items = viewModel.imageList.value ?: return
+        val index = viewModel.currentIndex.value ?: return
+        if (index !in items.indices) return
+        val item = items[index]
 
-    private fun shareCurrentImage() {
-        val item = viewModel.currentImage.value ?: return
-        val imageUrl = getFullImageUrl(item)
+        val base = viewModel.getServerUrl().removeSuffix("/")
+        val encoded = java.net.URLEncoder.encode(item.path, "UTF-8")
+        val url = if (item.isVideo) {
+            "$base/api/fileserver/stream/$encoded"
+        } else {
+            "$base/api/fileserver/preview/$encoded"
+        }
 
         lifecycleScope.launch {
             try {
                 val sharedFile = withContext(Dispatchers.IO) {
                     val client = UnsafeHttpClient.createUnsafeOkHttpClient()
-                    val request = okhttp3.Request.Builder().url(imageUrl).build()
+                    val request = okhttp3.Request.Builder().url(url).build()
                     val response = client.newCall(request).execute()
-                    if (!response.isSuccessful) throw Exception("下载图片失败")
+                    if (!response.isSuccessful) throw Exception("下载失败")
 
-                    val cacheDir = File(cacheDir, "shared_images")
-                    cacheDir.mkdirs()
-                    val file = File(cacheDir, item.name)
+                    val dir = File(cacheDir, "shared_media").apply { mkdirs() }
+                    val file = File(dir, item.name)
                     response.body?.byteStream()?.use { input ->
-                        FileOutputStream(file).use { output ->
-                            input.copyTo(output)
-                        }
+                        FileOutputStream(file).use { out -> input.copyTo(out) }
                     }
                     file
                 }
@@ -422,34 +217,19 @@ class ImageActivity : AppCompatActivity() {
                     "${packageName}.fileprovider",
                     sharedFile
                 )
-
+                val mime = when {
+                    item.isVideo -> item.mimeType?.takeIf { it.startsWith("video/") } ?: "video/*"
+                    else -> item.mimeType?.takeIf { it.startsWith("image/") } ?: "image/*"
+                }
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = item.mimeType ?: "image/*"
+                    type = mime
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                startActivity(Intent.createChooser(shareIntent, "分享图片"))
+                startActivity(Intent.createChooser(shareIntent, "分享"))
             } catch (e: Exception) {
                 Toast.makeText(this@ImageActivity, "分享失败: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
-    }
-
-    override fun onPause() {
-        super.onPause()
-        imageManager.stopGifAnimation()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        lifecycleScope.launch {
-            delay(200)
-            imageManager.startGifAnimation()
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        imageManager.clear()
     }
 }

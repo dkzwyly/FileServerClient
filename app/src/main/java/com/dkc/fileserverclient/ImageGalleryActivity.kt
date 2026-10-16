@@ -164,12 +164,8 @@ class ImageGalleryActivity : AppCompatActivity() {
             isMultiSelectionMode = { isMultiSelectionMode },
             isItemSelected = { selectedItems.contains(it) },
             onImageClick = { item ->
-                if (isMultiSelectionMode) {
-                    toggleItemSelection(item)
-                } else {
-                    // ★ 视频走 ExoPlayer，图片走 ImageActivity
-                    if (item.isVideo) previewVideo(item) else previewImage(item)
-                }
+                if (isMultiSelectionMode) toggleItemSelection(item)
+                else previewImage(item)    // 视频也走这里
             },
             onImageLongClick = { imageItem ->
                 if (!isMultiSelectionMode) enterMultiSelectionMode()

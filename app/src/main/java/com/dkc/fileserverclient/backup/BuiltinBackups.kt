@@ -2,7 +2,6 @@ package com.dkc.fileserverclient.backup
 
 /**
  * 统一注册本应用所有需要备份的数据源。
- * 新增备份项只需在下面两个列表里加一行，或调用 BackupManager.register() 注册自定义 Exportable。
  */
 object BuiltinBackups {
 
@@ -22,18 +21,16 @@ object BuiltinBackups {
         "app_prefs",                 // 最近视频
         "video_library_prefs",       // 视频库视图模式
         "subtitle_prefs"             // 字幕样式
-        // 说明：lyrics_files_cache 是短期缓存（10 分钟 TTL），不需要备份
     )
 
     /** 需要备份的 filesDir 子目录 */
     private val DIRS_TO_BACKUP = listOf(
-        "reading_history",  // 文本阅读进度
-        "audio_covers",     // 歌曲封面
-        // 说明：thumbnails / coil_cache 都是 cacheDir，不备份
-        "transfer"
+        "reading_history",   // 文本阅读进度
+        "audio_covers",      // 歌曲封面
+        "transfer",          // 传输队列
+        "thumbnails"         // ★ 图片 + 视频缩略图（ThumbnailLoader 落盘位置）
     )
 
-    /** 在 Application.onCreate() 里调用一次 */
     fun registerAll() {
         PREFS_TO_BACKUP.forEach { BackupManager.register(PrefsExportable(it)) }
         DIRS_TO_BACKUP.forEach  { BackupManager.register(FileDirExportable(it)) }

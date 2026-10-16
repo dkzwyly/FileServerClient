@@ -3,6 +3,8 @@ package com.dkc.fileserverclient.backup
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * 通用 SharedPreferences 导出器。
@@ -12,7 +14,26 @@ class PrefsExportable(private val prefsName: String) : Exportable {
 
     override val exportKey: String = "prefs_$prefsName"
 
-    override suspend fun export(context: Context): ByteArray {
+    override fun canHandle(entryName: String): Boolean = entryName == exportKey
+
+    override suspend fun exportToZip(context: Context, zip: ZipOutputStream) {
+        val bytes = buildJson(context)
+        zip.putNextEntry(ZipEntry(exportKey))
+        zip.write(bytes)
+        zip.closeEntry()
+    }
+
+    override suspend fun restoreFromZip(
+        context: Context,
+        entryName: String,
+        data: ByteArray
+    ): Boolean {
+        return restoreFromBytes(context, data)
+    }
+
+    // ---------------- 私有实现 ----------------
+
+    private fun buildJson(context: Context): ByteArray {
         val prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
         val values = JSONObject()
         val types = JSONObject()
@@ -39,7 +60,7 @@ class PrefsExportable(private val prefsName: String) : Exportable {
         return root.toString().toByteArray(Charsets.UTF_8)
     }
 
-    override suspend fun restore(context: Context, data: ByteArray): Boolean {
+    private fun restoreFromBytes(context: Context, data: ByteArray): Boolean {
         return try {
             val root = JSONObject(String(data, Charsets.UTF_8))
             val values = root.getJSONObject("values")
@@ -64,7 +85,6 @@ class PrefsExportable(private val prefsName: String) : Exportable {
                         editor.putStringSet(key, set)
                     }
                     else -> {
-                        // 兜底：按 JSON 原生类型猜测
                         when (value) {
                             is Boolean -> editor.putBoolean(key, value)
                             is Int     -> editor.putInt(key, value)

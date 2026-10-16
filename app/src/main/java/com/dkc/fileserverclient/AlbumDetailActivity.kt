@@ -603,19 +603,11 @@ class AlbumDetailActivity : AppCompatActivity() {
 
     // ==================== 预览 ====================
     private fun previewImage(item: FileSystemItem) {
-        // 只把相册中的图片路径传给 ImageActivity（图片幻灯片）
-        val imagePaths = mutableListOf<String>()
+        val allPaths = mutableListOf<String>()
         for (g in adapter.currentList) {
-            if (g is GalleryItem.ImageEntry && !g.image.isVideo) {
-                imagePaths.add(g.image.path)
-            }
+            if (g is GalleryItem.ImageEntry) allPaths.add(g.image.path)   // 图片 + 视频都进
         }
-        val currentIndex = imagePaths.indexOf(item.path)
-        if (currentIndex == -1) {
-            // 理论上不会发生，兜底：单独预览
-            imagePaths.add(item.path)
-        }
-        val idx = imagePaths.indexOf(item.path).coerceAtLeast(0)
+        val idx = allPaths.indexOf(item.path).coerceAtLeast(0)
 
         try {
             val encoded = java.net.URLEncoder.encode(item.path, "UTF-8")
@@ -625,12 +617,11 @@ class AlbumDetailActivity : AppCompatActivity() {
                 putExtra("FILE_URL", url)
                 putExtra("FILE_PATH", item.path)
                 putExtra("SERVER_URL", currentServerUrl)
-                putExtra("CURRENT_PATH", imageGalleryPath)
-                putStringArrayListExtra("IMAGE_LIST", ArrayList(imagePaths))
+                putStringArrayListExtra("IMAGE_LIST", ArrayList(allPaths))
                 putExtra("CURRENT_INDEX", idx)
             })
         } catch (e: Exception) {
-            Toast.makeText(this, "预览失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "打开失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
