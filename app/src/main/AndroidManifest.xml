@@ -116,6 +116,24 @@
             android:screenOrientation="sensor"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
         <activity
+            android:name=".ShareReceiverActivity"
+            android:exported="true"
+            android:theme="@style/Theme.FileServer.ShareReceiver"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".AudioPlayerActivity"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize"
