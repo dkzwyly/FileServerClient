@@ -44,6 +44,17 @@
             android:orientation="horizontal"
             android:gravity="center">
 
+            <!-- ★ 断绝模式开关：只在相册集 Tab 显示 -->
+            <ImageButton
+                android:id="@+id/breakModeButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_heart_broken_grey"
+                android:contentDescription="断绝模式"
+                android:layout_marginEnd="8dp"
+                android:visibility="gone" />
+
             <ImageButton
                 android:id="@+id/sortButton"
                 android:layout_width="40dp"
@@ -181,24 +192,36 @@
         android:textColor="@color/text_secondary"
         android:gravity="center" />
 
-    <!-- 相册图片网格 -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/galleryRecyclerView"
+    <!-- 相册图片网格：外包 SwipeRefreshLayout -->
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/gallerySwipeRefresh"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:clipToPadding="false"
-        android:padding="4dp"
-        android:visibility="visible" />
+        android:layout_weight="1">
 
-    <!-- 相册集列表 -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/albumSetRecyclerView"
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/galleryRecyclerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="4dp"
+            android:visibility="visible" />
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+    <!-- 相册集列表：外包 SwipeRefreshLayout -->
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/albumSetSwipeRefresh"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:visibility="gone"
-        android:padding="8dp" />
+        android:visibility="gone">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/albumSetRecyclerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="8dp" />
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
     <!-- 新建相册 FAB -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton

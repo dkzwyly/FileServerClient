@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.BatteryManager
 import android.os.Build
@@ -48,8 +49,27 @@ class TextPreviewActivity : AppCompatActivity() {
     private lateinit var currentFileUrl: String
     private lateinit var currentFilePath: String
 
-    private var currentFontSize: Float = 16f
-    private var currentBackgroundColor: Int = Color.WHITE
+    // ★ 两套独立配置
+    private var dayFontSize: Float = 16f
+    private var dayBgColor: Int = Color.WHITE
+    private var nightFontSize: Float = 16f
+    private var nightBgColor: Int = Color.parseColor("#1A1A1A")
+
+    /** 系统当前是否处于深色模式 */
+    private val isNightMode: Boolean
+        get() {
+            val nightMask = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+            return nightMask == Configuration.UI_MODE_NIGHT_YES
+        }
+
+    /** 当前生效的字体大小（根据系统模式自动选） */
+    private val currentFontSize: Float
+        get() = if (isNightMode) nightFontSize else dayFontSize
+
+    /** 当前生效的背景色 */
+    private val currentBackgroundColor: Int
+        get() = if (isNightMode) nightBgColor else dayBgColor
+
     private lateinit var prefs: SharedPreferences
     private lateinit var ttsPrefs: SharedPreferences
 
@@ -59,7 +79,7 @@ class TextPreviewActivity : AppCompatActivity() {
 
     private lateinit var repository: PageRepository
 
-    // ---- 状态栏（时间 + 电量）相关 ----
+    // ---- 状态栏（时间 + 电量）----
     private var batteryPercent = -1
     private var statusReceiverRegistered = false
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -155,6 +175,20 @@ class TextPreviewActivity : AppCompatActivity() {
         })
     }
 
+    // ============================================================
+    // ★ 系统深浅色切换：自动重新应用
+    // ============================================================
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 重新应用当前模式对应的字体/背景
+        applyAppearance()
+        // 字体大小可能变化，需要重新分页
+        if (isLayoutReady) {
+            textContentTextView.post { updateServiceDisplayParams() }
+        }
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -235,8 +269,6 @@ class TextPreviewActivity : AppCompatActivity() {
             width, textContentTextView.paint,
             textContentTextView.lineSpacingExtra, textContentTextView.lineSpacingMultiplier, lines
         )
-        // 已删除 audiobookService?.updateDisplayParams(...)，
-        // 分页完全由 PageRepository 持有，service 不再重复接收显示参数。
     }
 
     private fun calculateLinesPerPage(): Int {
@@ -415,6 +447,14 @@ class TextPreviewActivity : AppCompatActivity() {
         }
     }
 
+    // ---------------- 外观设置对话框 ----------------
+
+    /**
+     * 修改的是「当前系统模式对应的那一套」：
+     * - 系统深色 → 编辑 nightFontSize / nightBgColor
+     * - 系统浅色 → 编辑 dayFontSize / dayBgColor
+     * 打开对话框时锁定模式（防止编辑期间系统模式变化导致语义混乱）。
+     */
     private fun showAppearanceDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_reading_settings, null)
         val seekFont = dialogView.findViewById<SeekBar>(R.id.seekBarFontSize)
@@ -428,24 +468,51 @@ class TextPreviewActivity : AppCompatActivity() {
         val seekSpeed = dialogView.findViewById<SeekBar>(R.id.seekBarSpeed)
         val speedVal = dialogView.findViewById<TextView>(R.id.speedValue)
 
-        val origFont = currentFontSize
-        val origBg = currentBackgroundColor
+        // ★ 打开时锁定本次编辑目标是白天还是黑夜
+        val editingNight = isNightMode
+
+        // 快照
+        val origDayFont = dayFontSize
+        val origDayBg = dayBgColor
+        val origNightFont = nightFontSize
+        val origNightBg = nightBgColor
         val origSpeed = prefs.getFloat("tts_speed", 1.0f)
 
+        // 当前正在编辑的字体 / 背景
+        var editingFont = if (editingNight) nightFontSize else dayFontSize
+        var editingBg = if (editingNight) nightBgColor else dayBgColor
+
+        // 把编辑值立即写回内存字段，让预览生效
+        fun pushFont(f: Float) {
+            if (editingNight) nightFontSize = f else dayFontSize = f
+            textContentTextView.textSize = f
+        }
+        fun pushBg(c: Int) {
+            if (editingNight) nightBgColor = c else dayBgColor = c
+            rootLayout.setBackgroundColor(c)
+            progressTextView.setTextColor(getContrastColor(c))
+            statusInfoTextView.setTextColor(getContrastColor(c))
+        }
+
+        // 初始化控件
         seekFont.max = 18
-        seekFont.progress = (origFont - 12).toInt()
-        fontSizeVal.text = "${origFont.toInt()}sp"
+        seekFont.progress = (editingFont - 12).toInt().coerceIn(0, 18)
+        fontSizeVal.text = "${editingFont.toInt()}sp"
+        textContentTextView.textSize = editingFont
+
         seekSpeed.progress = ((origSpeed - 0.5f) / 1.5f * 100).toInt().coerceIn(0, 100)
         speedVal.text = String.format("%.1fx", origSpeed)
 
         seekFont.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                editingFont = (p + 12).toFloat()
                 fontSizeVal.text = "${p + 12}sp"
-                textContentTextView.textSize = (p + 12).toFloat()
+                pushFont(editingFont)
             }
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
+
         seekSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                 val speed = 0.5f + p / 100f * 1.5f
@@ -456,44 +523,62 @@ class TextPreviewActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
 
-        btnW.setOnClickListener { currentBackgroundColor = Color.WHITE; rootLayout.setBackgroundColor(Color.WHITE) }
-        btnC.setOnClickListener {
-            currentBackgroundColor = Color.parseColor("#FAF0D7"); rootLayout.setBackgroundColor(currentBackgroundColor)
-        }
-        btnG.setOnClickListener {
-            currentBackgroundColor = Color.parseColor("#C8E6C9"); rootLayout.setBackgroundColor(currentBackgroundColor)
-        }
-        btnB.setOnClickListener { currentBackgroundColor = Color.DKGRAY; rootLayout.setBackgroundColor(currentBackgroundColor) }
+        btnW.setOnClickListener { editingBg = Color.WHITE; pushBg(editingBg) }
+        btnC.setOnClickListener { editingBg = Color.parseColor("#FAF0D7"); pushBg(editingBg) }
+        btnG.setOnClickListener { editingBg = Color.parseColor("#C8E6C9"); pushBg(editingBg) }
+        btnB.setOnClickListener { editingBg = Color.DKGRAY; pushBg(editingBg) }
 
         val dialog = AlertDialog.Builder(this).setView(dialogView).setCancelable(false).create()
+
         cancelBtn.setOnClickListener {
-            currentFontSize = origFont; currentBackgroundColor = origBg
+            // 回滚
+            dayFontSize = origDayFont
+            dayBgColor = origDayBg
+            nightFontSize = origNightFont
+            nightBgColor = origNightBg
             audiobookService?.setSpeechRate(origSpeed)
-            applyAppearance(); updateServiceDisplayParams()
+            applyAppearance()
+            updateServiceDisplayParams()
             dialog.dismiss()
         }
+
         applyBtn.setOnClickListener {
-            currentFontSize = (seekFont.progress + 12).toFloat()
             val speed = 0.5f + seekSpeed.progress / 100f * 1.5f
-            saveAppearancePrefs()
             prefs.edit().putFloat("tts_speed", speed).apply()
             audiobookService?.setSpeechRate(speed)
+
+            saveAppearancePrefs()
             applyAppearance()
             textContentTextView.post { updateServiceDisplayParams() }
             dialog.dismiss()
         }
+
         dialog.show()
     }
 
-    // ---------------- 外观 ----------------
+    // ---------------- 外观持久化 ----------------
 
+    /**
+     * 只加载两套配置，不再保存 / 读取"当前模式"。
+     * 兼容旧版本：如果两套 key 都没建立，用旧的 font_size / bg_color 作初值。
+     */
     private fun loadAppearancePrefs() {
-        currentFontSize = prefs.getFloat("font_size", 16f)
-        currentBackgroundColor = prefs.getInt("bg_color", Color.WHITE)
+        val legacyFont = prefs.getFloat("font_size", 16f)
+        val legacyBg = prefs.getInt("bg_color", Color.WHITE)
+
+        dayFontSize = prefs.getFloat("day_font_size", legacyFont)
+        dayBgColor = prefs.getInt("day_bg_color", legacyBg)
+        nightFontSize = prefs.getFloat("night_font_size", legacyFont)
+        nightBgColor = prefs.getInt("night_bg_color", Color.parseColor("#1A1A1A"))
     }
 
     private fun saveAppearancePrefs() {
-        prefs.edit().putFloat("font_size", currentFontSize).putInt("bg_color", currentBackgroundColor).apply()
+        prefs.edit()
+            .putFloat("day_font_size", dayFontSize)
+            .putInt("day_bg_color", dayBgColor)
+            .putFloat("night_font_size", nightFontSize)
+            .putInt("night_bg_color", nightBgColor)
+            .apply()
     }
 
     private fun applyAppearance() {

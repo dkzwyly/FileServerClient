@@ -72,6 +72,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
 
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     // 网络相关
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
@@ -82,6 +83,7 @@ dependencies {
     implementation("io.coil-kt:coil:2.5.0")
     implementation("io.coil-kt:coil-base:2.5.0")
     implementation("io.coil-kt:coil-gif:2.5.0")
+    implementation("io.coil-kt:coil-svg:2.5.0")
 
     // Media3 ExoPlayer 用于视频和音频播放
     implementation("androidx.media3:media3-exoplayer:1.4.1")

@@ -6,7 +6,6 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import coil.load
 
 class AlbumSetAdapter(
     private val serverUrl: String,
@@ -14,6 +13,13 @@ class AlbumSetAdapter(
     private val onAlbumClick: (Album) -> Unit,
     private val onAlbumLongClick: (Album) -> Unit
 ) : RecyclerView.Adapter<AlbumSetAdapter.ViewHolder>() {
+
+    companion object {
+        private val VIDEO_EXTS = setOf(
+            "mp4", "mkv", "avi", "mov", "webm", "flv",
+            "m4v", "3gp", "ts", "rmvb", "wmv"
+        )
+    }
 
     class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val albumIcon: ImageView = itemView.findViewById(R.id.albumIcon)
@@ -32,37 +38,41 @@ class AlbumSetAdapter(
         holder.nameText.text = album.name
         holder.countText.text = "${album.imagePaths.size} 项"
 
-        // 获取相册第一张图片路径作为封面
         val coverPath = album.imagePaths.firstOrNull()
-        if (coverPath != null) {
-            // 构造一个临时 FileSystemItem，只需提供 path 和 name
-            // 注意：FileSystemItem 的 isDirectory 是计算属性，这里直接构造数据类
-            val tempImageItem = FileSystemItem(
-                name = coverPath.substringAfterLast('/'),
+
+        if (coverPath.isNullOrEmpty()) {
+            // ★ 空相册：固定显示图片占位图
+            holder.albumIcon.setImageResource(R.drawable.ic_image_placeholder)
+        } else {
+            val name = coverPath.substringAfterLast('/')
+            val ext = coverPath.substringAfterLast('.', "").lowercase()
+            val isVideo = ext in VIDEO_EXTS
+
+            val coverItem = FileSystemItem(
+                name = name,
                 path = coverPath,
                 size = 0,
-                extension = coverPath.substringAfterLast('.', ""),
+                extension = ext,
                 sizeFormatted = "",
                 lastModified = "",
-                isVideo = false,
+                isVideo = isVideo,
                 isAudio = false,
-                mimeType = "image/*",
+                mimeType = if (isVideo) "video/*" else "image/*",
                 encoding = ""
             )
-            // 使用 ThumbnailLoader 加载缩略图，它内部会处理缓存和证书
+
+            // ★ 视频封面用 ic_video_placeholder，图片用 ic_image_placeholder
+            val placeholderRes = if (isVideo) R.drawable.ic_video_placeholder else R.drawable.ic_image_placeholder
+
             ThumbnailLoader.loadImageThumbnail(
                 imageView = holder.albumIcon,
-                imageItem = tempImageItem,
+                imageItem = coverItem,
                 serverUrl = serverUrl,
-                placeholderResId = R.drawable.ic_image_placeholder,  // 加载中占位
-                errorResId = R.drawable.ic_image_placeholder         // 加载失败也显示图片占位
+                placeholderResId = placeholderRes,
+                errorResId = placeholderRes
             )
-        } else {
-            // 空相册显示占位图
-            holder.albumIcon.setImageResource(R.drawable.ic_image_placeholder)
         }
 
-        // 点击事件
         holder.itemView.setOnClickListener { onAlbumClick(album) }
         holder.itemView.setOnLongClickListener {
             onAlbumLongClick(album)

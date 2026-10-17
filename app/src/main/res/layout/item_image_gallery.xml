@@ -9,7 +9,8 @@
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground">
 
-    <RelativeLayout
+    <!-- ★ 必须是 FrameLayout：播放图标由 ImageViewHolder 动态加进来 -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="120dp"
         android:background="@color/surface_variant">
@@ -32,12 +33,11 @@
             android:id="@+id/selectionCheck"
             android:layout_width="28dp"
             android:layout_height="28dp"
-            android:layout_alignParentTop="true"
-            android:layout_alignParentEnd="true"
+            android:layout_gravity="top|end"
             android:layout_margin="8dp"
             android:visibility="gone" />
 
-    </RelativeLayout>
+    </FrameLayout>
 
     <TextView
         android:id="@+id/galleryFileName"

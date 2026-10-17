@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import java.net.URLDecoder
 
 class FileServerService(private val context: Context) {
@@ -234,6 +235,32 @@ class FileServerService(private val context: Context) {
         }
     }
 
+    suspend fun batchDeleteFiles(serverUrl: String, paths: List<String>): Pair<Int, Int> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = "${serverUrl.removeSuffix("/")}/api/fileserver/batch-delete"
+                val jsonBody = org.json.JSONArray(paths).toString()
+                val body = okhttp3.RequestBody.create(
+                    "application/json".toMediaTypeOrNull(),
+                    jsonBody
+                )
+                val request = okhttp3.Request.Builder()
+                    .url(url)
+                    .post(body)
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext 0 to paths.size
+                    val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                    val success = json.optInt("success", 0)
+                    val failed = json.optInt("failed", paths.size - success)
+                    success to failed
+                }
+            } catch (e: Exception) {
+                Log.e("FileServerService", "批量删除异常", e)
+                0 to paths.size
+            }
+        }
+    }
     // ========== 创建目录 ==========
     suspend fun createDirectory(serverUrl: String, path: String): Boolean = withContext(Dispatchers.IO) {
         try {
