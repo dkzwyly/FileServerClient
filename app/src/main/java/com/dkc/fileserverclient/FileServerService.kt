@@ -20,6 +20,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import java.net.URLDecoder
+import android.net.Uri
+import com.dkc.fileserverclient.transfer.ChunkRequestBody
+import com.dkc.fileserverclient.transfer.UriProgressRequestBody
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.withLock
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 
 class FileServerService(private val context: Context) {
 
@@ -57,6 +71,32 @@ class FileServerService(private val context: Context) {
         } catch (e: Exception) {
             throw RuntimeException(e)
         }
+    }
+    // 活跃的分片上传 Call，key = "$fileId#$index"
+    private val activeChunkCalls = java.util.concurrent.ConcurrentHashMap<String, Call>()
+
+    private suspend fun Call.awaitResponse(): Response =
+        suspendCancellableCoroutine { cont ->
+            cont.invokeOnCancellation { try { cancel() } catch (_: Exception) {} }
+            enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (cont.isActive) cont.resumeWithException(e)
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    cont.resume(response)
+                }
+            })
+        }
+
+    /** 立即中断某个 fileId 下所有 in-flight chunk 请求 */
+    fun cancelActiveChunkUploads(fileId: String) {
+        val prefix = "$fileId#"
+        activeChunkCalls.entries
+            .filter { it.key.startsWith(prefix) }
+            .forEach { (k, c) ->
+                try { c.cancel() } catch (_: Exception) {}
+                activeChunkCalls.remove(k)
+            }
     }
 
     suspend fun testConnection(serverUrl: String): Boolean = withContext(Dispatchers.IO) {
@@ -694,6 +734,262 @@ class FileServerService(private val context: Context) {
             }
         } catch (e: Exception) {
             UploadResult(success = false, message = "上传异常: ${e.message}")
+        }
+    }
+    /**
+     * 基于 content Uri 的流式上传（★ 新增）。
+     * 与 [uploadFileWithProgress] 等价，但数据源是 ContentResolver，不落盘。
+     */
+    suspend fun uploadUriWithProgress(
+        serverUrl: String,
+        context: Context,
+        uri: Uri,
+        fileSize: Long,
+        fileName: String,
+        targetPath: String,
+        onProgress: (written: Long, total: Long) -> Unit
+    ): UploadResult = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val uploadUrl = if (targetPath.isEmpty()) {
+                "${formattedUrl.removeSuffix("/")}/api/fileserver/upload"
+            } else {
+                val encoded = targetPath.split("/").joinToString("/") {
+                    URLEncoder.encode(it, "UTF-8")
+                }
+                "${formattedUrl.removeSuffix("/")}/api/fileserver/upload/$encoded"
+            }
+
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "files",
+                    fileName,
+                    UriProgressRequestBody(
+                        context = context,
+                        uri = uri,
+                        totalBytes = fileSize,
+                        contentType = "application/octet-stream".toMediaType(),
+                        onProgress = onProgress
+                    )
+                )
+                .build()
+
+            val customClient = client.newBuilder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(60, TimeUnit.SECONDS)
+                .build()
+
+            val response = customClient.newCall(
+                Request.Builder().url(uploadUrl).post(body).build()
+            ).execute()
+
+            if (response.isSuccessful) {
+                val json = response.body?.string() ?: ""
+                gson.fromJson(json, UploadResult::class.java)
+            } else {
+                UploadResult(success = false, message = "上传失败: HTTP ${response.code}")
+            }
+        } catch (e: Exception) {
+            UploadResult(success = false, message = "上传异常: ${e.message}")
+        }
+    }
+    /**
+     * 分片并行上传（支持断点续传）。
+     *
+     * 流程：init → 拿已传分片 → 上传缺失分片（并行） → complete
+     *
+     * @param fileId   稳定的文件标识（用 task.id 即可），重启后仍能命中已传分片
+     * @param chunkSize 每个分片大小（字节），建议 4MB/8MB/16MB
+     * @param parallelChunks 分片并行度
+     */
+    suspend fun uploadChunkedWithProgress(
+        serverUrl: String,
+        context: Context,
+        uri: Uri,
+        fileName: String,
+        totalSize: Long,
+        targetDir: String,
+        fileId: String,
+        chunkSize: Int = 4 * 1024 * 1024,
+        parallelChunks: Int = 4,
+        onProgress: (uploaded: Long, total: Long) -> Unit
+    ): UploadResult = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val baseUrl = formattedUrl.removeSuffix("/")
+            val totalChunks = ((totalSize + chunkSize - 1) / chunkSize).toInt()
+            val encodedFileId = URLEncoder.encode(fileId, "UTF-8")
+
+            // ---------- init ----------
+            val initBody = org.json.JSONObject().apply {
+                put("fileId", fileId)
+                put("fileName", fileName)
+                put("targetDir", targetDir)
+                put("totalChunks", totalChunks)
+                put("totalSize", totalSize)
+                put("chunkSize", chunkSize)
+            }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+
+            val initResp = client.newCall(
+                Request.Builder().url("$baseUrl/api/fileserver/upload/init").post(initBody).build()
+            ).awaitResponse()
+
+            if (!initResp.isSuccessful) {
+                return@withContext UploadResult(false, "初始化分片上传失败: HTTP ${initResp.code}")
+            }
+
+            val uploadedSet = mutableSetOf<Int>()
+            initResp.use {
+                val json = org.json.JSONObject(it.body?.string() ?: "{}")
+                val arr = json.optJSONArray("uploaded") ?: org.json.JSONArray()
+                for (i in 0 until arr.length()) uploadedSet.add(arr.getInt(i))
+            }
+
+            val missing = (0 until totalChunks).filter { it !in uploadedSet }
+
+            // ---------- 进度聚合 ----------
+            // 已完成分片的字节总和
+            val completedBytes = java.util.concurrent.atomic.AtomicLong(0L)
+            uploadedSet.forEach { idx ->
+                val len = minOf(chunkSize.toLong(), totalSize - idx.toLong() * chunkSize)
+                if (len > 0) completedBytes.addAndGet(len)
+            }
+
+            // 每个 in-flight 分片的实时已写字节
+            val chunkProgress = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+
+            // 100ms 节流
+            val progressLock = Any()
+            var lastReportTime = 0L
+
+            fun reportProgress(force: Boolean = false) {
+                val now = System.currentTimeMillis()
+                synchronized(progressLock) {
+                    if (!force && now - lastReportTime < 100) return
+                    lastReportTime = now
+                }
+                val live = chunkProgress.values.sum()
+                val total = completedBytes.get() + live
+                onProgress(total.coerceAtMost(totalSize), totalSize)
+            }
+
+            reportProgress(force = true)   // 初始（已含断点续传的字节）
+
+            val sem = kotlinx.coroutines.sync.Semaphore(parallelChunks)
+            var failedChunk: Int? = null
+            var serverCancelled = false
+
+            kotlinx.coroutines.coroutineScope {
+                missing.map { idx ->
+                    async(Dispatchers.IO) {
+                        sem.withPermit {
+                            if (failedChunk != null || serverCancelled) return@withPermit
+                            val offset = idx.toLong() * chunkSize
+                            val length = minOf(chunkSize.toLong(), totalSize - offset)
+                            val chunkUrl = buildString {
+                                append("$baseUrl/api/fileserver/upload/chunk")
+                                append("?fileId=").append(encodedFileId)
+                                append("&index=").append(idx)
+                                append("&totalChunks=").append(totalChunks)
+                            }
+                            val body = ChunkRequestBody(
+                                context = context,
+                                uri = uri,
+                                offset = offset,
+                                length = length,
+                                contentType = "application/octet-stream".toMediaTypeOrNull(),
+                                onBytesWritten = { written ->
+                                    chunkProgress[idx] = written
+                                    reportProgress()
+                                }
+                            )
+
+                            val call = client.newCall(
+                                Request.Builder().url(chunkUrl).post(body).build()
+                            )
+                            val callKey = "$fileId#$idx"
+                            activeChunkCalls[callKey] = call
+
+                            try {
+                                val resp = call.awaitResponse()
+                                val code = resp.code
+                                val ok = resp.isSuccessful
+                                resp.close()
+
+                                when {
+                                    code == 410 -> {
+                                        serverCancelled = true
+                                        throw CancellationException("服务端已取消会话")
+                                    }
+                                    ok -> {
+                                        // 分片完成：从 chunkProgress 移除，加入 completedBytes
+                                        chunkProgress.remove(idx)
+                                        completedBytes.addAndGet(length)
+                                        reportProgress(force = true)
+                                    }
+                                    else -> failedChunk = idx
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: IOException) {
+                                chunkProgress.remove(idx)
+                                if (!currentCoroutineContext().isActive) {
+                                    throw CancellationException("分片上传已取消")
+                                }
+                                Log.e(TAG, "分片 $idx 失败", e)
+                                failedChunk = idx
+                            } catch (e: Exception) {
+                                chunkProgress.remove(idx)
+                                Log.e(TAG, "分片 $idx 异常", e)
+                                failedChunk = idx
+                            } finally {
+                                activeChunkCalls.remove(callKey)
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+
+            if (serverCancelled) return@withContext UploadResult(false, "服务端已取消")
+            if (failedChunk != null) return@withContext UploadResult(false, "分片 #$failedChunk 上传失败")
+
+            // ---------- complete ----------
+            val completeBody = org.json.JSONObject().apply {
+                put("fileId", fileId)
+            }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+
+            val completeCall = client.newCall(
+                Request.Builder().url("$baseUrl/api/fileserver/upload/complete").post(completeBody).build()
+            )
+            val completeResp = completeCall.awaitResponse()
+
+            if (completeResp.isSuccessful) {
+                onProgress(totalSize, totalSize)
+                UploadResult(true, "上传完成")
+            } else {
+                val errText = completeResp.body?.string()
+                UploadResult(false, "合并失败: HTTP ${completeResp.code} ${parseErrorMessage(errText) ?: ""}")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "分片上传异常", e)
+            UploadResult(false, "分片上传异常: ${e.message}")
+        }
+    }
+
+    /** 取消分片上传会话（清理服务端已传分片） */
+    suspend fun cancelChunkedUpload(serverUrl: String, fileId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val formattedUrl = formatServerUrl(serverUrl)
+            val url = "${formattedUrl.removeSuffix("/")}/api/fileserver/upload/${URLEncoder.encode(fileId, "UTF-8")}"
+            val resp = client.newCall(Request.Builder().url(url).delete().build()).execute()
+            resp.isSuccessful
+        } catch (e: Exception) {
+            Log.w(TAG, "取消分片上传失败: $fileId", e)
+            false
         }
     }
     // ========== 歌曲元数据相关（原有） ==========

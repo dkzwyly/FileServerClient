@@ -843,27 +843,65 @@ class ImageGalleryActivity : AppCompatActivity() {
 
         coroutineScope.launch {
             statusText.text = "准备入队 (${uris.size} 个文件)..."
+
+            // 主线程只负责调 IO 拿元数据，不碰文件内容
+            val prepared = withContext(Dispatchers.IO) {
+                uris.map { uri -> uri to queryUriMeta(uri) }
+            }
+
             var queuedCount = 0
-            for (uri in uris) {
-                val tempFile = createTempMediaFile(uri) ?: continue
+            var failedCount = 0
+            for ((uri, meta) in prepared) {
                 try {
-                    com.dkc.fileserverclient.transfer.TransferManager.enqueueUpload(
+                    com.dkc.fileserverclient.transfer.TransferManager.enqueueUploadUri(
                         serverUrl = currentServerUrl,
-                        localFile = tempFile,
+                        uri = uri,
+                        fileName = meta.first,
+                        fileSize = meta.second,
                         remoteDir = imageGalleryPath
                     )
                     queuedCount++
                 } catch (e: Exception) {
-                    Log.e(TAG, "入队失败", e)
+                    Log.e(TAG, "入队失败: $uri", e)
+                    failedCount++
                 }
             }
-            Toast.makeText(
-                this@ImageGalleryActivity,
-                "已加入上传队列 $queuedCount / ${uris.size} 个",
-                Toast.LENGTH_LONG
-            ).show()
+
+            val msg = buildString {
+                append("已加入队列 $queuedCount / ${uris.size} 个")
+                if (failedCount > 0) append("，$failedCount 个失败")
+            }
+            Toast.makeText(this@ImageGalleryActivity, msg, Toast.LENGTH_LONG).show()
             startQueuePolling()
             statusText.text = if (adapter.itemCount == 0) "无媒体文件" else "共 ${adapter.itemCount} 项"
+        }
+    }
+
+    /**
+     * 查询 URI 的 displayName 和 size。
+     * 即使 query 失败也返回 fallback，保证文件不丢。
+     */
+    private fun queryUriMeta(uri: Uri): Pair<String, Long> {
+        return try {
+            var name: String? = null
+            var size: Long = -1L
+            contentResolver.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val nameIdx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIdx >= 0 && !c.isNull(nameIdx)) name = c.getString(nameIdx)
+                    val sizeIdx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                    if (sizeIdx >= 0 && !c.isNull(sizeIdx)) size = c.getLong(sizeIdx)
+                }
+            }
+            val finalName = name?.takeIf { it.isNotBlank() }
+                ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                ?: "upload_${System.currentTimeMillis()}"
+            Pair(finalName, size)
+        } catch (e: Exception) {
+            Log.w(TAG, "queryUriMeta failed: $uri", e)
+            val fallback = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                ?: "upload_${System.currentTimeMillis()}"
+            Pair(fallback, -1L)
         }
     }
 
@@ -875,33 +913,6 @@ class ImageGalleryActivity : AppCompatActivity() {
         }
     }
 
-    private fun createTempMediaFile(uri: Uri): File? {
-        return try {
-            val mime = contentResolver.getType(uri) ?: ""
-            val displayName = contentResolver.query(uri, null, null, null, null)?.use { c ->
-                val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (i >= 0 && c.moveToFirst()) c.getString(i) else null
-            }
-            val extFromName = displayName?.substringAfterLast('.', "")?.takeIf { it.isNotEmpty() }
-            val ext = extFromName ?: when {
-                mime.startsWith("video/") ->
-                    mime.substringAfter("video/").takeIf { it.isNotEmpty() } ?: "mp4"
-                mime.startsWith("image/") ->
-                    mime.substringAfter("image/").takeIf { it.isNotEmpty() } ?: "jpg"
-                else -> "bin"
-            }
-            val safeName = displayName ?: "upload_${System.currentTimeMillis()}.$ext"
-            val tempDir = File(cacheDir, "upload_temp").apply { mkdirs() }
-            val tempFile = File(tempDir, safeName)
-            contentResolver.openInputStream(uri)?.use { input ->
-                tempFile.outputStream().use { input.copyTo(it) }
-            } ?: return null
-            tempFile
-        } catch (e: Exception) {
-            Log.e(TAG, "创建临时文件失败", e)
-            null
-        }
-    }
 
     // ==================== 生命周期 ====================
     override fun onDestroy() {

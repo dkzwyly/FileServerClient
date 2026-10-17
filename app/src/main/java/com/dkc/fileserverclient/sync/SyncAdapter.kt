@@ -10,7 +10,7 @@ import coil.load
 import com.dkc.fileserverclient.R
 
 class SyncAdapter(
-    private val items: MutableList<LocalImage>
+    private val items: MutableList<LocalMedia>
 ) : RecyclerView.Adapter<SyncAdapter.VH>() {
 
     class VH(view: View) : RecyclerView.ViewHolder(view) {
@@ -28,6 +28,7 @@ class SyncAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
+
         holder.name.text = item.displayName
         holder.thumb.load(item.uri)
         holder.hash.text = item.hash?.take(16)?.let { "$it…" } ?: "—"
@@ -52,7 +53,7 @@ class SyncAdapter(
 
     override fun getItemCount(): Int = items.size
 
-    fun update(newList: List<LocalImage>) {
+    fun update(newList: List<LocalMedia>) {
         items.clear()
         items.addAll(newList)
         notifyDataSetChanged()

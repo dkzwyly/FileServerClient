@@ -13,10 +13,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- ========== 存储：Android 13+ 用媒体权限 ========== -->
+    <!-- ========== 存储：Android 13+ 媒体权限 ========== -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
-    <!-- ========== 存储：Android 12 及以下用外部存储 ========== -->
+    <!-- ========== 存储：Android 12 及以下 ========== -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -102,7 +104,7 @@
             android:theme="@style/Theme.AppCompat.NoActionBar" />
         <activity android:name=".SingleImageActivity" />
 
-        <!-- 本地同步 -->
+        <!-- ★ 本地同步（Material 主题，因为布局用了 MaterialButton） -->
         <activity
             android:name=".sync.ImageSyncActivity"
             android:exported="false"

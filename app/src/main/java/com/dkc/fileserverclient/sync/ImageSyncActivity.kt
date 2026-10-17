@@ -29,6 +29,7 @@ class ImageSyncActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "ImageSyncActivity"
+        // ★ 图片和视频统一进 data/图片
         private const val TARGET_DIR = "data/图片"
         private const val HASH_CONCURRENCY = 4
     }
@@ -48,18 +49,19 @@ class ImageSyncActivity : AppCompatActivity() {
     private lateinit var hashCache: LocalHashCache
     private lateinit var adapter: SyncAdapter
 
-    private var localImages: List<LocalImage> = emptyList()
+    private var localMedia: List<LocalMedia> = emptyList()
     private var onlyCamera = true
     private var isBusy = false
 
-    private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) startScan()
-            else {
-                Toast.makeText(this, "需要读取图片权限", Toast.LENGTH_SHORT).show()
-                finish()
-            }
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { perms ->
+        if (perms.values.all { it }) startScan()
+        else {
+            Toast.makeText(this, "需要读取图片和视频权限", Toast.LENGTH_SHORT).show()
+            finish()
         }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,7 +71,6 @@ class ImageSyncActivity : AppCompatActivity() {
         if (serverUrl.isEmpty()) { finish(); return }
 
         hashCache = LocalHashCache(this).apply { load() }
-
         initViews()
         checkPermissionAndScan()
     }
@@ -98,67 +99,75 @@ class ImageSyncActivity : AppCompatActivity() {
         startButton.setOnClickListener { startSync() }
     }
 
+    // ============================================================
+    // 权限
+    // ============================================================
     private fun checkPermissionAndScan() {
-        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-            Manifest.permission.READ_MEDIA_IMAGES
-        else Manifest.permission.READ_EXTERNAL_STORAGE
+        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO
+            )
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
 
-        if (ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED)
-            startScan()
-        else permissionLauncher.launch(perm)
+        val allGranted = perms.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (allGranted) startScan()
+        else permissionLauncher.launch(perms)
     }
 
     // ============================================================
-    // 扫描 + 计算哈希
+    // ★ 扫描 + 计算哈希（用 LocalMediaScanner）
     // ============================================================
     private fun startScan() {
         if (isBusy) return
         isBusy = true
         startButton.isEnabled = false
+
         scope.launch {
             try {
-                updateStats("正在扫描本地图片...")
-                localImages = LocalImageScanner.scan(this@ImageSyncActivity, onlyCamera)
+                updateStats("正在扫描本地图片和视频...")
+                localMedia = LocalMediaScanner.scan(this@ImageSyncActivity, onlyCamera)
 
-                if (localImages.isEmpty()) {
-                    updateStats("没有找到本地图片")
+                if (localMedia.isEmpty()) {
+                    updateStats("没有找到本地媒体")
                     adapter.update(emptyList())
                     return@launch
                 }
 
-                // 计算哈希（带缓存）
-                updateStats("计算哈希 0/${localImages.size}")
+                val imageCount = localMedia.count { !it.isVideo }
+                val videoCount = localMedia.count { it.isVideo }
+                updateStats("扫描到 $imageCount 张图片，$videoCount 个视频，计算哈希中...")
+
+                val total = localMedia.size
                 val sem = Semaphore(HASH_CONCURRENCY)
                 var done = 0
-                val total = localImages.size
 
-                val jobs = localImages.map { img ->
+                localMedia.map { media ->
                     scope.async(Dispatchers.IO) {
                         sem.withPermit {
-                            // 缓存命中
-                            val cached = hashCache.get(img.mediaId, img.size, img.dateModified)
-                            val hash = cached ?: HashUtils.sha256(this@ImageSyncActivity, img.uri)?.also {
-                                hashCache.put(img.mediaId, it, img.size, img.dateModified)
+                            val cacheKey = mediaCacheKey(media)
+                            val cached = hashCache.get(cacheKey, media.size, media.dateModified)
+                            val hash = cached ?: HashUtils.sha256(this@ImageSyncActivity, media.uri)?.also {
+                                hashCache.put(cacheKey, it, media.size, media.dateModified)
                             }
-                            img.hash = hash
+                            media.hash = hash
                             withContext(Dispatchers.Main) {
                                 done++
                                 updateProgress(done, total)
                             }
                         }
                     }
-                }
-                jobs.awaitAll()
+                }.awaitAll()
                 hashCache.save()
 
-                val withHash = localImages.filter { it.hash != null }
-                updateStats("共 ${total} 张，已算哈希 ${withHash.size} 张")
-
-                adapter.update(localImages)
-
-                // 自动比对服务端
+                val withHash = localMedia.filter { it.hash != null }
+                updateStats("共 $total 个，已算哈希 ${withHash.size} 个")
+                adapter.update(localMedia)
                 compareWithServer(withHash)
-
             } catch (e: Exception) {
                 Log.e(TAG, "scan error", e)
                 updateStats("扫描失败: ${e.message}")
@@ -170,35 +179,44 @@ class ImageSyncActivity : AppCompatActivity() {
     }
 
     /**
-     * 批量查询服务端已有哈希。
+     * 图片和视频的 mediaId 是两套独立编号，可能重复。
+     * 用负数编码视频，避免缓存 key 冲突：
+     *   image: mediaId
+     *   video: -mediaId - 1
      */
-    private suspend fun compareWithServer(withHash: List<LocalImage>) {
+    private fun mediaCacheKey(media: LocalMedia): Long =
+        if (media.isVideo) -media.mediaId - 1 else media.mediaId
+
+    // ============================================================
+    // 比对服务端
+    // ============================================================
+    private suspend fun compareWithServer(withHash: List<LocalMedia>) {
         if (withHash.isEmpty()) return
         updateStats("查询服务端哈希...")
         val hashes = withHash.mapNotNull { it.hash }
         val existing = fileServerService.checkHashes(serverUrl, hashes)
 
         var already = 0
-        for (img in withHash) {
-            if (img.hash != null && existing.containsKey(img.hash)) {
-                img.alreadyOnServer = true
+        for (media in withHash) {
+            if (media.hash != null && existing.containsKey(media.hash)) {
+                media.alreadyOnServer = true
                 already++
             }
         }
 
-        adapter.update(localImages)
-        updateStats("本地 ${localImages.size} 张，服务端已有 $already 张，待同步 ${localImages.size - already} 张")
+        adapter.update(localMedia)
+        updateStats("本地 ${localMedia.size} 个，服务端已有 $already 个，待同步 ${localMedia.size - already} 个")
     }
 
     // ============================================================
-    // 开始同步（秒传 + 上传）
-    // ============================================================
+// 开始同步
+// ============================================================
     private fun startSync() {
-        val pending = localImages.filter {
+        val pending = localMedia.filter {
             it.hash != null && !it.alreadyOnServer && !it.quickUploaded && !it.uploadQueued
         }
         if (pending.isEmpty()) {
-            Toast.makeText(this, "没有需要同步的图片", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "没有需要同步的媒体", Toast.LENGTH_SHORT).show()
             return
         }
         if (isBusy) return
@@ -210,52 +228,42 @@ class ImageSyncActivity : AppCompatActivity() {
                 var uploadCount = 0
                 var done = 0
 
-                // 1. 先查一次服务端哈希（可能上次统计后服务端有新上传）
-                val hashMap = fileServerService.checkHashes(
-                    serverUrl,
-                    pending.mapNotNull { it.hash }
-                )
+                val hashMap = fileServerService.checkHashes(serverUrl, pending.mapNotNull { it.hash })
 
-                for (img in pending) {
-                    val hash = img.hash ?: continue
-
+                for (media in pending) {
+                    val hash = media.hash ?: continue
                     if (hashMap.containsKey(hash)) {
-                        // 秒传
                         val ok = fileServerService.quickUpload(
                             serverUrl = serverUrl,
                             hash = hash,
                             targetDir = TARGET_DIR,
-                            fileName = img.displayName
+                            fileName = media.displayName
                         )
                         if (ok) {
-                            img.quickUploaded = true
+                            media.quickUploaded = true
                             quickCount++
                         } else {
-                            img.errorMessage = "秒传失败"
+                            media.errorMessage = "秒传失败"
                         }
                     } else {
-                        // 真实上传
-                        val tempFile = copyUriToFile(img.uri, img.displayName)
-                        if (tempFile != null) {
-                            TransferManager.enqueueUpload(
-                                serverUrl = serverUrl,
-                                localFile = tempFile,
-                                remoteDir = TARGET_DIR
-                            )
-                            img.uploadQueued = true
-                            uploadCount++
-                        } else {
-                            img.errorMessage = "复制到缓存失败"
-                        }
+                        // ★ 改为 Uri 流式上传：立即入队，不落盘，失败交给 TransferManager 重试
+                        val safeName = media.displayName.ifBlank { "unknown_${media.mediaId}" }
+                        TransferManager.enqueueUploadUri(
+                            serverUrl = serverUrl,
+                            uri = media.uri,
+                            fileName = safeName,
+                            fileSize = if (media.size > 0) media.size else -1L,
+                            remoteDir = TARGET_DIR
+                        )
+                        media.uploadQueued = true
+                        uploadCount++
                     }
-
                     done++
                     updateProgress(done, pending.size)
                 }
 
-                adapter.update(localImages)
-                updateStats("同步完成：秒传 $quickCount 个，上传队列 $uploadCount 个")
-
+                adapter.update(localMedia)
+                updateStats("同步完成：秒传 $quickCount 个，已加入上传队列 $uploadCount 个")
             } catch (e: Exception) {
                 Log.e(TAG, "sync error", e)
                 updateStats("同步失败: ${e.message}")
@@ -264,35 +272,11 @@ class ImageSyncActivity : AppCompatActivity() {
             }
         }
     }
-
-    // ============================================================
-    // 工具
-    // ============================================================
-    private suspend fun copyUriToFile(
-        uri: android.net.Uri,
-        displayName: String
-    ): File? = withContext(Dispatchers.IO) {
-        try {
-            val tempDir = File(cacheDir, "sync_temp").apply { mkdirs() }
-            val f = File(tempDir, displayName)
-            contentResolver.openInputStream(uri)?.use { input ->
-                f.outputStream().use { input.copyTo(it) }
-            }
-            if (f.exists()) f else null
-        } catch (e: Exception) {
-            Log.e(TAG, "复制失败", e)
-            null
-        }
-    }
-
-    private fun updateStats(text: String) {
-        statsText.text = text
-    }
+    private fun updateStats(text: String) { statsText.text = text }
 
     private fun updateProgress(done: Int, total: Int) {
         if (total <= 0) { progressBar.progress = 0; progressText.text = ""; return }
-        val percent = (done * 100 / total).coerceIn(0, 100)
-        progressBar.progress = percent
+        progressBar.progress = (done * 100 / total).coerceIn(0, 100)
         progressText.text = "$done / $total"
     }
 

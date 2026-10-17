@@ -6,8 +6,8 @@ import java.io.File
 enum class TransferType {
     UPLOAD,
     DOWNLOAD,
-    SERVER_MOVE,   // 新增
-    SERVER_COPY    // 新增
+    SERVER_MOVE,   // 服务端移动
+    SERVER_COPY    // 服务端复制
 }
 
 enum class TaskState {
@@ -28,7 +28,10 @@ data class TransferTask(
     @SerializedName("errorMessage") val errorMessage: String? = null,
     @SerializedName("retryCount") val retryCount: Int = 0,
     @SerializedName("createdAt") val createdAt: Long = System.currentTimeMillis(),
-    @SerializedName("updatedAt") val updatedAt: Long = System.currentTimeMillis()
+    @SerializedName("updatedAt") val updatedAt: Long = System.currentTimeMillis(),
+    // ---- URI 上传支持（新）----
+    @SerializedName("localUri") val localUri: String? = null,
+    @SerializedName("contentLength") val contentLength: Long = -1L
 ) {
     val progress: Int
         get() = if (totalBytes <= 0) 0
@@ -39,6 +42,10 @@ data class TransferTask(
 
     val isActive: Boolean
         get() = state in setOf(TaskState.QUEUED, TaskState.RUNNING, TaskState.RETRYING, TaskState.PAUSED)
+
+    /** 是否走 URI 流式上传（不落盘） */
+    val hasLocalUri: Boolean
+        get() = !localUri.isNullOrEmpty()
 
     fun localFile(): File = File(localPath)
 }

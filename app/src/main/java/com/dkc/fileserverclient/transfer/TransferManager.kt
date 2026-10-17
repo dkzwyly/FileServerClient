@@ -1,6 +1,7 @@
 package com.dkc.fileserverclient.transfer
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import com.dkc.fileserverclient.FileServerService
 import kotlinx.coroutines.*
@@ -19,6 +20,9 @@ object TransferManager {
     private const val MAX_RETRY = 5
     private const val BASE_BACKOFF = 2000L
     private const val MAX_BACKOFF = 60_000L
+    private const val CHUNK_THRESHOLD = 15L * 1024 * 1024
+    /** 分片阈值：≥ 该大小的 URI 上传走分片并行 */
+
 
     private lateinit var appContext: Context
     private val service by lazy { FileServerService(appContext) }
@@ -31,8 +35,14 @@ object TransferManager {
     private val runningJobs = mutableMapOf<String, Job>()
     private val userPaused = mutableSetOf<String>()
 
+    /** updateTask 的读-改-写锁（MutableStateFlow 本身原子，但 map 重建需要锁） */
+    private val taskUpdateLock = Any()
+
     @Volatile private var isNetworkAvailable = true
 
+    // ============================================================
+    // 初始化
+    // ============================================================
     fun init(context: Context) {
         appContext = context.applicationContext
         scope.launch {
@@ -62,6 +72,11 @@ object TransferManager {
         }
     }
 
+    // ============================================================
+    // 入队
+    // ============================================================
+
+    /** 本地 File 上传 */
     fun enqueueUpload(serverUrl: String, localFile: File, remoteDir: String): String {
         val task = TransferTask(
             id = UUID.randomUUID().toString(),
@@ -78,15 +93,44 @@ object TransferManager {
         scheduleTask(task.id)
         return task.id
     }
+
     /**
-     * 注册一个服务端任务（move / copy）。
-     * 不走本地 Semaphore 调度，由内部轮询 task/{taskId} 驱动状态。
+     * Uri 流式上传。
+     * 文件 ≥ 8MB 时自动走分片并行（详见 doUpload）。
+     *
+     * @param fileSize 从 MediaStore/ContentResolver 查到的大小；未知传 -1
      */
+    fun enqueueUploadUri(
+        serverUrl: String,
+        uri: Uri,
+        fileName: String,
+        fileSize: Long,
+        remoteDir: String
+    ): String {
+        val task = TransferTask(
+            id = UUID.randomUUID().toString(),
+            type = TransferType.UPLOAD,
+            serverUrl = serverUrl,
+            localPath = "",
+            localUri = uri.toString(),
+            contentLength = fileSize,
+            remotePath = "$remoteDir/$fileName".trimStart('/'),
+            fileName = fileName,
+            totalBytes = fileSize.coerceAtLeast(0),
+            state = TaskState.QUEUED
+        )
+        _tasks.value = _tasks.value + task
+        persist()
+        scheduleTask(task.id)
+        return task.id
+    }
+
+    /** 注册服务端任务（move / copy），由轮询驱动状态 */
     fun registerServerTask(
         serverUrl: String,
         serverTaskId: String,
         fileName: String,
-        operationType: TransferType,   // SERVER_MOVE 或 SERVER_COPY
+        operationType: TransferType,
         remotePath: String = ""
     ): String {
         val task = TransferTask(
@@ -105,6 +149,10 @@ object TransferManager {
         startServerTaskPolling(task.id, serverTaskId)
         return task.id
     }
+
+    // ============================================================
+    // 服务端任务轮询（move / copy）
+    // ============================================================
     private fun startServerTaskPolling(localTaskId: String, serverTaskId: String) {
         if (runningJobs.containsKey(localTaskId)) return
 
@@ -178,6 +226,10 @@ object TransferManager {
         runningJobs[localTaskId] = job
         job.invokeOnCompletion { runningJobs.remove(localTaskId) }
     }
+
+    // ============================================================
+    // 调度
+    // ============================================================
     private fun scheduleTask(taskId: String) {
         if (runningJobs.containsKey(taskId)) return
         val task = _tasks.value.firstOrNull { it.id == taskId } ?: return
@@ -198,14 +250,17 @@ object TransferManager {
             return
         }
 
-        updateTask(taskId) { it.copy(state = TaskState.RUNNING, errorMessage = null) }
+        // 进入 RUNNING 时重置 transferredBytes，避免 retry 后进度条"卡在 90%"
+        updateTask(taskId) {
+            it.copy(state = TaskState.RUNNING, errorMessage = null, transferredBytes = 0L)
+        }
 
         try {
             when (task.type) {
                 TransferType.UPLOAD -> doUpload(taskId)
                 TransferType.DOWNLOAD -> { /* 未实现 */ }
                 TransferType.SERVER_MOVE,
-                TransferType.SERVER_COPY -> { /* 由轮询驱动，不在这里执行 */ }
+                TransferType.SERVER_COPY -> { /* 由轮询驱动 */ }
             }
         } catch (e: CancellationException) {
             throw e
@@ -214,25 +269,71 @@ object TransferManager {
         }
     }
 
+    // ============================================================
+    // 上传（分流：分片并行 / URI 单流 / File 单流）
+    // ============================================================
     private suspend fun doUpload(taskId: String) {
         val task = _tasks.value.firstOrNull { it.id == taskId } ?: return
-        val localFile = File(task.localPath)
-        if (!localFile.exists()) {
-            handleFailure(taskId, "本地文件不存在")
-            return
-        }
 
-        val result = service.uploadFileWithProgress(
-            serverUrl = task.serverUrl,
-            file = localFile,
-            targetPath = task.remotePath.substringBeforeLast('/', ""),
-            onProgress = { written, total ->
-                val newProgress = if (total > 0) ((written * 100) / total).toInt() else 0
-                if (newProgress != task.progress) {
-                    updateTask(taskId) { it.copy(transferredBytes = written, totalBytes = total) }
-                }
+        val useChunked = task.hasLocalUri && task.totalBytes >= CHUNK_THRESHOLD
+
+        val result = when {
+            // ---------- 分片并行上传 ----------
+            useChunked -> {
+                val uri = Uri.parse(task.localUri)
+                val chunkSize = pickChunkSize(task.totalBytes)
+                val parallelism = pickParallelism(task.totalBytes)
+
+                Log.d(
+                    TAG,
+                    "分片上传: ${task.fileName}, size=${task.totalBytes}, " +
+                            "chunk=$chunkSize, parallel=$parallelism"
+                )
+
+                service.uploadChunkedWithProgress(
+                    serverUrl = task.serverUrl,
+                    context = appContext,
+                    uri = uri,
+                    fileName = task.fileName,
+                    totalSize = task.totalBytes,
+                    targetDir = task.remotePath.substringBeforeLast('/', ""),
+                    // fileId 用 task.id 去掉横杠，重启后 task.id 不变可命中已传分片
+                    fileId = task.id.replace("-", ""),
+                    chunkSize = chunkSize,
+                    parallelChunks = parallelism,
+                    onProgress = { uploaded, total -> throttledProgress(taskId, uploaded, total) }
+                )
             }
-        )
+
+            // ---------- URI 单流上传 ----------
+            task.hasLocalUri -> {
+                val uri = Uri.parse(task.localUri)
+                service.uploadUriWithProgress(
+                    serverUrl = task.serverUrl,
+                    context = appContext,
+                    uri = uri,
+                    fileSize = task.contentLength,
+                    fileName = task.fileName,
+                    targetPath = task.remotePath.substringBeforeLast('/', ""),
+                    onProgress = { written, total -> throttledProgress(taskId, written, total) }
+                )
+            }
+
+            // ---------- 本地 File 单流上传 ----------
+            else -> {
+                val localFile = File(task.localPath)
+                if (!localFile.exists()) {
+                    handleFailure(taskId, "本地文件不存在")
+                    return
+                }
+                service.uploadFileWithProgress(
+                    serverUrl = task.serverUrl,
+                    file = localFile,
+                    targetPath = task.remotePath.substringBeforeLast('/', ""),
+                    onProgress = { written, total -> throttledProgress(taskId, written, total) }
+                )
+            }
+        }
 
         if (result.success) {
             updateTask(taskId) {
@@ -243,6 +344,42 @@ object TransferManager {
         }
     }
 
+    /** 分片大小：小 4MB，中 8MB，大 16MB */
+    private fun pickChunkSize(totalSize: Long): Int = when {
+        totalSize < 50L * 1024 * 1024 -> 2 * 1024 * 1024    // 15~50MB：2MB/片，约 8~25 片
+        totalSize < 500L * 1024 * 1024 -> 8 * 1024 * 1024   // 50~500MB：8MB/片，约 6~63 片
+        else -> 16 * 1024 * 1024                            // >500MB：16MB/片，32+ 片
+    }
+
+    /** 分片并行度：大文件多开几路 */
+    private fun pickParallelism(totalSize: Long): Int = when {
+        totalSize < 50L * 1024 * 1024 -> 3
+        totalSize < 500L * 1024 * 1024 -> 4
+        else -> 6
+    }
+
+    /**
+     * 进度节流：
+     * - 单调递增保护（并发分片回调时丢弃旧值，防止进度回退）
+     * - 百分比变化或到达 100% 才更新，减少 map 重建 + persist
+     *
+     * 注：executeTask 进 RUNNING 时已把 transferredBytes 置 0，
+     * 所以 retry 从头开始不会触发单调保护拦截。
+     */
+    private fun throttledProgress(taskId: String, uploaded: Long, total: Long) {
+        val cur = _tasks.value.firstOrNull { it.id == taskId } ?: return
+        if (uploaded < cur.transferredBytes) return
+        val newPercent = if (total > 0) ((uploaded * 100) / total).toInt() else 0
+        if (newPercent != cur.progress || (total > 0 && uploaded == total)) {
+            updateTask(taskId) {
+                it.copy(transferredBytes = uploaded, totalBytes = total)
+            }
+        }
+    }
+
+    // ============================================================
+    // 失败 / 重试
+    // ============================================================
     private fun handleFailure(taskId: String, message: String) {
         val task = _tasks.value.firstOrNull { it.id == taskId } ?: return
 
@@ -274,10 +411,20 @@ object TransferManager {
         }
     }
 
+    // ============================================================
+    // 用户操作
+    // ============================================================
     fun pauseTask(taskId: String) {
         val task = _tasks.value.firstOrNull { it.id == taskId } ?: return
         if (task.type == TransferType.SERVER_MOVE || task.type == TransferType.SERVER_COPY) return
+
         userPaused.add(taskId)
+
+        // 分片任务：先主动断 in-flight call，让服务端尽早感知 socket 关闭
+        if (task.hasLocalUri && task.totalBytes >= CHUNK_THRESHOLD) {
+            service.cancelActiveChunkUploads(task.id.replace("-", ""))
+        }
+
         runningJobs[taskId]?.cancel()
         runningJobs.remove(taskId)
         updateTask(taskId) { it.copy(state = TaskState.PAUSED, errorMessage = "已暂停") }
@@ -294,6 +441,7 @@ object TransferManager {
     fun cancelTask(taskId: String) {
         val task = _tasks.value.firstOrNull { it.id == taskId } ?: return
 
+        // 服务端任务：调服务端取消 + 停轮询
         if (task.type == TransferType.SERVER_MOVE || task.type == TransferType.SERVER_COPY) {
             val serverTaskId = task.serverTaskId
             if (serverTaskId != null) {
@@ -308,14 +456,34 @@ object TransferManager {
             return
         }
 
-        userPaused.remove(taskId)
+        val fileId = task.id.replace("-", "")
+        val isChunked = task.hasLocalUri && task.totalBytes >= CHUNK_THRESHOLD
+
+        // ★ 第一步：立即断掉客户端 in-flight chunk 请求（socket 关闭）
+        if (isChunked) {
+            service.cancelActiveChunkUploads(fileId)
+        }
+
+        // ★ 第二步：取消协程（awaitResponse 的 invokeOnCancellation 兜底 cancel）
         runningJobs[taskId]?.cancel()
         runningJobs.remove(taskId)
+        userPaused.remove(taskId)
+
+        // ★ 第三步：等服务端感知 RequestAborted（约 100~300ms），再 DELETE 清理分片
+        if (isChunked) {
+            scope.launch {
+                delay(500)
+                try { service.cancelChunkedUpload(task.serverUrl, fileId) } catch (_: Exception) {}
+            }
+        }
+
         updateTask(taskId) { it.copy(state = TaskState.CANCELLED) }
     }
 
     fun retryTask(taskId: String) {
-        updateTask(taskId) { it.copy(state = TaskState.QUEUED, retryCount = 0, errorMessage = null) }
+        updateTask(taskId) {
+            it.copy(state = TaskState.QUEUED, retryCount = 0, errorMessage = null, transferredBytes = 0L)
+        }
         scheduleTask(taskId)
     }
 
@@ -330,10 +498,16 @@ object TransferManager {
         persist()
     }
 
+    // ============================================================
+    // 网络变化
+    // ============================================================
     private fun pauseRunningTasksForNetwork() {
         _tasks.value
             .filter { it.state == TaskState.RUNNING || it.state == TaskState.RETRYING }
             .forEach { task ->
+                if (task.hasLocalUri && task.totalBytes >= CHUNK_THRESHOLD) {
+                    service.cancelActiveChunkUploads(task.id.replace("-", ""))
+                }
                 runningJobs[task.id]?.cancel()
                 runningJobs.remove(task.id)
                 updateTask(task.id) {
@@ -351,30 +525,39 @@ object TransferManager {
             }
     }
 
-    private inline fun updateTask(taskId: String, transform: (TransferTask) -> TransferTask) {
-        val oldTask = _tasks.value.firstOrNull { it.id == taskId }
-        val newTask = oldTask?.let { transform(it).copy(updatedAt = System.currentTimeMillis()) }
-
-        _tasks.value = _tasks.value.map { task ->
-            if (task.id == taskId) newTask ?: task else task
+    // ============================================================
+    // 状态更新 / 持久化
+    // ============================================================
+    /**
+     * 读-改-写全程持锁：
+     * - 并发 updateTask（多个分片进度回调）不会丢更新
+     * - 状态变化（如 RUNNING → PAUSED）不会被旧快照覆盖
+     *
+     * 待清理任务用 synchronized 块的返回值带出，避免 inline lambda 捕获外部 var。
+     */
+    private fun updateTask(taskId: String, transform: (TransferTask) -> TransferTask) {
+        val cleanupTask: TransferTask? = synchronized(taskUpdateLock) {
+            val oldTask = _tasks.value.firstOrNull { it.id == taskId }
+            if (oldTask == null) {
+                null
+            } else {
+                val newTask = transform(oldTask).copy(updatedAt = System.currentTimeMillis())
+                _tasks.value = _tasks.value.map { if (it.id == taskId) newTask else it }
+                if (!oldTask.isFinished && newTask.isFinished) newTask else null
+            }
         }
 
-        // 状态从"活动"变为"终止"时，清理入队时产生的临时文件
-        if (oldTask != null && newTask != null &&
-            !oldTask.isFinished && newTask.isFinished) {
-            cleanupTempFileIfNeeded(newTask)
-        }
-
+        cleanupTask?.let { cleanupTempFileIfNeeded(it) }
         persist()
     }
 
     /**
      * 只清理 cacheDir 下以 upload_ 开头的临时文件。
-     * 调用方（FileListActivity / ImageGalleryActivity）在入队前用
-     * File.createTempFile("upload_", ...) 生成，任务终止后由这里统一删除。
-     * 其他文件（例如用户从相册选择但保存到 filesDir 的正式文件）不动。
+     * URI 任务（含分片）无临时文件，直接跳过。
      */
     private fun cleanupTempFileIfNeeded(task: TransferTask) {
+        if (task.hasLocalUri) return
+
         try {
             val file = File(task.localPath)
             if (!file.exists()) return
