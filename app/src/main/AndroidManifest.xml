@@ -1,22 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.dkc.fileserverclient">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- ========== 网络 ========== -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+    <!-- ========== 相机 / 麦克风 / 前台服务 ========== -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- ========== 存储：Android 13+ 用媒体权限 ========== -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- ========== 存储：Android 12 及以下用外部存储 ========== -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!-- ========== 硬件特性 ========== -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <!-- ========== TTS 服务查询 ========== -->
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
@@ -31,6 +43,7 @@
         android:theme="@style/Theme.FileServerClient"
         android:networkSecurityConfig="@xml/network_security_config">
 
+        <!-- ========== 主入口 ========== -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -40,6 +53,7 @@
             </intent-filter>
         </activity>
 
+        <!-- ========== 文件浏览 ========== -->
         <activity
             android:name=".FileListActivity"
             android:exported="false"
@@ -49,9 +63,19 @@
             android:label="选择目标文件夹"
             android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar.OptOut" />
         <activity
-            android:name=".TextPreviewActivity"
-            android:label="文本预览"
+            android:name=".SettingsActivity"
+            android:label="设置"
             android:theme="@style/Theme.AppCompat.DayNight.DarkActionBar.OptOut" />
+        <activity
+            android:name=".TaskListActivity"
+            android:label="任务列表"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
+        <activity
+            android:name=".TrashActivity"
+            android:theme="@style/Theme.FileServerClient"
+            android:parentActivityName=".MainActivity" />
+
+        <!-- ========== 图片 / 相册集 ========== -->
         <activity
             android:name=".ImageGalleryActivity"
             android:label="图片库"
@@ -67,6 +91,29 @@
             android:label="选择图片"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar.OptOut" />
         <activity
+            android:name=".ImageActivity"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar.OptOut" />
+        <activity
+            android:name=".GalleryVideoPlayerActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:screenOrientation="sensor"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+        <activity android:name=".SingleImageActivity" />
+
+        <!-- 本地同步 -->
+        <activity
+            android:name=".sync.ImageSyncActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" />
+
+        <!-- ========== 文本 ========== -->
+        <activity
+            android:name=".TextPreviewActivity"
+            android:label="文本预览"
+            android:theme="@style/Theme.AppCompat.DayNight.DarkActionBar.OptOut" />
+        <activity
             android:name=".TextLibraryActivity"
             android:label="文本库"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar.OptOut"
@@ -76,27 +123,13 @@
             android:label="文本详情"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar.OptOut"
             android:screenOrientation="portrait" />
+
+        <!-- ========== 视频 ========== -->
         <activity
             android:name=".VideoLibraryActivity"
             android:label="视频库"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar.OptOut"
             android:screenOrientation="portrait" />
-        <activity
-            android:name=".AudioLibraryActivity"
-            android:label="音频库"
-            android:theme="@style/Theme.AppCompat.DayNight.DarkActionBar.OptOut" />
-        <activity
-            android:name=".SettingsActivity"
-            android:label="设置"
-            android:theme="@style/Theme.AppCompat.DayNight.DarkActionBar.OptOut" />
-        <activity
-            android:name=".ImageActivity"
-            android:screenOrientation="portrait"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar.OptOut" />
-        <activity
-            android:name=".PlaylistDetailActivity"
-            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar.OptOut" />
         <activity
             android:name=".VideoFolderDetailActivity"
             android:parentActivityName=".VideoLibraryActivity"
@@ -106,15 +139,22 @@
             android:name=".VideoPlayerActivityV2"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar.OptOut" />
+
+        <!-- ========== 音频 ========== -->
         <activity
-            android:name=".TaskListActivity"
-            android:label="任务列表"
-            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
+            android:name=".AudioLibraryActivity"
+            android:label="音频库"
+            android:theme="@style/Theme.AppCompat.DayNight.DarkActionBar.OptOut" />
         <activity
-            android:name=".GalleryVideoPlayerActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:screenOrientation="sensor"
-            android:theme="@style/Theme.AppCompat.NoActionBar" />
+            android:name=".AudioPlayerActivity"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize"
+            android:exported="false" />
+        <activity
+            android:name=".PlaylistDetailActivity"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar.OptOut" />
+
+        <!-- ========== 分享接收 ========== -->
         <activity
             android:name=".ShareReceiverActivity"
             android:exported="true"
@@ -133,22 +173,8 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".AudioPlayerActivity"
-            android:launchMode="singleTop"
-            android:configChanges="orientation|screenSize"
-            android:exported="false" />
-        <activity android:name=".SingleImageActivity" />
-        <activity
-            android:name=".GalleryVideoPlayerActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:screenOrientation="sensor"
-            android:theme="@style/Theme.AppCompat.NoActionBar" />
-        <activity
-            android:name=".TrashActivity"
-            android:theme="@style/Theme.FileServerClient"
-            android:parentActivityName=".MainActivity" />
 
+        <!-- ========== FileProvider ========== -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -159,6 +185,7 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- ========== 服务 ========== -->
         <service
             android:name=".AudiobookService"
             android:foregroundServiceType="mediaPlayback"
@@ -172,6 +199,7 @@
             </intent-filter>
         </service>
 
+        <!-- ========== 媒体按钮接收器 ========== -->
         <receiver
             android:name="androidx.media3.session.MediaButtonReceiver"
             android:exported="true">

@@ -44,7 +44,7 @@
             android:orientation="horizontal"
             android:gravity="center">
 
-            <!-- ★ 断绝模式：只在相册集 Tab 显示 -->
+            <!-- ★ 相册集 Tab：断绝模式（灰/红心碎） -->
             <ImageButton
                 android:id="@+id/breakModeButton"
                 android:layout_width="40dp"
@@ -55,6 +55,7 @@
                 android:layout_marginEnd="8dp"
                 android:visibility="gone" />
 
+            <!-- ★ 相册集 Tab：回收站（彩色垃圾桶） -->
             <ImageButton
                 android:id="@+id/trashButton"
                 android:layout_width="40dp"
@@ -65,6 +66,7 @@
                 android:layout_marginEnd="8dp"
                 android:visibility="gone" />
 
+            <!-- 相册 Tab：排序 -->
             <ImageButton
                 android:id="@+id/sortButton"
                 android:layout_width="40dp"
@@ -76,16 +78,18 @@
                 android:layout_marginEnd="8dp"
                 android:visibility="visible" />
 
+            <!-- ★ 相册 Tab：本地同步（新增） -->
             <ImageButton
-                android:id="@+id/cameraButton"
+                android:id="@+id/syncLocalButton"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_camera"
+                android:src="@drawable/ic_sync"
                 app:tint="@color/primary_color"
-                android:contentDescription="相机"
+                android:contentDescription="同步本地图片"
                 android:layout_marginEnd="8dp" />
 
+            <!-- 相册 Tab：上传 -->
             <ImageButton
                 android:id="@+id/reindexButton"
                 android:layout_width="40dp"
@@ -96,6 +100,18 @@
                 android:contentDescription="上传图片"
                 android:layout_marginEnd="8dp" />
 
+            <!-- 相册 Tab：相机 -->
+            <ImageButton
+                android:id="@+id/cameraButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_camera"
+                app:tint="@color/primary_color"
+                android:contentDescription="相机"
+                android:layout_marginEnd="8dp" />
+
+            <!-- 多选模式：删除 -->
             <ImageButton
                 android:id="@+id/deleteSelectedButton"
                 android:layout_width="40dp"
@@ -202,7 +218,7 @@
         android:textColor="@color/text_secondary"
         android:gravity="center" />
 
-    <!-- 相册图片网格 -->
+    <!-- 相册图片网格（相册 Tab） -->
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
         android:id="@+id/gallerySwipeRefresh"
         android:layout_width="match_parent"
@@ -218,7 +234,7 @@
             android:visibility="visible" />
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
-    <!-- 相册集列表 -->
+    <!-- 相册集列表（相册集 Tab） -->
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
         android:id="@+id/albumSetSwipeRefresh"
         android:layout_width="match_parent"

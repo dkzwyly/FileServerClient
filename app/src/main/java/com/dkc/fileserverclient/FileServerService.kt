@@ -261,6 +261,72 @@ class FileServerService(private val context: Context) {
             }
         }
     }
+    // 哈希相关
+    suspend fun checkHashes(serverUrl: String, hashes: List<String>): Map<String, String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = "${serverUrl.removeSuffix("/")}/api/fileserver/hash/check"
+                val body = org.json.JSONArray(hashes).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val request = Request.Builder().url(url).post(body).build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext emptyMap()
+                    val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                    val result = mutableMapOf<String, String>()
+                    for (key in json.keys()) result[key] = json.getString(key)
+                    result
+                }
+            } catch (e: Exception) {
+                Log.e("FileServerService", "checkHashes error", e)
+                emptyMap()
+            }
+        }
+    }
+
+    suspend fun getAllHashes(serverUrl: String): List<Pair<String, String>> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = "${serverUrl.removeSuffix("/")}/api/fileserver/hash/list"
+                val request = Request.Builder().url(url).get().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext emptyList()
+                    val arr = org.json.JSONArray(response.body?.string() ?: "[]")
+                    val result = mutableListOf<Pair<String, String>>()
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        result.add(obj.getString("hash") to obj.getString("relativePath"))
+                    }
+                    result
+                }
+            } catch (e: Exception) {
+                Log.e("FileServerService", "getAllHashes error", e)
+                emptyList()
+            }
+        }
+    }
+
+    suspend fun quickUpload(serverUrl: String, hash: String, targetDir: String, fileName: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = "${serverUrl.removeSuffix("/")}/api/fileserver/hash/quick-upload"
+                val json = org.json.JSONObject().apply {
+                    put("hash", hash)
+                    put("targetDir", targetDir)
+                    put("fileName", fileName)
+                }
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = Request.Builder().url(url).post(body).build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext false
+                    val resp = org.json.JSONObject(response.body?.string() ?: "{}")
+                    resp.optBoolean("success", false)
+                }
+            } catch (e: Exception) {
+                Log.e("FileServerService", "quickUpload error", e)
+                false
+            }
+        }
+    }
     // ========== 创建目录 ==========
     suspend fun createDirectory(serverUrl: String, path: String): Boolean = withContext(Dispatchers.IO) {
         try {

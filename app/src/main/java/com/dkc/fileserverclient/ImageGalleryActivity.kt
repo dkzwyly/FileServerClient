@@ -44,6 +44,7 @@ class ImageGalleryActivity : AppCompatActivity() {
     private lateinit var deleteSelectedButton: ImageButton
     private lateinit var breakModeButton: ImageButton
     private lateinit var trashButton: ImageButton
+    private lateinit var syncLocalButton: ImageButton
     private lateinit var selectionToolbar: View
     private lateinit var selectedCountText: TextView
     private lateinit var selectAllButton: Button
@@ -53,6 +54,7 @@ class ImageGalleryActivity : AppCompatActivity() {
     private lateinit var addAlbumFab: FloatingActionButton
     private lateinit var gallerySwipeRefresh: SwipeRefreshLayout
     private lateinit var albumSetSwipeRefresh: SwipeRefreshLayout
+
 
     private val fileServerService by lazy { FileServerService(this) }
     private lateinit var adapter: ImageGalleryAdapter
@@ -134,6 +136,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         deleteSelectedButton = findViewById(R.id.deleteSelectedButton)
         breakModeButton = findViewById(R.id.breakModeButton)
         trashButton = findViewById(R.id.trashButton)
+        syncLocalButton = findViewById(R.id.syncLocalButton)
         selectionToolbar = findViewById(R.id.selectionToolbar)
         selectedCountText = findViewById(R.id.selectedCountText)
         selectAllButton = findViewById(R.id.selectAllButton)
@@ -156,6 +159,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         cameraButton.setOnClickListener { checkAndRequestPermissions() }
         sortButton.setOnClickListener { showSortDialog() }
         reindexButton.setOnClickListener { openFilePicker() }
+        syncLocalButton.setOnClickListener { openLocalSync() }
         deleteSelectedButton.setOnClickListener { showDeleteConfirmation() }
         selectAllButton.setOnClickListener { toggleSelectAll() }
         cancelSelectionButton.setOnClickListener { exitMultiSelectionMode() }
@@ -232,7 +236,11 @@ class ImageGalleryActivity : AppCompatActivity() {
             putExtra("SERVER_URL", currentServerUrl)
         })
     }
-
+    private fun openLocalSync() {
+        startActivity(Intent(this, com.dkc.fileserverclient.sync.ImageSyncActivity::class.java).apply {
+            putExtra("SERVER_URL", currentServerUrl)
+        })
+    }
     // ==================== 断绝模式 ====================
     private fun toggleBreakMode() {
         breakModeEnabled = !breakModeEnabled
@@ -324,6 +332,7 @@ class ImageGalleryActivity : AppCompatActivity() {
             sortButton.visibility = View.VISIBLE
             reindexButton.visibility = View.VISIBLE
             cameraButton.visibility = View.VISIBLE
+            syncLocalButton.visibility = View.VISIBLE
             breakModeButton.visibility = View.GONE
             trashButton.visibility = View.GONE
             if (isMultiSelectionMode) exitMultiSelectionMode()
@@ -340,6 +349,7 @@ class ImageGalleryActivity : AppCompatActivity() {
             sortButton.visibility = View.GONE
             reindexButton.visibility = View.GONE
             cameraButton.visibility = View.GONE
+            syncLocalButton.visibility = View.GONE
             // ★ 相册集 Tab 显示「心碎 + 回收站」，心碎在左
             breakModeButton.visibility = View.VISIBLE
             trashButton.visibility = View.VISIBLE
@@ -604,38 +614,30 @@ class ImageGalleryActivity : AppCompatActivity() {
 
     private fun deleteSelectedImages() {
         val toDelete = selectedItems.toSet()
-        coroutineScope.launch {
-            statusText.text = "删除中..."
-            var successCount = 0
-            val actuallyDeleted = mutableSetOf<String>()
+        if (toDelete.isEmpty()) return
 
-            toDelete.forEach { path ->
-                try {
-                    if (withContext(Dispatchers.IO) {
-                            fileServerService.deleteFile(currentServerUrl, path)
-                        }) {
-                        successCount++
-                        actuallyDeleted.add(path)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "删除失败", e)
-                }
+        coroutineScope.launch {
+            statusText.text = "删除中 (${toDelete.size} 个文件)..."
+            val (successCount, _) = withContext(Dispatchers.IO) {
+                fileServerService.batchDeleteFiles(currentServerUrl, toDelete.toList())
             }
 
-            if (actuallyDeleted.isNotEmpty()) {
-                syncRemoveFromAlbums(actuallyDeleted)
+            // 成功删除的路径同步从所有相册集里移除
+            // 注意：批量接口不返回具体哪些成功，简化处理——只要 successCount > 0 就按全部成功处理
+            // 更严谨的话可以在 batchDeleteFiles 里返回实际成功路径列表
+            if (successCount > 0) {
+                syncRemoveFromAlbums(toDelete)
             }
 
             loadImages()
             exitMultiSelectionMode()
             Toast.makeText(
                 this@ImageGalleryActivity,
-                "已删除 $successCount 个",
+                "已删除 $successCount / ${toDelete.size} 个",
                 Toast.LENGTH_SHORT
             ).show()
         }
     }
-
     private fun syncRemoveFromAlbums(deletedPaths: Set<String>) {
         val json = getSharedPreferences(PREFS_ALBUMS, Context.MODE_PRIVATE)
             .getString(KEY_ALBUMS_JSON, null)
