@@ -5,8 +5,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
-import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -45,6 +43,7 @@ class ImageGalleryActivity : AppCompatActivity() {
     private lateinit var reindexButton: ImageButton
     private lateinit var deleteSelectedButton: ImageButton
     private lateinit var breakModeButton: ImageButton
+    private lateinit var trashButton: ImageButton
     private lateinit var selectionToolbar: View
     private lateinit var selectedCountText: TextView
     private lateinit var selectAllButton: Button
@@ -134,6 +133,7 @@ class ImageGalleryActivity : AppCompatActivity() {
         reindexButton = findViewById(R.id.reindexButton)
         deleteSelectedButton = findViewById(R.id.deleteSelectedButton)
         breakModeButton = findViewById(R.id.breakModeButton)
+        trashButton = findViewById(R.id.trashButton)
         selectionToolbar = findViewById(R.id.selectionToolbar)
         selectedCountText = findViewById(R.id.selectedCountText)
         selectAllButton = findViewById(R.id.selectAllButton)
@@ -160,9 +160,11 @@ class ImageGalleryActivity : AppCompatActivity() {
         selectAllButton.setOnClickListener { toggleSelectAll() }
         cancelSelectionButton.setOnClickListener { exitMultiSelectionMode() }
 
-        // ★ 断绝模式开关
         breakModeButton.setOnClickListener { toggleBreakMode() }
         updateBreakModeButtonUI()
+
+        // ★ 回收站按钮
+        trashButton.setOnClickListener { openTrash() }
 
         gallerySwipeRefresh.setOnRefreshListener {
             ThumbnailLoader.invalidateSvgCache()
@@ -212,7 +214,6 @@ class ImageGalleryActivity : AppCompatActivity() {
                 startActivity(intent)
             },
             onAlbumLongClick = { album ->
-                // ★ 断绝模式下长按 = 删除相册及所有图片
                 if (breakModeEnabled) {
                     showBreakAlbumDialog(album)
                 } else {
@@ -223,6 +224,13 @@ class ImageGalleryActivity : AppCompatActivity() {
         albumSetRecyclerView.adapter = albumSetAdapter
 
         addAlbumFab.setOnClickListener { showCreateAlbumDialog() }
+    }
+
+    // ==================== 回收站入口 ====================
+    private fun openTrash() {
+        startActivity(Intent(this, TrashActivity::class.java).apply {
+            putExtra("SERVER_URL", currentServerUrl)
+        })
     }
 
     // ==================== 断绝模式 ====================
@@ -267,21 +275,22 @@ class ImageGalleryActivity : AppCompatActivity() {
     }
 
     private fun breakAlbum(album: Album) {
-        coroutineScope.launch {
-            statusText.text = "断绝中..."
-            var successCount = 0
-            val failCount: Int
+        val paths = album.imagePaths.toList()
 
-            album.imagePaths.toList().forEach { path ->
-                try {
-                    if (withContext(Dispatchers.IO) {
-                            fileServerService.deleteFile(currentServerUrl, path)
-                        }) successCount++
-                } catch (e: Exception) {
-                    Log.e(TAG, "断绝删除失败: $path", e)
-                }
+        if (paths.isEmpty()) {
+            albumList.remove(album)
+            saveAlbumsToPrefs()
+            albumSetAdapter.notifyDataSetChanged()
+            statusText.text = if (albumList.isEmpty()) "暂无相册" else "共 ${albumList.size} 个相册"
+            Toast.makeText(this, "已断绝「${album.name}」（无文件）", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        coroutineScope.launch {
+            statusText.text = "断绝中 (${paths.size} 个文件)..."
+            val (success, failed) = withContext(Dispatchers.IO) {
+                fileServerService.batchDeleteFiles(currentServerUrl, paths)
             }
-            failCount = album.imagePaths.size - successCount
 
             albumList.remove(album)
             saveAlbumsToPrefs()
@@ -292,8 +301,8 @@ class ImageGalleryActivity : AppCompatActivity() {
                 this@ImageGalleryActivity,
                 buildString {
                     append("已断绝「${album.name}」")
-                    append("，删除 $successCount 个文件")
-                    if (failCount > 0) append("，$failCount 个失败")
+                    append("，删除 $success 个文件")
+                    if (failed > 0) append("，$failed 个失败")
                 },
                 Toast.LENGTH_LONG
             ).show()
@@ -316,6 +325,7 @@ class ImageGalleryActivity : AppCompatActivity() {
             reindexButton.visibility = View.VISIBLE
             cameraButton.visibility = View.VISIBLE
             breakModeButton.visibility = View.GONE
+            trashButton.visibility = View.GONE
             if (isMultiSelectionMode) exitMultiSelectionMode()
             loadImages()
         } else {
@@ -330,7 +340,9 @@ class ImageGalleryActivity : AppCompatActivity() {
             sortButton.visibility = View.GONE
             reindexButton.visibility = View.GONE
             cameraButton.visibility = View.GONE
-            breakModeButton.visibility = View.VISIBLE   // ★ 相册集 Tab 显示
+            // ★ 相册集 Tab 显示「心碎 + 回收站」，心碎在左
+            breakModeButton.visibility = View.VISIBLE
+            trashButton.visibility = View.VISIBLE
             if (isMultiSelectionMode) exitMultiSelectionMode()
             loadAlbumsFromPrefs()
             albumSetAdapter.notifyDataSetChanged()

@@ -10,8 +10,7 @@ import androidx.recyclerview.widget.RecyclerView
 class TrashAdapter(
     private val items: MutableList<TrashRecord>,
     private val onRestore: (TrashRecord) -> Unit,
-    private val onPermanentDelete: (TrashRecord) -> Unit,
-    private val onItemClick: (TrashRecord) -> Unit   // 新增：点击条目预览
+    private val onPermanentDelete: (TrashRecord) -> Unit
 ) : RecyclerView.Adapter<TrashAdapter.TrashViewHolder>() {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): TrashViewHolder {
@@ -25,8 +24,9 @@ class TrashAdapter(
         holder.bind(item)
         holder.btnRestore.setOnClickListener { onRestore(item) }
         holder.btnPermanentDelete.setOnClickListener { onPermanentDelete(item) }
-        // 点击整个条目触发预览
-        holder.itemView.setOnClickListener { onItemClick(item) }
+        // 条目本身不响应点击（回收站文件不支持预览）
+        holder.itemView.isClickable = false
+        holder.itemView.setOnClickListener(null)
     }
 
     override fun getItemCount(): Int = items.size
@@ -69,7 +69,6 @@ class TrashAdapter(
 
         private fun formatTime(timeStr: String): String {
             return try {
-                // 简单截取前16个字符，可根据需要优化
                 if (timeStr.length >= 16) timeStr.substring(0, 16) else timeStr
             } catch (_: Exception) {
                 timeStr
