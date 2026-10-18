@@ -26,4 +26,8 @@
         <item name="android:background">@drawable/icon_button_background</item>
         <item name="android:textColor">@color/primary_color</item>
     </style>
+        <style name="ShapeAppearance.Rounded8" parent="">
+            <item name="cornerFamily">rounded</item>
+            <item name="cornerSize">8dp</item>
+        </style>
 </resources>

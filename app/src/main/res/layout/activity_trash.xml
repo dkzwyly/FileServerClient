@@ -13,41 +13,73 @@
         android:layout_height="?attr/actionBarSize"
         android:background="?attr/colorPrimary"
         android:theme="@style/ThemeOverlay.MaterialComponents.Light"
+        android:elevation="2dp"
         app:title="回收站"
         app:titleTextColor="@android:color/white"
         app:navigationIcon="?attr/homeAsUpIndicator"
         app:navigationContentDescription="返回" />
 
-    <TextView
-        android:id="@+id/emptyHint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:text="回收站为空"
-        android:textColor="@color/text_hint"
-        android:textSize="16sp"
-        android:layout_marginTop="40dp"
-        android:visibility="gone" />
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recyclerView"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_marginTop="12dp" />
+        android:layout_marginTop="12dp">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/recyclerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingTop="4dp"
+            android:paddingBottom="12dp"
+            android:scrollbars="vertical" />
+
+        <LinearLayout
+            android:id="@+id/emptyHint"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🗑️"
+                android:textSize="72sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="回收站是空的"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="删除的文件会临时保存在这里"
+                android:textColor="@color/text_hint"
+                android:textSize="13sp" />
+        </LinearLayout>
+    </FrameLayout>
 
     <Button
         android:id="@+id/btnEmptyTrash"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="52dp"
         android:layout_marginTop="12dp"
         android:background="@drawable/primary_button_gradient"
-        android:text="清空回收站"
+        android:elevation="4dp"
+        android:stateListAnimator="@null"
+        android:text="🗑   清空回收站"
         android:textAllCaps="false"
         android:textColor="@android:color/white"
-        android:textSize="14sp"
+        android:textSize="15sp"
         android:textStyle="bold"
-        app:cornerRadius="24dp"
-        android:padding="14dp" />
+        app:cornerRadius="26dp" />
 
 </LinearLayout>
