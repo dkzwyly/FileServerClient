@@ -21,7 +21,6 @@ import java.util.concurrent.ConcurrentHashMap
 object ThumbnailLoader {
     private const val TAG = "ThumbnailLoader"
 
-    // 20GB 上限（沿用原有设计；变量名历史遗留，实际单位是 GB 级别）
     private const val MAX_CACHE_SIZE_MB = 20L * 1024L
     private const val CACHE_DIR_NAME = "thumbnails"
 
@@ -45,6 +44,8 @@ object ThumbnailLoader {
 
         coilLoader = ImageLoader.Builder(context.applicationContext)
             .okHttpClient(httpClient)
+            // 本地文件解码：磁盘缓存由我们自己的 cacheDir 管理（DISABLED），
+            // 但内存缓存一定要 ENABLED，快速滑回时能直接命中、不重复解码
             .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
             .diskCachePolicy(coil.request.CachePolicy.DISABLED)
             .respectCacheHeaders(false)
@@ -73,7 +74,6 @@ object ThumbnailLoader {
         onResult: ((Boolean) -> Unit)? = null
     ) {
         if (!isInitialized) init(imageView.context)
-        Log.d(TAG, "loadImageThumbnail: path=${imageItem.path} isVideo=${imageItem.isVideo}")
 
         if (imageItem.isVideo) {
             loadVideoThumbnail(
@@ -99,28 +99,37 @@ object ThumbnailLoader {
         onResult: ((Boolean) -> Unit)? = null
     ) {
         if (!isInitialized) init(imageView.context)
-        Log.d(TAG, "loadImageThumbnailByPath: serverUrl=[$serverUrl] imagePath=[$imagePath]")
+
+        // ★ 关键：把本次请求的 path 打到 tag 上，所有异步回调先比对
+        val requestToken = imagePath
+        imageView.tag = requestToken
 
         val cacheKey = generateCacheKey(serverUrl, imagePath, "image")
         val cachedFile = getCachedFile(cacheKey)
 
         if (cachedFile != null) {
-            Log.d(TAG, "loadImageThumbnailByPath: 缓存命中 ${cachedFile.name} size=${cachedFile.length()}")
-            loaderScope.launch { decodeAndSet(imageView, cachedFile, imagePath, onResult) }
+            loaderScope.launch {
+                decodeAndSet(imageView, cachedFile, requestToken, onResult)
+            }
         } else {
-            Log.d(TAG, "loadImageThumbnailByPath: 缓存未命中，开始下载 path=[$imagePath]")
-            imageView.setImageResource(placeholderResId)
+            // ★ 只在当前无内容时才显示占位，避免复用 ViewHolder 时
+            //   出现「旧图 → 占位 → 新图」的两次刷新，视觉上更平滑
+            if (imageView.drawable == null) {
+                imageView.setImageResource(placeholderResId)
+            }
             loaderScope.launch {
                 val file = downloadThumbnail(serverUrl, imagePath, "image", cacheKey, "thumbnail")
                 if (file == null) {
-                    Log.w(TAG, "loadImageThumbnailByPath: 下载失败 path=[$imagePath]")
                     withContext(Dispatchers.Main) {
-                        imageView.setImageResource(errorResId)
-                        onResult?.invoke(false)
+                        // ★ tag 不匹配说明 ViewHolder 已复用到别的 item，丢弃
+                        if (imageView.tag == requestToken) {
+                            imageView.setImageResource(errorResId)
+                            onResult?.invoke(false)
+                        }
                     }
                     return@launch
                 }
-                decodeAndSet(imageView, file, imagePath, onResult)
+                decodeAndSet(imageView, file, requestToken, onResult)
             }
         }
     }
@@ -136,31 +145,36 @@ object ThumbnailLoader {
         onResult: ((Boolean) -> Unit)? = null
     ) {
         if (!isInitialized) init(imageView.context)
-        Log.d(TAG, "loadVideoThumbnail: videoPath=[$videoPath] ${width}x$height")
+
+        val requestToken = videoPath
+        imageView.tag = requestToken
 
         val cacheKey = generateCacheKey(serverUrl, videoPath, "video", width, height)
         val cachedFile = getCachedFile(cacheKey)
 
         if (cachedFile != null) {
-            Log.d(TAG, "loadVideoThumbnail: 缓存命中 ${cachedFile.name} size=${cachedFile.length()}")
-            loaderScope.launch { decodeAndSet(imageView, cachedFile, videoPath, onResult) }
+            loaderScope.launch {
+                decodeAndSet(imageView, cachedFile, requestToken, onResult)
+            }
         } else {
-            Log.d(TAG, "loadVideoThumbnail: 缓存未命中，开始下载 path=[$videoPath]")
-            imageView.setImageResource(placeholderResId)
+            if (imageView.drawable == null) {
+                imageView.setImageResource(placeholderResId)
+            }
             loaderScope.launch {
                 val file = downloadThumbnail(
                     serverUrl, videoPath, "video", cacheKey,
                     "video-thumbnail", width, height
                 )
                 if (file == null) {
-                    Log.w(TAG, "loadVideoThumbnail: 下载失败 path=[$videoPath]")
                     withContext(Dispatchers.Main) {
-                        imageView.setImageResource(errorResId)
-                        onResult?.invoke(false)
+                        if (imageView.tag == requestToken) {
+                            imageView.setImageResource(errorResId)
+                            onResult?.invoke(false)
+                        }
                     }
                     return@launch
                 }
-                decodeAndSet(imageView, file, videoPath, onResult)
+                decodeAndSet(imageView, file, requestToken, onResult)
             }
         }
     }
@@ -189,12 +203,6 @@ object ThumbnailLoader {
         else BitmapFactory.decodeFile(file.absolutePath)
     }
 
-    /**
-     * 精确删除某个文件对应的全部本地缩略图缓存。
-     *
-     * key 格式：<md5(server|path)>_<type>_<WxH>.<ext>
-     * 前缀匹配 md5(server|path)_ 即可覆盖该文件的所有尺寸、图片/视频类型。
-     */
     fun deleteByPath(serverUrl: String, path: String) {
         if (!isInitialized) return
 
@@ -203,10 +211,7 @@ object ThumbnailLoader {
         var count = 0
         files.forEach { file ->
             if (file.name.startsWith(prefix)) {
-                if (file.delete()) {
-                    count++
-                    Log.d(TAG, "deleteByPath: 删除 ${file.name}")
-                }
+                if (file.delete()) count++
             }
         }
         Log.d(TAG, "deleteByPath: path=[$path] 共删除 $count 个缓存文件")
@@ -257,41 +262,46 @@ object ThumbnailLoader {
     }
 
     // ================================================================
-    // 核心：suspend execute 解码 + 切 UI
+    // 核心：解码 + 切 UI（★ 带 tag 校验）
     // ================================================================
 
     private suspend fun decodeAndSet(
         imageView: ImageView,
         file: File,
-        logPath: String,
+        requestToken: String,
         onResult: ((Boolean) -> Unit)?
     ) {
         val request = ImageRequest.Builder(imageView.context)
             .data(file)
             .diskCachePolicy(coil.request.CachePolicy.DISABLED)
-            .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
+            .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
             .build()
 
         val result = try {
             coilLoader.execute(request)
         } catch (e: Exception) {
-            Log.e(TAG, "decodeAndSet: execute 异常 path=[$logPath]", e)
+            Log.e(TAG, "decodeAndSet: execute 异常 token=[$requestToken]", e)
             null
         }
 
         withContext(Dispatchers.Main) {
+            // ★★ 复用竞态拦截：tag 变了说明 ViewHolder 已绑定别的 item
+            if (imageView.tag != requestToken) {
+                Log.d(TAG, "decodeAndSet: 丢弃过期结果 token=[$requestToken] " +
+                        "当前 tag=[${imageView.tag}]")
+                return@withContext
+            }
+
             when (result) {
                 is SuccessResult -> {
                     imageView.setImageDrawable(result.drawable)
-                    Log.d(TAG, "decodeAndSet: SUCCESS path=[$logPath]")
                     onResult?.invoke(true)
                 }
                 is ErrorResult -> {
-                    Log.w(TAG, "decodeAndSet: ERROR path=[$logPath] throwable=${result.throwable}")
+                    Log.w(TAG, "decodeAndSet: ERROR token=[$requestToken] ${result.throwable}")
                     onResult?.invoke(false)
                 }
                 else -> {
-                    Log.w(TAG, "decodeAndSet: NULL path=[$logPath]")
                     onResult?.invoke(false)
                 }
             }
@@ -302,12 +312,6 @@ object ThumbnailLoader {
     // 私有
     // ================================================================
 
-    /**
-     * 新 key 格式：<md5(server|path)>_<type>_<WxH>.<ext>
-     * - 前缀 md5(server|path)_ 可用于 deleteByPath 精确清理
-     * - 图片：image_0x0.thumb
-     * - 视频：video_320x180.jpg / video_320x180.svg
-     */
     private fun generateCacheKey(
         serverUrl: String,
         filePath: String,
@@ -317,27 +321,17 @@ object ThumbnailLoader {
     ): String {
         val pathHash = md5("${serverUrl.trimEnd('/')}|$filePath")
         val ext = if (type == "video") ".jpg" else ".thumb"
-        val key = "${pathHash}_${type}_${width}x${height}$ext"
-        Log.d(TAG, "generateCacheKey: server=[$serverUrl] path=[$filePath] type=$type " +
-                "size=${width}x$height -> key=$key")
-        return key
+        return "${pathHash}_${type}_${width}x${height}$ext"
     }
 
     private fun getCachedFile(cacheKey: String): File? {
         val primary = File(cacheDir, cacheKey)
-        if (primary.exists() && primary.length() > 0) {
-            Log.d(TAG, "getCachedFile: HIT ${primary.name} size=${primary.length()}")
-            return primary
-        }
-        // 视频 svg 备选
+        if (primary.exists() && primary.length() > 0) return primary
+
         if (cacheKey.endsWith(".jpg")) {
             val svg = File(cacheDir, cacheKey.dropLast(4) + ".svg")
-            if (svg.exists() && svg.length() > 0) {
-                Log.d(TAG, "getCachedFile: HIT ${svg.name} size=${svg.length()}")
-                return svg
-            }
+            if (svg.exists() && svg.length() > 0) return svg
         }
-        Log.d(TAG, "getCachedFile: MISS key=$cacheKey")
         return null
     }
 
@@ -350,10 +344,7 @@ object ThumbnailLoader {
         width: Int = 0,
         height: Int = 0
     ): File? {
-        pendingDownloads[cacheKey]?.let {
-            Log.d(TAG, "downloadThumbnail: 复用 pending key=$cacheKey")
-            return it.await()
-        }
+        pendingDownloads[cacheKey]?.let { return it.await() }
 
         val deferred = loaderScope.async {
             try {
@@ -361,11 +352,9 @@ object ThumbnailLoader {
                 var url = "${serverUrl.removeSuffix("/")}/api/fileserver/$urlSuffix/$encodedPath"
                 if (width > 0 && height > 0) url += "?width=$width&height=$height"
 
-                Log.d(TAG, "downloadThumbnail: GET $url")
                 val response = httpClient.newCall(
                     Request.Builder().url(url).get().build()
                 ).execute()
-                Log.d(TAG, "downloadThumbnail: HTTP ${response.code}")
 
                 if (!response.isSuccessful) {
                     Log.w(TAG, "downloadThumbnail: 失败 HTTP ${response.code} path=[$path]")
@@ -377,7 +366,7 @@ object ThumbnailLoader {
 
                 val contentType = response.header("Content-Type", "") ?: ""
                 if (!contentType.startsWith("image/")) {
-                    Log.w(TAG, "downloadThumbnail: Content-Type 不是图片 [$contentType]，放弃缓存")
+                    Log.w(TAG, "downloadThumbnail: Content-Type 非图片 [$contentType]")
                     inputStream.close()
                     return@async null
                 }
@@ -389,9 +378,15 @@ object ThumbnailLoader {
                     File(cacheDir, cacheKey)
                 }
 
-                FileOutputStream(cacheFile).use { inputStream.copyTo(it) }
+                // 原子写入：先写 .tmp 再 rename，防止半截文件被复用
+                val tmpFile = File(cacheFile.parentFile, cacheFile.name + ".tmp")
+                FileOutputStream(tmpFile).use { inputStream.copyTo(it) }
                 inputStream.close()
-                Log.d(TAG, "downloadThumbnail: 写入 ${cacheFile.name} size=${cacheFile.length()}")
+                if (!tmpFile.renameTo(cacheFile)) {
+                    // rename 失败时退化为直接写
+                    tmpFile.copyTo(cacheFile, overwrite = true)
+                    tmpFile.delete()
+                }
                 cacheFile
             } catch (e: Exception) {
                 Log.e(TAG, "downloadThumbnail: 异常 path=[$path]", e)

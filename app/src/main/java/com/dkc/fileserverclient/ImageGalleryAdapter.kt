@@ -88,7 +88,8 @@ class ImageGalleryAdapter(
             }
         }
 
-        private fun updateSelectionUI(
+        /** ★ 只更新选择状态，不重新加载缩略图（payload 使用） */
+        fun updateSelectionUI(
             item: FileSystemItem,
             isMultiSelectionMode: () -> Boolean,
             isItemSelected: (String) -> Boolean
@@ -113,14 +114,10 @@ class ImageGalleryAdapter(
             }
         }
 
-        /**
-         * 统一走 ThumbnailLoader：
-         * - 图片 → /thumbnail/，缓存为 .thumb
-         * - 视频 → /video-thumbnail/，缓存为 .jpg（占位图期间是 .svg）
-         * 磁盘缓存在 filesDir/thumbnails，上限 20GB。
-         */
         private fun loadThumbnail(item: FileSystemItem, serverUrl: String) {
             try {
+                // ThumbnailLoader 内部会再设 tag；这里设一遍让 init 时也能用
+                imageView.tag = item.path
                 if (item.isVideo) {
                     ThumbnailLoader.loadVideoThumbnail(
                         imageView = imageView,
@@ -189,33 +186,30 @@ class ImageGalleryAdapter(
         val item = getItem(position)
         if (item is GalleryItem.ImageEntry && holder is ImageViewHolder) {
             if (payloads.any { it == "selection" }) {
-                holder.bindImage(
+                // ★ 只刷新选择遮罩，不重新加载缩略图
+                holder.updateSelectionUI(
                     item.image,
-                    currentServerUrl,
                     isMultiSelectionMode,
-                    isItemSelected,
-                    onImageClick,
-                    onImageLongClick
+                    isItemSelected
                 )
-            } else {
-                super.onBindViewHolder(holder, position, payloads)
+                return
             }
-        } else {
-            super.onBindViewHolder(holder, position, payloads)
         }
+        super.onBindViewHolder(holder, position, payloads)
     }
 
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
         super.onViewRecycled(holder)
         if (holder is ImageViewHolder) {
-            holder.imageView.setImageDrawable(null)
+            // ★ 不再 setImageDrawable(null)，让 Coil/ThumbnailLoader 自动覆盖，避免闪
             holder.selectionCheck.clearColorFilter()
             holder.videoPlayIcon.visibility = View.GONE
+            holder.imageView.tag = null
         }
     }
 
     fun dispose() {
-        // ImageLoader 由 ThumbnailLoader 全局管理，无需释放
+        // ImageLoader 由 ThumbnailLoader / Coil 全局管理，无需释放
     }
 
     fun updateServerUrl(newUrl: String) {

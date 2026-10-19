@@ -80,10 +80,10 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Coil 图片加载
-    implementation("io.coil-kt:coil:2.5.0")
-    implementation("io.coil-kt:coil-base:2.5.0")
-    implementation("io.coil-kt:coil-gif:2.5.0")
-    implementation("io.coil-kt:coil-svg:2.5.0")
+    implementation("io.coil-kt:coil:2.6.0")
+    implementation("io.coil-kt:coil-base:2.6.0")
+    implementation("io.coil-kt:coil-gif:2.6.0")
+    implementation("io.coil-kt:coil-svg:2.6.0")
 
     // Media3 ExoPlayer 用于视频和音频播放
     implementation("androidx.media3:media3-exoplayer:1.4.1")

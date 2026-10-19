@@ -1,6 +1,5 @@
 package com.dkc.fileserverclient
 
-import android.util.SparseArray
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -29,6 +28,9 @@ class MediaPagerAdapter(
     }
 
     private var currentPage: Int = 0
+
+    /** 所有已创建 ExoPlayer 的 VideoVH，用于统一 pause / release */
+    private val activeVideoHolders = mutableListOf<VideoVH>()
 
     class ImageVH(view: View) : RecyclerView.ViewHolder(view) {
         val image: ImageView = view.findViewById(R.id.pagerImageView)
@@ -62,8 +64,12 @@ class MediaPagerAdapter(
         when (holder) {
             is ImageVH -> {
                 val url = "$base/api/fileserver/preview/$encoded"
+                val isGif = item.name.endsWith(".gif", ignoreCase = true)
                 holder.progress.visibility = View.VISIBLE
+                // ★ 走 Coil 全局单例（MusicApplication 已注册 GifDecoder），
+                //   GIF 需关闭硬件 Bitmap，否则部分设备会退化成静态首帧
                 holder.image.load(url) {
+                    if (isGif) allowHardware(false)
                     listener(
                         onSuccess = { _, _ -> holder.progress.visibility = View.GONE },
                         onError = { _, _ -> holder.progress.visibility = View.GONE }
@@ -105,8 +111,8 @@ class MediaPagerAdapter(
                         }
                     })
                 }
+            if (holder !in activeVideoHolders) activeVideoHolders.add(holder)
         } else {
-            // 已被回收再复用，URL 一般相同（ViewPager2 位置稳定），只更新播放状态
             val shouldPlay = position == currentPage
             holder.player?.playWhenReady = shouldPlay
             if (!shouldPlay) holder.player?.pause()
@@ -118,20 +124,17 @@ class MediaPagerAdapter(
         position: Int,
         payloads: List<Any>
     ) {
-        if (payloads.contains(PAYLOAD_PLAY_STATE)) {
-            if (holder is VideoVH) {
-                val shouldPlay = position == currentPage
-                holder.player?.playWhenReady = shouldPlay
-                if (!shouldPlay) holder.player?.pause()
-            }
+        // 只有 player 已存在时才走轻量更新；player 为 null 必须 fall through
+        if (payloads.contains(PAYLOAD_PLAY_STATE) && holder is VideoVH && holder.player != null) {
+            val shouldPlay = position == currentPage
+            holder.player?.playWhenReady = shouldPlay
+            if (!shouldPlay) holder.player?.pause()
             return
         }
         super.onBindViewHolder(holder, position, payloads)
     }
 
-    /**
-     * 切换当前页：只通知旧页和新页两个视频页，不触发全量刷新。
-     */
+    /** 切换当前页：只通知旧页和新页两个视频页，不触发全量刷新 */
     fun setCurrentPage(newPage: Int) {
         if (newPage == currentPage) return
         val oldPage = currentPage
@@ -147,13 +150,36 @@ class MediaPagerAdapter(
         super.onViewRecycled(holder)
         when (holder) {
             is VideoVH -> {
+                activeVideoHolders.remove(holder)
                 holder.playerView.player = null
                 holder.player?.release()
                 holder.player = null
             }
-            is ImageVH -> {
-                holder.image.setImageDrawable(null)
-            }
+            is ImageVH -> holder.image.setImageDrawable(null)
         }
+    }
+
+    // ==================== 供 Activity 生命周期调用 ====================
+
+    /** 暂停所有视频，不释放资源（onPause 用） */
+    fun pauseAllVideos() {
+        activeVideoHolders.forEach { it.player?.pause() }
+    }
+
+    /** 释放所有视频播放器（onDestroy 用），防止后台继续出声 */
+    fun releaseAllVideos() {
+        activeVideoHolders.toList().forEach {
+            it.playerView.player = null
+            it.player?.release()
+            it.player = null
+        }
+        activeVideoHolders.clear()
+    }
+
+    /** 恢复当前页视频播放（如需从后台返回自动续播，可在 onResume 调用） */
+    fun resumeCurrentVideo() {
+        activeVideoHolders.firstOrNull {
+            it.absoluteAdapterPosition == currentPage
+        }?.player?.play()
     }
 }

@@ -5,10 +5,11 @@ import android.util.Log
 import android.view.View
 import android.widget.ImageView
 import android.widget.ProgressBar
-import coil.ImageLoader
-import coil.decode.GifDecoder
+import coil.imageLoader
 import coil.request.CachePolicy
+import coil.request.ErrorResult
 import coil.request.ImageRequest
+import coil.request.SuccessResult
 import kotlinx.coroutines.CoroutineScope
 
 class ImagePreviewManager(
@@ -33,86 +34,66 @@ class ImagePreviewManager(
         this.listener = listener
     }
 
-    // 加载图片
     fun loadImage(imageUrl: String, fileName: String) {
         isGif = fileName.endsWith(".gif", ignoreCase = true)
-
-        // 预览时都使用 FIT_CENTER 完整显示图片
-        //imageView.scaleType = ImageView.ScaleType.FIT_CENTER
 
         listener?.onImageLoadStart()
         loadingProgress.visibility = View.VISIBLE
 
-        Log.d("ImagePreviewManager", "开始加载图片: $fileName, isGif: $isGif, scaleType: ${imageView.scaleType}")
+        Log.d("ImagePreviewManager", "开始加载: $fileName, isGif=$isGif")
 
-        val imageLoader = ImageLoader.Builder(context)
-            .okHttpClient(httpClient)
-            .components {
-                add(GifDecoder.Factory())
-            }
-            .memoryCachePolicy(CachePolicy.ENABLED)
-            .diskCachePolicy(CachePolicy.ENABLED)
-            .respectCacheHeaders(false)
-            .build()
+        // ★ 复用 Coil 全局单例（MusicApplication 已注册 GifDecoder）
+        val loader = context.imageLoader
 
         val requestBuilder = ImageRequest.Builder(context)
             .data(imageUrl)
             .target(imageView)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
             .listener(
-                onStart = {
+                onStart = { _: ImageRequest ->
                     listener?.onImageLoadStart()
                 },
-                onSuccess = { _, _ ->
-                    Log.d("ImagePreviewManager", "图片加载成功，isGif: $isGif, scaleType: ${imageView.scaleType}")
+                onSuccess = { _: ImageRequest, _: SuccessResult ->
+                    Log.d("ImagePreviewManager", "加载成功 isGif=$isGif")
                     listener?.onImageLoadSuccess(isGif)
                     loadingProgress.visibility = View.GONE
-
                     if (isGif) {
-                        // 确保GIF动画开始
-                        val drawable = imageView.drawable
-                        if (drawable is android.graphics.drawable.Animatable && !drawable.isRunning) {
-                            Log.d("ImagePreviewManager", "开始播放GIF动画")
-                            (drawable as android.graphics.drawable.Animatable).start()
+                        val d = imageView.drawable
+                        if (d is android.graphics.drawable.Animatable && !d.isRunning) {
+                            d.start()
                         }
                     }
                 },
-                onError = { _, result ->
+                onError = { _: ImageRequest, result: ErrorResult ->
                     loadingProgress.visibility = View.GONE
-                    Log.e("ImagePreviewManager", "图片加载失败", result.throwable)
+                    Log.e("ImagePreviewManager", "加载失败", result.throwable)
                     listener?.onImageLoadError("图片加载失败: ${result.throwable.message}")
                 }
             )
 
         if (isGif) {
+            // GIF 必须关 crossfade + 关硬件 Bitmap，否则会卡首帧
             requestBuilder
-                .memoryCachePolicy(CachePolicy.ENABLED)
-                .diskCachePolicy(CachePolicy.ENABLED)
-                .crossfade(true)
+                .crossfade(false)
                 .allowHardware(false)
+        } else {
+            requestBuilder.crossfade(true)
         }
 
-        val request = requestBuilder.build()
-        imageLoader.enqueue(request)
+        loader.enqueue(requestBuilder.build())
     }
 
     fun startGifAnimation() {
-        if (isGif) {
-            val drawable = imageView.drawable
-            if (drawable is android.graphics.drawable.Animatable && !drawable.isRunning) {
-                Log.d("ImagePreviewManager", "开始播放GIF动画")
-                (drawable as android.graphics.drawable.Animatable).start()
-            }
-        }
+        if (!isGif) return
+        val d = imageView.drawable
+        if (d is android.graphics.drawable.Animatable && !d.isRunning) d.start()
     }
 
     fun stopGifAnimation() {
-        if (isGif) {
-            val drawable = imageView.drawable
-            if (drawable is android.graphics.drawable.Animatable && drawable.isRunning) {
-                Log.d("ImagePreviewManager", "停止GIF动画")
-                drawable.stop()
-            }
-        }
+        if (!isGif) return
+        val d = imageView.drawable
+        if (d is android.graphics.drawable.Animatable && d.isRunning) d.stop()
     }
 
     fun clear() {

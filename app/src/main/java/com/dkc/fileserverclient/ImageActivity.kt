@@ -232,4 +232,24 @@ class ImageActivity : AppCompatActivity() {
             }
         }
     }
+
+    // ==================== 生命周期：视频播放控制 ====================
+
+    override fun onPause() {
+        super.onPause()
+        // 切后台 / 锁屏 / 弹系统界面 → 先暂停，避免后台继续出声
+        adapter?.pauseAllVideos()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 如需从后台返回自动续播当前页视频，取消下行注释即可：
+        // adapter?.resumeCurrentVideo()
+    }
+
+    override fun onDestroy() {
+        // 退出时必须真正 release，否则 ExoPlayer 的音频线程会一直活着
+        adapter?.releaseAllVideos()
+        super.onDestroy()
+    }
 }

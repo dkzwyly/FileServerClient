@@ -25,7 +25,6 @@ class ImagePickerActivity : AppCompatActivity() {
     private val coroutineScope = CoroutineScope(Dispatchers.Main + Job())
     private val imageGalleryPath = "data/图片"
 
-    // 用于日期分组的映射
     private val dateTakenMap = mutableMapOf<String, String?>()
 
     companion object {
@@ -47,7 +46,6 @@ class ImagePickerActivity : AppCompatActivity() {
         closeButton = findViewById(R.id.pickerCloseButton)
 
         val gridLayoutManager = GridLayoutManager(this, 4)
-        // 日期头占满整行
         gridLayoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
             override fun getSpanSize(position: Int): Int {
                 return when (adapter.getItemViewType(position)) {
@@ -57,8 +55,10 @@ class ImagePickerActivity : AppCompatActivity() {
             }
         }
         recyclerView.layoutManager = gridLayoutManager
+        // ★ 关键：关掉默认动画（避免每次 toggle 交叉淡入），固定尺寸（避免异步 setImageDrawable 后重新 measure）
+        recyclerView.itemAnimator = null
+        recyclerView.setHasFixedSize(true)
 
-        // 强制多选模式，点击切换选中状态
         adapter = ImageGalleryAdapter(
             serverUrl = currentServerUrl,
             isMultiSelectionMode = { true },
@@ -87,7 +87,6 @@ class ImagePickerActivity : AppCompatActivity() {
                 val items = withContext(Dispatchers.IO) {
                     fileServerService.getFileList(currentServerUrl, imageGalleryPath, "dateTaken", "desc")
                 }
-                // ★ 图片 + 视频都要
                 val mediaItems = items.filter { !it.isDirectory && (it.isImage || it.isVideo) }
 
                 val paths = mediaItems.map { it.path }
@@ -97,17 +96,13 @@ class ImagePickerActivity : AppCompatActivity() {
                 dateTakenMap.clear()
                 dateTakenMap.putAll(dates)
 
-                val grouped = groupByDateTaken(mediaItems)
-                adapter.submitList(grouped)
+                adapter.submitList(groupByDateTaken(mediaItems))
             } catch (e: Exception) {
                 Log.e("ImagePicker", "load error", e)
             }
         }
     }
 
-    /**
-     * 将图片列表按拍摄日期分组，生成带日期头的 GalleryItem 列表
-     */
     private fun groupByDateTaken(items: List<FileSystemItem>): List<GalleryItem> {
         val result = mutableListOf<GalleryItem>()
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -147,9 +142,19 @@ class ImagePickerActivity : AppCompatActivity() {
         return result
     }
 
+    /**
+     * ★ 精确刷新：只通知被点击的那一项，且 payload="selection"，
+     *   让 ImageGalleryAdapter 只更新勾选遮罩，不重新加载缩略图。
+     */
     private fun toggleSelection(path: String) {
         if (selectedPaths.contains(path)) selectedPaths.remove(path) else selectedPaths.add(path)
-        adapter.notifyDataSetChanged() // 全量刷新（分组模式下刷新选择状态）
+
+        val pos = adapter.currentList.indexOfFirst {
+            it is GalleryItem.ImageEntry && it.image.path == path
+        }
+        if (pos != -1) {
+            adapter.notifyItemChanged(pos, "selection")
+        }
     }
 
     override fun onDestroy() {
